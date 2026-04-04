@@ -1,3 +1,4 @@
+// Summary: Skim MC ROOT files, keep selected branches, and merge outputs.
 #include <TSystemDirectory.h>
 #include <TSystemFile.h>
 #include <TList.h>
@@ -21,13 +22,13 @@
 #include <unistd.h>     // for getcwd()
 #include <sys/stat.h>   // for struct stat
 
-// 全局互斥打印
+// Thread-safe printing
 std::mutex printMutex;
 std::string tempDirName;
 
-const std::string inputDir = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v2/qcd_ht2000toinf";   // 输入目录
-const std::string outputFile = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/qcd_ht2000toinf.root";   // 最终输出文件
-const std::vector<std::string> branchPatterns = {          // 要保留的 branch 通配列表
+const std::string inputDir = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v2/qcd_ht2000toinf";   // Input directory
+const std::string outputFile = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/qcd_ht2000toinf.root";   // Final output file
+const std::vector<std::string> branchPatterns = {          // Branch patterns to keep
         "n*",
         "DST_PFScouting_*",
         "ScoutingPFJetRecluster_*",
@@ -38,7 +39,7 @@ const std::vector<std::string> branchPatterns = {          // 要保留的 branc
         "ScoutingMuonVtx_*",
         "ScoutingMuonNoVtx_*"
 };
-const std::string cutString = "nScoutingFatPFJetRecluster > 1";  // 筛选条件
+const std::string cutString = "nScoutingFatPFJetRecluster > 1";  // Event selection
 
 void printProgressBar(int threadId, int fileIdx, int nFiles, Long64_t entryIdx, Long64_t nEntries) {
     const int barWidth = 50;
@@ -57,7 +58,7 @@ void printProgressBar(int threadId, int fileIdx, int nFiles, Long64_t entryIdx, 
               << std::flush;
 }
 
-// 单文件处理函数
+// Process one file
 void processFile(int idx,
                  const std::vector<std::string>& fileList,
                  const std::vector<std::regex>& patterns,
@@ -66,7 +67,7 @@ void processFile(int idx,
 {
     int threadId = std::hash<std::thread::id>{}(std::this_thread::get_id()) % 1000;
     const std::string& inPath = fileList[idx];
-    // MOD: 将临时文件保存在 tempDirName 目录下
+    // Keep temp files in tempDirName.
     std::string tempPath = tempDirName + "/temp_" + std::to_string(idx) + ".root";
     tempFiles[idx] = tempPath;
 
@@ -81,7 +82,7 @@ void processFile(int idx,
         TTree* tree = (TTree*)inF->Get("Events");
         if (!tree) { inF->Close(); return; }
 
-        // 筛 branch
+        // Select branches.
         auto all = tree->GetListOfBranches();
         std::vector<std::string> sel;
         for (auto* obj : *all) {
@@ -152,7 +153,7 @@ int skim_mc(){
     int nFiles = fileList.size();
     std::cout << "Found " << nFiles << " ROOT files\n";
 
-    // MOD: 提取 outputFile 文件名作为临时文件夹名，并创建该文件夹
+    // Use the output stem for the temp directory.
     {
         std::string base = outputFile.substr(outputFile.find_last_of("/")+1);
         base = base.substr(0, base.find_last_of("."));
@@ -160,7 +161,7 @@ int skim_mc(){
         gSystem->mkdir(tempDirName.c_str(), kTRUE);
     }
 
-    // MOD: 统计所有原始 entry 数量
+    // Count total raw entries.
     Long64_t totalRawEntries = 0;
     for (const auto& inPath : fileList) {
         TFile* f = TFile::Open(inPath.c_str(), "READ");
@@ -171,14 +172,14 @@ int skim_mc(){
     }
     std::cout << "Total raw entries across all files: " << totalRawEntries << "\n";
 
-    // 3. 编译通配为 regex
+    // Compile wildcards into regex.
     std::vector<std::regex> patterns; patterns.reserve(branchPatterns.size());
     for (auto& p : branchPatterns) {
         std::string r = "^" + std::regex_replace(p, std::regex(R"(\*)"), ".*") + "$";
         patterns.emplace_back(r);
     }
 
-    // 4. 启动线程池
+    // Start thread pool.
     unsigned nThreads = std::min<unsigned>(
         std::thread::hardware_concurrency() ? std::thread::hardware_concurrency() : 4,
         nFiles
@@ -200,7 +201,7 @@ int skim_mc(){
     }
     for (auto& th : pool) th.join();
 
-    // 合并 —— 按 50GB 分割
+    // Merge in 50 GB chunks.
     std::cout << "Merging into chunks of up to 50GB...\n";
     const long long maxChunkSize = 50LL * 1024 * 1024 * 1024; // 50 GB
     std::string outDir  = outputFile.substr(0, outputFile.find_last_of("/"));
@@ -208,7 +209,7 @@ int skim_mc(){
     std::string baseName = outBase.substr(0, outBase.find_last_of("."));
     std::string ext      = outBase.substr(outBase.find_last_of(".")); // ".root"
 
-    // 构建批次
+    // Build batches.
     std::vector<std::vector<std::string>> batches;
     std::vector<std::string> current;
     long long currentSize = 0;
@@ -230,7 +231,7 @@ int skim_mc(){
         batches.push_back(current);
     }
 
-    // 按批次合并并写入 cutflow
+    // Merge batches and write cutflow.
     for (size_t bi = 0; bi < batches.size(); ++bi) {
         std::string outPath;
         if (bi == 0) {
@@ -249,7 +250,7 @@ int skim_mc(){
         merger.Merge();
         std::cout << "Merge of batch " << (bi+1) << " done.\n";
 
-        // 写入 cutflow 直方图
+        // Write cutflow histogram.
         TFile* outF = TFile::Open(outPath.c_str(), "UPDATE");
         TTree* outT = (TTree*)outF->Get("Events");
         Long64_t passedEntries = outT ? outT->GetEntries() : 0;
@@ -266,7 +267,7 @@ int skim_mc(){
         std::cout << "Written cutflow histogram into " << outPath << "\n";
     }
 
-    // 删除临时目录
+    // Remove temp directory.
     gSystem->Exec(("rm -rf " + tempDirName).c_str());
     std::cout << "All finished. Outputs:";
     for (size_t bi = 0; bi < batches.size(); ++bi) {

@@ -1,4 +1,4 @@
-// Produce histograms for ttbar_score.py
+// Summary: Build AK4 b-tag histograms for working-point studies.
 #include <TChain.h>
 #include <TError.h>
 #include <TFile.h>
@@ -19,7 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
-// ========================= USER CONFIG =========================
+// User config
 static const size_t MAX_FILES_PER_SAMPLE = 1000;
 
 static const int    NBINS = 50000;
@@ -77,7 +77,7 @@ static const char* BR_Jet_muEF              = "ScoutingPFJetRecluster2_muEF";
 static const char* BR_Jet_neHadMultiplicity = "ScoutingPFJetRecluster2_neHadMultiplicity";
 static const char* BR_Jet_hadronFlavour     = "ScoutingPFJetRecluster2_hadronFlavour";
 
-// ========================= Utilities =========================
+// Helpers
 
 static inline std::string trim(std::string s) {
   const auto first = s.find_first_not_of(" \t\r\n");
@@ -178,7 +178,7 @@ static inline bool pass_ak4_quality(float pt,
   return neEmEF < 0.20;
 }
 
-// ========================= Per-sample processing =========================
+// Per-sample processing
 
 struct SampleResult {
   SampleInfo sample;
@@ -195,7 +195,7 @@ static bool process_one_sample(const SampleInfo& sample, SampleResult& out) {
 
   std::cout << "  [STEP] collect files..." << std::endl;
   size_t MAX_FILES_PER_SAMPLE_tmp = MAX_FILES_PER_SAMPLE;
-  // use 10% when TTbar
+  // Use 10% of TTbar files.
   if (sample.label == "TTbar") {
     MAX_FILES_PER_SAMPLE_tmp = std::max<size_t>(1, MAX_FILES_PER_SAMPLE_tmp / 10);
     std::cout << "         (using " << MAX_FILES_PER_SAMPLE_tmp << " files for TTbar sample)" << std::endl;
@@ -495,7 +495,7 @@ static bool process_one_sample(const SampleInfo& sample, SampleResult& out) {
   return true;
 }
 
-// ========================= Main driver =========================
+// Main
 
 int b_veto() {
   gErrorIgnoreLevel = kWarning;

@@ -1,4 +1,4 @@
-// SKIM and convert branch for BDT training
+// Summary: Skim events and convert branches for BDT training.
 #include <iostream>
 #include <algorithm>
 #include <TFile.h>

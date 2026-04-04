@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Estimate QCD with ABCD method
-"""
+"""Summary: Estimate QCD backgrounds with an ABCD method."""
 
 from __future__ import annotations
 

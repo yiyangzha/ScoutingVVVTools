@@ -1,3 +1,4 @@
+// Summary: Build JetHT efficiency and distribution plots from scouting events.
 #include <iostream>
 #include <vector>
 #include <string>
@@ -20,7 +21,7 @@
 
 using namespace std;
 
-// "vh", "vvv", "www", "wwz", "2024*"
+// Valid types: "vh", "vvv", "www", "wwz", "2024*"
 static const string TYPE = "2024F";
 static const int N_DATA_FILES = 200;
 

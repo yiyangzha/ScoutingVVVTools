@@ -1,3 +1,4 @@
+// Summary: Skim data ROOT files from an XRootD list and merge outputs.
 #include <TSystem.h>
 #include <TFile.h>
 #include <TTree.h>
@@ -16,15 +17,15 @@
 #include <unistd.h>     // for getcwd()
 #include <sys/stat.h>   // for struct stat
 
-// 全局互斥打印
+// Thread-safe printing
 std::mutex printMutex;
 std::string tempDirName;
 
-// 列表文件，内含完整 xrootd 路径，每行一个
+// File list with one full XRootD path per line
 const std::string listFile    = "samples/2024H.txt";
 const std::string outputFile  = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/2024/skim/2024H.root";
 
-const std::vector<std::string> branchPatterns = {          // 要保留的 branch 通配列表
+const std::vector<std::string> branchPatterns = {          // Branch patterns to keep
     "nScouting*",
     "nGenJetAK8",
     "nGenPart",
@@ -35,7 +36,7 @@ const std::vector<std::string> branchPatterns = {          // 要保留的 branc
     "ScoutingMuonVtx_*",
     "ScoutingMuonNoVtx_*"
 };
-const std::string cutString = "nScoutingFatPFJetRecluster > 0";  // 筛选条件
+const std::string cutString = "nScoutingFatPFJetRecluster > 0";  // Event selection
 
 void printProgressBar(int threadId, int fileIdx, int nFiles, Long64_t entryIdx, Long64_t nEntries) {
     const int barWidth = 50;
@@ -54,7 +55,7 @@ void printProgressBar(int threadId, int fileIdx, int nFiles, Long64_t entryIdx, 
               << std::flush;
 }
 
-// 单文件处理函数（保持不变）
+// Process one file
 void processFile(int idx,
                  const std::vector<std::string>& fileList,
                  const std::vector<std::regex>& patterns,
@@ -77,7 +78,7 @@ void processFile(int idx,
         TTree* tree = (TTree*)inF->Get("Events");
         if (!tree) { inF->Close(); return; }
 
-        // 筛 branch
+        // Select branches.
         auto all = tree->GetListOfBranches();
         std::vector<std::string> sel;
         for (auto* obj : *all) {
@@ -108,7 +109,7 @@ void processFile(int idx,
         for (Long64_t i = 1; i <= nEntries; ++i) {
             tree->GetEntry(i-1);
             if (formula.EvalInstance()) outT->Fill();
-            // 如需进度条可取消下行注释
+            // Uncomment below for a progress bar.
             // if (i % interval == 0 || i==nEntries) printProgressBar(threadId, idx, fileList.size(), i, nEntries);
         }
         {
@@ -135,7 +136,7 @@ void processFile(int idx,
 }
 
 int skim_data() {
-    // —— VOMS 认证设置 —— 
+    // VOMS proxy setup.
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd)) == nullptr) {
         std::cerr << "Error: cannot get CWD for proxy setup\n";
@@ -144,9 +145,8 @@ int skim_data() {
     std::string proxy = std::string(cwd) + "/x509up";
     gSystem->Setenv("X509_USER_PROXY", proxy.c_str());
     std::cout << "Using VOMS proxy: " << proxy << std::endl;
-    // ————————————————
 
-    // 读取 samples/2024J.txt 中的文件列表
+    // Read the file list.
     std::vector<std::string> fileList;
     std::ifstream fin(listFile);
     if (!fin) {
@@ -167,7 +167,7 @@ int skim_data() {
     int nFiles = fileList.size();
     std::cout << "Found " << nFiles << " ROOT files from " << listFile << "\n";
 
-    // 创建临时目录
+    // Create temp directory.
     {
         std::string base = outputFile.substr(outputFile.find_last_of("/")+1);
         base = base.substr(0, base.find_last_of("."));
@@ -175,7 +175,7 @@ int skim_data() {
         gSystem->mkdir(tempDirName.c_str(), kTRUE);
     }
 
-    // 统计所有原始 entry 数量
+    // Count total raw entries.
     Long64_t totalRawEntries = 0;
     for (const auto& p : fileList) {
         TFile* f = TFile::Open(p.c_str(), "READ");
@@ -186,7 +186,7 @@ int skim_data() {
     }
     std::cout << "Total raw entries across all files: " << totalRawEntries << "\n";
 
-    // 编译通配为 regex
+    // Compile wildcards into regex.
     std::vector<std::regex> patterns;
     patterns.reserve(branchPatterns.size());
     for (auto& p : branchPatterns) {
@@ -194,13 +194,13 @@ int skim_data() {
         patterns.emplace_back(r);
     }
 
-    // 启动线程池（单线程或并行）
+    // Start thread pool.
     std::atomic<int> idx{0};
     unsigned nThreads = std::min<unsigned>(
         std::thread::hardware_concurrency() ? std::thread::hardware_concurrency() : 4,
         nFiles
     );
-    // 如需调试可设为 1
+    // Set to 1 for debugging.
     // nThreads = 1;
     std::vector<std::thread> pool;
     std::vector<std::string> tempFiles(nFiles);
@@ -215,7 +215,7 @@ int skim_data() {
     }
     for (auto& th : pool) th.join();
 
-    // 合并 —— 按 50GB 分割
+    // Merge in 50 GB chunks.
     std::cout << "Merging into chunks of up to 50GB...\n";
     const long long maxChunkSize = 50LL * 1024 * 1024 * 1024; // 50 GB
     std::string outDir  = outputFile.substr(0, outputFile.find_last_of("/"));
@@ -223,7 +223,7 @@ int skim_data() {
     std::string baseName = outBase.substr(0, outBase.find_last_of("."));
     std::string ext      = outBase.substr(outBase.find_last_of(".")); // ".root"
 
-    // 构建批次
+    // Build batches.
     std::vector<std::vector<std::string>> batches;
     std::vector<std::string> current;
     long long currentSize = 0;
@@ -245,7 +245,7 @@ int skim_data() {
         batches.push_back(current);
     }
 
-    // 按批次合并并写入 cutflow
+    // Merge batches and write cutflow.
     for (size_t bi = 0; bi < batches.size(); ++bi) {
         std::string outPath;
         if (bi == 0) {
@@ -264,7 +264,7 @@ int skim_data() {
         merger.Merge();
         std::cout << "Merge of batch " << (bi+1) << " done.\n";
 
-        // 写入 cutflow 直方图
+        // Write cutflow histogram.
         TFile* outF = TFile::Open(outPath.c_str(), "UPDATE");
         TTree* outT = (TTree*)outF->Get("Events");
         Long64_t passedEntries = outT ? outT->GetEntries() : 0;
@@ -281,7 +281,7 @@ int skim_data() {
         std::cout << "Written cutflow histogram into " << outPath << "\n";
     }
 
-    // 删除临时目录
+    // Remove temp directory.
     gSystem->Exec(("rm -rf " + tempDirName).c_str());
     std::cout << "All finished. Outputs:";
     for (size_t bi = 0; bi < batches.size(); ++bi) {

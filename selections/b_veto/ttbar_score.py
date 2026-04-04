@@ -1,4 +1,4 @@
-# Calculate WP and efficiency for AK4 tagger
+"""Summary: Compute AK4 tagger working points and efficiencies."""
 import csv
 import os
 import sys

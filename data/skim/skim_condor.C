@@ -1,3 +1,4 @@
+// Summary: Skim one ROOT file for Condor jobs and write a filtered output.
 #include <TSystem.h>
 #include <TFile.h>
 #include <TTree.h>
@@ -10,7 +11,7 @@
 #include <iostream>
 #include <unistd.h>
 
-// 要保留的 branch 通配列表
+// Branch patterns to keep
 const std::vector<std::string> branchPatterns = {
     "nScouting*",
     "nGenJetAK8",
@@ -33,19 +34,19 @@ const std::vector<std::string> branchPatterns = {
     "ScoutingMuonVtx_hcalIso",
     "ScoutingMuonNoVtx_hcalIso"
 };
-// 筛选条件
+// Event selection
 const std::string cutString = "nScoutingFatPFJetRecluster > 0";
 
 void skim_single(const std::string& inPath) {
 
-    // 编译通配为 regex
+    // Compile wildcards into regex.
     std::vector<std::regex> patterns;
     for (auto& p : branchPatterns) {
         std::string r = "^" + std::regex_replace(p, std::regex(R"(\*)"), ".*") + "$";
         patterns.emplace_back(r);
     }
 
-    // 打开输入文件
+    // Open input file.
     TFile* inF = TFile::Open(inPath.c_str(), "READ");
     if (!inF || inF->IsZombie()) {
         std::cerr << "Error: cannot open input file " << inPath << std::endl;
@@ -58,7 +59,7 @@ void skim_single(const std::string& inPath) {
         return;
     }
 
-    // 筛选 branch
+    // Select branches.
     auto all = tree->GetListOfBranches();
     std::vector<std::string> sel;
     for (auto* obj : *all) {
@@ -78,7 +79,7 @@ void skim_single(const std::string& inPath) {
     tree->SetBranchStatus("*", 0);
     for (auto& b : sel) tree->SetBranchStatus(b.c_str(), 1);
 
-    // 创建输出文件 temp.root
+    // Create output file temp.root.
     TFile* outF = TFile::Open("temp.root", "RECREATE");
     outF->SetCompressionSettings(
         100 * ROOT::RCompressionSetting::EAlgorithm::kLZMA
@@ -86,7 +87,7 @@ void skim_single(const std::string& inPath) {
     );
     TTree* outT = tree->CloneTree(0);
 
-    // 应用 cut
+    // Apply cut.
     TTreeFormula formula("cut", cutString.c_str(), tree);
     Long64_t nEntries = tree->GetEntries();
 
@@ -95,11 +96,11 @@ void skim_single(const std::string& inPath) {
         if (formula.EvalInstance()) outT->Fill();
     }
 
-    // 写入筛选后的树
+    // Write filtered tree.
     outF->cd();
     outT->Write();
 
-    // 写入 cutflow 直方图
+    // Write cutflow histogram.
     Long64_t passedEntries = outT->GetEntries();
     TH1D* hCutFlow = new TH1D("cutflow", "Cut Flow;Step;Entries", 2, 0.5, 2.5);
     hCutFlow->SetBinContent(1, nEntries);
@@ -108,14 +109,14 @@ void skim_single(const std::string& inPath) {
     hCutFlow->GetXaxis()->SetBinLabel(2, cutString.c_str());
     hCutFlow->Write();
 
-    // 关闭文件
+    // Close files.
     outF->Close();
     inF->Close();
 
     std::cout << "Finished. Output written to temp.root" << std::endl;
 }
 
-// ROOT 宏入口：接受一个字符串参数
+// ROOT macro entry point with one string argument.
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         std::cerr << "Usage: " << argv[0]
