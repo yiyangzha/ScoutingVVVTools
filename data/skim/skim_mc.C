@@ -184,11 +184,9 @@ int skim_mc(){
         std::thread::hardware_concurrency() ? std::thread::hardware_concurrency() : 4,
         nFiles
     );
-    std::atomic<int> idx{3910};
+    std::atomic<int> idx{0};
     std::vector<std::thread> pool;
     std::vector<std::string> tempFiles(nFiles);
-
-    nThreads = 1;
 
     for (unsigned t = 0; t < nThreads; ++t) {
         pool.emplace_back([&](){

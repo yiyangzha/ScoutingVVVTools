@@ -94,7 +94,7 @@ int merge_data() {
     }
 
     // Write each batch after applying cutString.
-    for (size_t bi = 30; bi < batches.size(); ++bi) {
+    for (size_t bi = 0; bi < batches.size(); ++bi) {
         // Build output file name.
         std::string outPath;
         if (bi == 0) {

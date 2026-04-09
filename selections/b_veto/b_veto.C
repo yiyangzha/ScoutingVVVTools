@@ -26,7 +26,7 @@ static const int    NBINS = 50000;
 static const double XMIN  = 0.0;
 static const double XMAX  = 1.0;
 
-static const std::string OUTFILE = "minBtag_new_1000.root";
+static const std::string OUTFILE = "b_veto_hists.root";
 static const std::string XROOTD_PREFIX = "root://cms-xrd-global.cern.ch/";
 
 static const int MAXFAT = 16;

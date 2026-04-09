@@ -22,7 +22,7 @@ plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["mathtext.rm"] = "serif"
 plt.style.use(hep.style.CMS)
 
-ROOT_FILE = "minBtag_new_1000.root"
+ROOT_FILE = "b_veto_hists.root"
 OUT_DIR = "b_veto"
 os.makedirs(OUT_DIR, exist_ok=True)
 CSV_FILE = os.path.join(OUT_DIR, "sample_btag_working_points.csv")
