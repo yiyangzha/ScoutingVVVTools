@@ -217,6 +217,15 @@ struct ArrayInputConfig {
         }
     }
 
+    void ensureBufferSize(int size) {
+        const int newSize = max(1, size);
+        if (newSize == maxSize) {
+            return;
+        }
+        maxSize = newSize;
+        initBuffer();
+    }
+
     void bind(TTree* tree, bool isMC) {
         if (onlyMC && !isMC) {
             bound = false;
@@ -2501,6 +2510,25 @@ unordered_map<string, const ScalarInputConfig*> bindInputBranches(TTree* tree,
     return rawScalarByName;
 }
 
+void ensureCollectionBufferCapacities(TTree* tree, BranchConfig& branchConfig, bool isMC) {
+    const auto scalarBranchMap = buildScalarBranchMap(branchConfig);
+    for (auto& collection : branchConfig.collections) {
+        const auto sizeIt = scalarBranchMap.find(collection.sizeName);
+        const string sizeBranch = (sizeIt != scalarBranchMap.end()) ? sizeIt->second : collection.sizeName;
+        Long64_t observedMax = static_cast<Long64_t>(llround(tree->GetMaximum(sizeBranch.c_str())));
+        if (observedMax < 0) {
+            observedMax = 0;
+        }
+        const int bindSize = max(collection.maxSize, static_cast<int>(observedMax));
+        for (auto& field : collection.fields) {
+            if (field.onlyMC && !isMC) {
+                continue;
+            }
+            field.ensureBufferSize(bindSize);
+        }
+    }
+}
+
 int determineThreadCount(int configuredThreads, size_t workItems) {
     int threads = max(1, configuredThreads);
 #ifdef _OPENMP
@@ -2573,6 +2601,7 @@ void processInputFile(const string& inputFileName,
     }
 
     configureActiveBranches(tree, branchConfig, sampleMeta.isMC());
+    ensureCollectionBufferCapacities(tree, branchConfig, sampleMeta.isMC());
     unordered_map<string, const ScalarInputConfig*> rawScalarByName = bindInputBranches(tree, branchConfig, sampleMeta.isMC());
 
     const Long64_t nEntries = tree->GetEntries();
