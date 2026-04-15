@@ -16,9 +16,13 @@
 #include <vector>
 
 #include <TAxis.h>
+#include <TCanvas.h>
+#include <TColor.h>
 #include <TFile.h>
 #include <TH1.h>
 #include <TROOT.h>
+#include <TLegend.h>
+#include <TStyle.h>
 #include <TTree.h>
 
 #include "../src/simple_json.h"
@@ -459,6 +463,121 @@ void writeCsv(const string& outputPath,
     }
 }
 
+string makePdfPath(const string& csvPath) {
+    fs::path path(csvPath);
+    path.replace_extension(".pdf");
+    return path.string();
+}
+
+double histogramMaxWithError(const TH1* hist) {
+    double maxValue = 0.;
+    for (int bin = 1; bin <= hist->GetNbinsX(); ++bin) {
+        maxValue = max(maxValue, hist->GetBinContent(bin) + hist->GetBinError(bin));
+    }
+    return maxValue;
+}
+
+void configureLineStyle(TH1* hist,
+                        int color,
+                        int lineWidth,
+                        const char* xTitle,
+                        const char* yTitle) {
+    hist->SetTitle("");
+    hist->SetStats(0);
+    hist->SetLineColor(color);
+    hist->SetMarkerColor(color);
+    hist->SetMarkerSize(0.);
+    hist->SetLineWidth(lineWidth);
+    hist->GetXaxis()->SetTitle(xTitle);
+    hist->GetYaxis()->SetTitle(yTitle);
+    hist->GetXaxis()->SetTitleSize(0.05);
+    hist->GetYaxis()->SetTitleSize(0.05);
+    hist->GetXaxis()->SetLabelSize(0.042);
+    hist->GetYaxis()->SetLabelSize(0.042);
+    hist->GetYaxis()->SetTitleOffset(1.15);
+}
+
+void configureBandStyle(TH1* hist, int color) {
+    hist->SetStats(0);
+    hist->SetLineColorAlpha(color, 0.);
+    hist->SetMarkerColorAlpha(color, 0.);
+    hist->SetMarkerSize(0.);
+    hist->SetFillStyle(1001);
+    hist->SetFillColorAlpha(color, 0.3);
+}
+
+void writePileupPdf(const string& outputPath,
+                    const TH1* dataNominal,
+                    const TH1* dataLow,
+                    const TH1* dataHigh,
+                    const TH1* mc) {
+    fs::create_directories(fs::path(outputPath).parent_path());
+
+    unique_ptr<TH1> drawDataNominal = cloneHistogram(dataNominal, "pileup_draw_data_nominal", false);
+    unique_ptr<TH1> drawDataLow = cloneHistogram(dataLow, "pileup_draw_data_low", false);
+    unique_ptr<TH1> drawDataHigh = cloneHistogram(dataHigh, "pileup_draw_data_high", false);
+    unique_ptr<TH1> drawMc = cloneHistogram(mc, "pileup_draw_mc", false);
+    unique_ptr<TH1> bandDataNominal = cloneHistogram(dataNominal, "pileup_band_data_nominal", false);
+    unique_ptr<TH1> bandDataLow = cloneHistogram(dataLow, "pileup_band_data_low", false);
+    unique_ptr<TH1> bandDataHigh = cloneHistogram(dataHigh, "pileup_band_data_high", false);
+    unique_ptr<TH1> bandMc = cloneHistogram(mc, "pileup_band_mc", false);
+
+    const int nominalColor = TColor::GetColor("#d62728");
+    const int lightRedColor = TColor::GetColor("#f4a3a8");
+    const int darkRedColor = TColor::GetColor("#7f0000");
+    const int mcColor = kBlack;
+
+    configureLineStyle(drawDataNominal.get(), nominalColor, 3, "pileup", "A.U.");
+    configureLineStyle(drawDataLow.get(), lightRedColor, 3, "pileup", "A.U.");
+    configureLineStyle(drawDataHigh.get(), darkRedColor, 3, "pileup", "A.U.");
+    configureLineStyle(drawMc.get(), mcColor, 3, "pileup", "A.U.");
+
+    configureBandStyle(bandDataNominal.get(), nominalColor);
+    configureBandStyle(bandDataLow.get(), lightRedColor);
+    configureBandStyle(bandDataHigh.get(), darkRedColor);
+    configureBandStyle(bandMc.get(), mcColor);
+
+    double maxValue = 0.;
+    maxValue = max(maxValue, histogramMaxWithError(drawDataNominal.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawDataLow.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawDataHigh.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawMc.get()));
+    drawDataNominal->SetMaximum(maxValue * 1.25);
+    drawDataNominal->SetMinimum(0.);
+
+    TCanvas canvas("pileup_canvas", "", 900, 700);
+    canvas.SetTicks(1, 1);
+    canvas.SetLeftMargin(0.125);
+    canvas.SetBottomMargin(0.12);
+    canvas.SetRightMargin(0.04);
+    canvas.SetTopMargin(0.04);
+
+    gStyle->SetOptStat(0);
+    gStyle->SetErrorX(0.);
+
+    drawDataNominal->Draw("HIST");
+    bandDataNominal->Draw("E2 SAME");
+    bandDataLow->Draw("E2 SAME");
+    bandDataHigh->Draw("E2 SAME");
+    bandMc->Draw("E2 SAME");
+    drawDataNominal->Draw("HIST SAME");
+    drawDataLow->Draw("HIST SAME");
+    drawDataHigh->Draw("HIST SAME");
+    drawMc->Draw("HIST SAME");
+
+    TLegend legend(0.63, 0.70, 0.88, 0.88);
+    legend.SetBorderSize(0);
+    legend.SetFillStyle(0);
+    legend.SetTextSize(0.038);
+    legend.AddEntry(drawDataNominal.get(), "Data nominal", "l");
+    legend.AddEntry(drawDataLow.get(), "Data low", "l");
+    legend.AddEntry(drawDataHigh.get(), "Data high", "l");
+    legend.AddEntry(drawMc.get(), "MC", "l");
+    legend.Draw();
+
+    canvas.SaveAs(outputPath.c_str());
+}
+
 int determineThreadCount(int configuredThreads, size_t workItems) {
     int threads = max(1, configuredThreads);
 #ifdef _OPENMP
@@ -633,11 +752,13 @@ int main(int argc, char** argv) {
         normalizeHistogram(dataHigh.get(), "data high");
         normalizeHistogram(mcHist.get(), "mc");
         writeCsv(sampleMeta.outputFileName, dataNominal.get(), dataNominal.get(), dataLow.get(), dataHigh.get(), mcHist.get());
+        writePileupPdf(makePdfPath(sampleMeta.outputFileName), dataNominal.get(), dataLow.get(), dataHigh.get(), mcHist.get());
     } catch (const exception& ex) {
         cerr << "Output error: " << ex.what() << endl;
         return 1;
     }
 
     cout << "Wrote pileup weights to " << sampleMeta.outputFileName << endl;
+    cout << "Wrote pileup plot to " << makePdfPath(sampleMeta.outputFileName) << endl;
     return 0;
 }

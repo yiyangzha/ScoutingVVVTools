@@ -1,9 +1,10 @@
 {
   "tree_name": "Events",
   "run_sample": "www",
+  "submit_samples": ["www"],
   "pileup_branch": "Pileup_nTrueInt",
   "pileup_histogram": "pileup",
-  "max_threads": 12,
+  "max_threads": 16,
   "pileup_data_files": {
     "nominal": "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-69200ub.root",
     "low":     "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-66000ub.root",

@@ -2,10 +2,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_INPUT="${1:-${SCRIPT_DIR}/config.json}"
-MAX_CONCURRENT_JOBS="${MAX_CONCURRENT_JOBS:-4}"
+CONFIG_INPUT="${SCRIPT_DIR}/config.json"
+MAX_CONCURRENT_JOBS=1
 LOG_PATH="${SCRIPT_DIR}/log.txt"
 BIN_PATH="${SCRIPT_DIR}/weight"
+
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    *.json)
+      CONFIG_INPUT="$1"
+      shift
+      ;;
+  esac
+fi
+
+REQUESTED_SAMPLES=("$@")
 
 if [ ! -f "${CONFIG_INPUT}" ]; then
   echo "config file not found: ${CONFIG_INPUT}" >&2
@@ -73,12 +84,26 @@ cd "${SCRIPT_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
 
+cleanup_build_artifacts() {
+  if [ -f "${BIN_PATH}" ]; then
+    rm -f "${BIN_PATH}"
+  fi
+  if [ -d "${BIN_PATH}.dSYM" ]; then
+    rm -rf "${BIN_PATH}.dSYM"
+  fi
+}
+
+trap cleanup_build_artifacts EXIT
+
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
 }
 
 echo "[$(timestamp)] config=${CONFIG_PATH}"
 echo "[$(timestamp)] max_concurrent_jobs=${MAX_CONCURRENT_JOBS}"
+if [ "${#REQUESTED_SAMPLES[@]}" -gt 0 ]; then
+  echo "[$(timestamp)] cli_samples=${REQUESTED_SAMPLES[*]}"
+fi
 
 ROOT_CFLAGS="$(root-config --cflags)"
 ROOT_LIBS="$(root-config --libs)"
@@ -93,7 +118,7 @@ while IFS= read -r sample; do
     samples+=("${sample}")
   fi
 done < <(
-  python3 - "${CONFIG_PATH}" <<'PY'
+  python3 - "${CONFIG_PATH}" "${REQUESTED_SAMPLES[@]}" <<'PY'
 import json
 import sys
 
@@ -105,6 +130,7 @@ if not isinstance(rules, list):
     raise SystemExit("sample_rules must be a JSON array")
 
 seen = set()
+all_samples = []
 for rule in rules:
     if not isinstance(rule, dict):
         continue
@@ -121,14 +147,40 @@ for rule in rules:
         if not isinstance(sample, str) or not sample or sample in seen:
             continue
         seen.add(sample)
-        print(sample)
+        all_samples.append(sample)
+
+configured = payload.get("submit_samples", [])
+if configured is None:
+    configured = []
+if not isinstance(configured, list):
+    raise SystemExit("submit_samples must be a JSON array")
+for sample in configured:
+    if not isinstance(sample, str):
+        raise SystemExit("submit_samples must contain only strings")
+
+requested = [sample for sample in sys.argv[2:] if sample]
+selected = requested if requested else configured
+if not selected:
+    selected = all_samples
+
+available = set(all_samples)
+emitted = set()
+for sample in selected:
+    if sample not in available:
+        raise SystemExit(f"Unknown sample requested: {sample}")
+    if sample in emitted:
+        continue
+    emitted.add(sample)
+    print(sample)
 PY
 )
 
 if [ "${#samples[@]}" -eq 0 ]; then
-  echo "No non-data samples found in sample_rules of ${CONFIG_PATH}" >&2
+  echo "No samples selected from ${CONFIG_PATH}" >&2
   exit 1
 fi
+
+echo "[$(timestamp)] selected_samples=${samples[*]}"
 
 declare -a RUNNING_PIDS=()
 declare -a RUNNING_SAMPLES=()
