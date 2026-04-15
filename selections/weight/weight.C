@@ -1,9 +1,14 @@
 // Summary: Build pileup reweight CSV files from MC Pileup_nTrueInt and three reference data pileup histograms.
+#include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -13,22 +18,28 @@
 #include <TAxis.h>
 #include <TFile.h>
 #include <TH1.h>
-#include <TSystem.h>
+#include <TROOT.h>
 #include <TTree.h>
 #include <nlohmann/json.hpp>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using json = nlohmann::json;
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace {
 
-const char* kConfigPath = "weight/config.json";
+const char* kConfigPath = "./config.json";
 const char* kConfigEnvVar = "WEIGHT_CONFIG_PATH";
+const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
 
 struct SampleRuleConfig {
     vector<string> containsAny;
     string category;
-    string inputRootKey;
+    string path;
     int sampleType = 0;
     bool hasSampleType = false;
     bool isSignal = false;
@@ -41,12 +52,10 @@ struct AppConfig {
     string pileupBranch = "Pileup_nTrueInt";
     string pileupHistogram = "pileup";
     unordered_map<string, string> pileupDataFiles;
-    unordered_map<string, string> inputRoots;
     string outputRoot;
-    string inputPattern;
     string outputPattern;
+    int maxThreads = 12;
     string defaultCategory = "bkg";
-    string defaultInputRootKey = "mc";
     int defaultSampleType = -1;
     bool defaultIsSignal = false;
     vector<SampleRuleConfig> sampleRules;
@@ -55,12 +64,11 @@ struct AppConfig {
 struct SampleMeta {
     string sample;
     string category;
-    string inputRootKey;
-    string inputRoot;
-    string inputFileName;
+    string inputPath;
     string outputFileName;
     int sampleType = -1;
     bool isSignal = false;
+    bool isRemoteDataset = false;
 
     bool isMC() const {
         return category != "data";
@@ -93,21 +101,26 @@ string applyTemplate(string text, const unordered_map<string, string>& values) {
     return text;
 }
 
+bool endsWith(const string& text, const string& suffix) {
+    return text.size() >= suffix.size() &&
+           text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 string resolveConfigPath(const char* preferredPath, const char* envVar) {
-    const char* envPath = gSystem->Getenv(envVar);
+    const char* envPath = getenv(envVar);
     if (envPath != nullptr && *envPath != '\0') {
-        if (!gSystem->AccessPathName(envPath)) {
+        if (fs::exists(envPath)) {
             return envPath;
         }
         throw runtime_error(string("Cannot find config file from environment variable ") + envVar + ": " + envPath);
     }
 
-    if (!gSystem->AccessPathName(preferredPath)) {
+    if (fs::exists(preferredPath)) {
         return preferredPath;
     }
 
-    const string fallback = gSystem->BaseName(preferredPath);
-    if (!gSystem->AccessPathName(fallback.c_str())) {
+    const string fallback = fs::path(preferredPath).filename().string();
+    if (fs::exists(fallback)) {
         return fallback;
     }
 
@@ -143,6 +156,9 @@ AppConfig loadAppConfig() {
     config.runSample = payload.value("run_sample", "");
     config.pileupBranch = payload.value("pileup_branch", "Pileup_nTrueInt");
     config.pileupHistogram = payload.value("pileup_histogram", "pileup");
+    config.outputRoot = payload.at("output_root").get<string>();
+    config.outputPattern = payload.at("output_pattern").get<string>();
+    config.maxThreads = payload.value("max_threads", 12);
 
     if (payload.contains("pileup_data_files")) {
         for (auto it = payload.at("pileup_data_files").begin(); it != payload.at("pileup_data_files").end(); ++it) {
@@ -150,20 +166,9 @@ AppConfig loadAppConfig() {
         }
     }
 
-    if (payload.contains("input_roots")) {
-        for (auto it = payload.at("input_roots").begin(); it != payload.at("input_roots").end(); ++it) {
-            config.inputRoots[it.key()] = it.value().get<string>();
-        }
-    }
-
-    config.outputRoot = payload.at("output_root").get<string>();
-    config.inputPattern = payload.at("input_pattern").get<string>();
-    config.outputPattern = payload.at("output_pattern").get<string>();
-
     if (payload.contains("defaults")) {
         const auto& defaults = payload.at("defaults");
         config.defaultCategory = defaults.value("category", config.defaultCategory);
-        config.defaultInputRootKey = defaults.value("input_root_key", config.defaultInputRootKey);
         config.defaultSampleType = defaults.value("sample_type", config.defaultSampleType);
         config.defaultIsSignal = defaults.value("is_signal", config.defaultIsSignal);
     }
@@ -172,12 +177,8 @@ AppConfig loadAppConfig() {
         for (const auto& node : payload.at("sample_rules")) {
             SampleRuleConfig rule;
             rule.containsAny = node.at("contains_any").get<vector<string>>();
-            if (node.contains("category")) {
-                rule.category = node.at("category").get<string>();
-            }
-            if (node.contains("input_root_key")) {
-                rule.inputRootKey = node.at("input_root_key").get<string>();
-            }
+            rule.category = node.value("category", "");
+            rule.path = node.value("path", "");
             if (node.contains("sample_type")) {
                 rule.sampleType = node.at("sample_type").get<int>();
                 rule.hasSampleType = true;
@@ -193,24 +194,138 @@ AppConfig loadAppConfig() {
     return config;
 }
 
-string resolveRequestedSample(const char* typeArg, const AppConfig& appConfig) {
-    if (typeArg != nullptr && *typeArg != '\0') {
-        return typeArg;
+string resolveRequestedSample(int argc, char** argv, const AppConfig& appConfig) {
+    if (argc >= 2 && argv[1] != nullptr && *argv[1] != '\0') {
+        return argv[1];
     }
     if (!appConfig.runSample.empty()) {
         return appConfig.runSample;
     }
-    throw runtime_error("No sample specified. Pass typeArg explicitly or set run_sample in weight/config.json.");
+    throw runtime_error("No sample specified. Pass sample as argv[1] or set run_sample in ./config.json.");
+}
+
+bool isCmsDatasetPath(const string& path) {
+    if (path.empty() || path[0] != '/' || endsWith(path, ".root")) {
+        return false;
+    }
+
+    size_t parts = 0;
+    string token;
+    stringstream ss(path);
+    while (getline(ss, token, '/')) {
+        if (!token.empty()) {
+            ++parts;
+        }
+    }
+    return parts == 3;
+}
+
+bool isUserDataset(const string& path) {
+    return endsWith(path, "/USER");
+}
+
+string runCommand(const string& command) {
+    unique_ptr<FILE, int(*)(FILE*)> pipe(popen(command.c_str(), "r"), pclose);
+    if (!pipe) {
+        throw runtime_error("Failed to run command: " + command);
+    }
+
+    string output;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+        output += buffer;
+    }
+
+    const int status = pclose(pipe.release());
+    if (status != 0) {
+        throw runtime_error("Command failed (" + to_string(status) + "): " + command + "\n" + output);
+    }
+    return output;
+}
+
+vector<string> splitLines(const string& text) {
+    vector<string> out;
+    string line;
+    stringstream ss(text);
+    while (getline(ss, line)) {
+        if (!line.empty()) {
+            out.push_back(line);
+        }
+    }
+    return out;
+}
+
+vector<string> listRemoteRootFiles(const string& datasetPath) {
+    string query = "file dataset=" + datasetPath;
+    if (isUserDataset(datasetPath)) {
+        query += " instance=prod/phys03";
+    }
+
+    const string command = "dasgoclient -query=\"" + query + "\" 2>&1";
+    vector<string> lines = splitLines(runCommand(command));
+    vector<string> files;
+    files.reserve(lines.size());
+    for (const auto& line : lines) {
+        if (endsWith(line, ".root")) {
+            files.push_back(string(kRemotePrefix) + line);
+        }
+    }
+    sort(files.begin(), files.end());
+    return files;
+}
+
+vector<string> listLocalRootFiles(const string& inputPath) {
+    vector<string> files;
+    const fs::path path(inputPath);
+
+    if (!fs::exists(path)) {
+        throw runtime_error("Local input path does not exist: " + inputPath);
+    }
+
+    if (fs::is_regular_file(path)) {
+        if (!endsWith(path.string(), ".root")) {
+            throw runtime_error("Local input file is not a ROOT file: " + inputPath);
+        }
+        files.push_back(fs::absolute(path).string());
+        return files;
+    }
+
+    if (!fs::is_directory(path)) {
+        throw runtime_error("Unsupported local input path: " + inputPath);
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(path)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const string filePath = entry.path().string();
+        if (endsWith(filePath, ".root")) {
+            files.push_back(fs::absolute(entry.path()).string());
+        }
+    }
+
+    sort(files.begin(), files.end());
+    return files;
+}
+
+vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
+    sampleMeta.isRemoteDataset = isCmsDatasetPath(sampleMeta.inputPath);
+    vector<string> files = sampleMeta.isRemoteDataset ? listRemoteRootFiles(sampleMeta.inputPath)
+                                                      : listLocalRootFiles(sampleMeta.inputPath);
+    if (files.empty()) {
+        throw runtime_error("No ROOT files found for sample " + sampleMeta.sample + " from path " + sampleMeta.inputPath);
+    }
+    return files;
 }
 
 SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
     SampleMeta meta;
     meta.sample = sample;
     meta.category = appConfig.defaultCategory;
-    meta.inputRootKey = appConfig.defaultInputRootKey;
     meta.sampleType = appConfig.defaultSampleType;
     meta.isSignal = appConfig.defaultIsSignal;
 
+    string pathTemplate;
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
             continue;
@@ -218,8 +333,8 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         if (!rule.category.empty()) {
             meta.category = rule.category;
         }
-        if (!rule.inputRootKey.empty()) {
-            meta.inputRootKey = rule.inputRootKey;
+        if (!rule.path.empty()) {
+            pathTemplate = rule.path;
         }
         if (rule.hasSampleType) {
             meta.sampleType = rule.sampleType;
@@ -232,19 +347,16 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         break;
     }
 
-    const auto inputRootIt = appConfig.inputRoots.find(meta.inputRootKey);
-    if (inputRootIt == appConfig.inputRoots.end()) {
-        throw runtime_error("Unknown input root key: " + meta.inputRootKey);
+    if (pathTemplate.empty()) {
+        throw runtime_error("No input path configured for sample: " + sample);
     }
 
-    meta.inputRoot = inputRootIt->second;
     unordered_map<string, string> templateValues;
     templateValues["sample"] = meta.sample;
     templateValues["category"] = meta.category;
-    templateValues["input_root"] = meta.inputRoot;
     templateValues["output_root"] = appConfig.outputRoot;
 
-    meta.inputFileName = applyTemplate(appConfig.inputPattern, templateValues);
+    meta.inputPath = applyTemplate(pathTemplate, templateValues);
     meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
     return meta;
 }
@@ -252,7 +364,7 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
 string getRequiredDataFile(const AppConfig& appConfig, const string& key) {
     const auto it = appConfig.pileupDataFiles.find(key);
     if (it == appConfig.pileupDataFiles.end() || it->second.empty()) {
-        throw runtime_error("Missing pileup_data_files." + key + " in weight/config.json");
+        throw runtime_error("Missing pileup_data_files." + key + " in ./config.json");
     }
     return it->second;
 }
@@ -334,7 +446,7 @@ void writeCsv(const string& outputPath,
               const TH1* dataLow,
               const TH1* dataHigh,
               const TH1* mc) {
-    gSystem->mkdir(gSystem->DirName(outputPath.c_str()), true);
+    fs::create_directories(fs::path(outputPath).parent_path());
 
     ofstream fout(outputPath);
     if (!fout) {
@@ -353,39 +465,107 @@ void writeCsv(const string& outputPath,
     }
 }
 
+int determineThreadCount(int configuredThreads, size_t workItems) {
+    int threads = max(1, configuredThreads);
+#ifdef _OPENMP
+    threads = min(threads, omp_get_max_threads());
+#else
+    threads = 1;
+#endif
+    if (workItems > 0) {
+        threads = min<int>(threads, static_cast<int>(workItems));
+    }
+    return max(1, threads);
+}
+
+void printFileProgress(const string& sample, size_t done, size_t total) {
+    ostringstream ss;
+    const double percent = (total == 0) ? 100. : (100.0 * static_cast<double>(done) / static_cast<double>(total));
+    ss << "\r[" << sample << "] files " << done << "/" << total
+       << " (" << fixed << setprecision(1) << percent << "%)";
+    cout << ss.str() << flush;
+    if (done >= total) {
+        cout << '\n';
+    }
+}
+
+void processInputFile(const string& inputFileName,
+                      const AppConfig& appConfig,
+                      TH1* localHist) {
+    unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
+    if (!inputFile || inputFile->IsZombie()) {
+        throw runtime_error("Error opening input file " + inputFileName);
+    }
+
+    TTree* tree = static_cast<TTree*>(inputFile->Get(appConfig.treeName.c_str()));
+    if (!tree) {
+        throw runtime_error("Tree " + appConfig.treeName + " not found in " + inputFileName);
+    }
+    if (!tree->GetBranch(appConfig.pileupBranch.c_str())) {
+        throw runtime_error("Branch " + appConfig.pileupBranch + " not found in " + inputFileName);
+    }
+
+    tree->SetBranchStatus("*", 0);
+    tree->SetBranchStatus(appConfig.pileupBranch.c_str(), 1);
+    tree->SetCacheSize(50 * 1024 * 1024);
+    tree->AddBranchToCache(appConfig.pileupBranch.c_str(), true);
+
+    Float_t pileupValue = 0.f;
+    tree->SetBranchAddress(appConfig.pileupBranch.c_str(), &pileupValue);
+
+    const Long64_t nEntries = tree->GetEntries();
+    for (Long64_t entry = 0; entry < nEntries; ++entry) {
+        tree->GetEntry(entry);
+        localHist->Fill(pileupValue);
+    }
+}
+
 }  // namespace
 
-void weight(const char* typeArg = nullptr) {
+int main(int argc, char** argv) {
+    TH1::AddDirectory(false);
+
     AppConfig appConfig;
     try {
         appConfig = loadAppConfig();
     } catch (const exception& ex) {
         cerr << "Configuration error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
     string sample;
     try {
-        sample = resolveRequestedSample(typeArg, appConfig);
+        sample = resolveRequestedSample(argc, argv, appConfig);
     } catch (const exception& ex) {
         cerr << "Sample selection error: " << ex.what() << endl;
-        return;
+        return 1;
     }
-
-    cout << "Running weight with sample = " << sample << endl;
 
     SampleMeta sampleMeta;
     try {
         sampleMeta = resolveSampleMeta(sample, appConfig);
     } catch (const exception& ex) {
         cerr << "Sample resolution error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
     if (!sampleMeta.isMC()) {
-        cerr << "weight.C only supports MC samples, but got category = " << sampleMeta.category << endl;
-        return;
+        cerr << "weight only supports MC samples, but got category = " << sampleMeta.category << endl;
+        return 1;
     }
+
+    vector<string> inputFiles;
+    try {
+        inputFiles = discoverInputFiles(sampleMeta);
+    } catch (const exception& ex) {
+        cerr << "Input discovery error: " << ex.what() << endl;
+        return 1;
+    }
+
+    cout << "Running weight for sample = " << sample
+         << ", files = " << inputFiles.size()
+         << ", source = " << sampleMeta.inputPath
+         << (sampleMeta.isRemoteDataset ? " [dataset]" : " [local]") << endl;
 
     unique_ptr<TH1> dataNominal;
     unique_ptr<TH1> dataLow;
@@ -398,38 +578,59 @@ void weight(const char* typeArg = nullptr) {
         ensureSameBinning(dataNominal.get(), dataHigh.get(), "high");
     } catch (const exception& ex) {
         cerr << "Pileup histogram error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
     unique_ptr<TH1> mcHist = cloneHistogram(dataNominal.get(), "pileup_mc", true);
+    const int threadCount = determineThreadCount(appConfig.maxThreads, inputFiles.size());
 
-    unique_ptr<TFile> inputFile(TFile::Open(sampleMeta.inputFileName.c_str(), "READ"));
-    if (!inputFile || inputFile->IsZombie()) {
-        cerr << "Error opening input file " << sampleMeta.inputFileName << endl;
-        return;
+#ifdef _OPENMP
+    if (threadCount > 1) {
+        ROOT::EnableThreadSafety();
     }
+#endif
 
-    TTree* tree = static_cast<TTree*>(inputFile->Get(appConfig.treeName.c_str()));
-    if (!tree) {
-        cerr << "Error: tree " << appConfig.treeName << " not found in " << sampleMeta.inputFileName << endl;
-        return;
-    }
+    cout << "Thread mode: ";
+#ifdef _OPENMP
+    cout << "OpenMP";
+#else
+    cout << "serial";
+#endif
+    cout << ", threads = " << threadCount << endl;
 
-    if (!tree->GetBranch(appConfig.pileupBranch.c_str())) {
-        cerr << "Error: branch " << appConfig.pileupBranch << " not found in " << sampleMeta.inputFileName << endl;
-        return;
-    }
+    atomic<size_t> processedFiles{0};
+    atomic<bool> failed{false};
+    vector<string> errors;
 
-    Float_t pileupValue = 0.f;
-    tree->SetBranchAddress(appConfig.pileupBranch.c_str(), &pileupValue);
+#pragma omp parallel num_threads(threadCount) if(threadCount > 1)
+    {
+        unique_ptr<TH1> localHist = cloneHistogram(dataNominal.get(), "pileup_mc_local", true);
 
-    const Long64_t nEntries = tree->GetEntries();
-    for (Long64_t entry = 0; entry < nEntries; ++entry) {
-        if (entry % 500000 == 0) {
-            cout << "Processing entry " << entry << " / " << nEntries << endl;
+#pragma omp for schedule(dynamic)
+        for (int index = 0; index < static_cast<int>(inputFiles.size()); ++index) {
+            if (failed.load()) {
+                continue;
+            }
+
+            try {
+                processInputFile(inputFiles[index], appConfig, localHist.get());
+                const size_t done = processedFiles.fetch_add(1) + 1;
+#pragma omp critical(weight_progress)
+                printFileProgress(sampleMeta.sample, done, inputFiles.size());
+            } catch (const exception& ex) {
+                failed.store(true);
+#pragma omp critical(weight_error)
+                errors.push_back(ex.what());
+            }
         }
-        tree->GetEntry(entry);
-        mcHist->Fill(pileupValue);
+
+#pragma omp critical(weight_merge)
+        mcHist->Add(localHist.get());
+    }
+
+    if (!errors.empty()) {
+        cerr << "Runtime error: " << errors.front() << endl;
+        return 1;
     }
 
     try {
@@ -440,8 +641,9 @@ void weight(const char* typeArg = nullptr) {
         writeCsv(sampleMeta.outputFileName, dataNominal.get(), dataNominal.get(), dataLow.get(), dataHigh.get(), mcHist.get());
     } catch (const exception& ex) {
         cerr << "Output error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
     cout << "Wrote pileup weights to " << sampleMeta.outputFileName << endl;
+    return 0;
 }

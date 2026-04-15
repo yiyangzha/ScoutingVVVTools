@@ -1,14 +1,18 @@
 // Summary: Skim events and convert branches for BDT training with JSON-driven sample config, string formulas, and precompiled selections.
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <limits>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -17,23 +21,31 @@
 #include <vector>
 
 #include <TFile.h>
+#include <TH1.h>
+#include <TList.h>
 #include <TLorentzVector.h>
-#include <TSystem.h>
+#include <TROOT.h>
 #include <TTree.h>
 #include <nlohmann/json.hpp>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using json = nlohmann::json;
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace {
 
 const float def = -99.f;
 const double kMissingDistance = -999.;
 const double kLargeDistance = 999.;
+const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
 
-const char* kAppConfigPath = "convert/config.json";
-const char* kBranchConfigPath = "convert/branch.json";
-const char* kSelectionConfigPath = "convert/selection.json";
+const char* kAppConfigPath = "./config.json";
+const char* kBranchConfigPath = "./branch.json";
+const char* kSelectionConfigPath = "./selection.json";
 const char* kAppConfigEnvVar = "CONVERT_CONFIG_PATH";
 
 enum class DataType {
@@ -111,6 +123,9 @@ struct ScalarInputConfig {
             bound = false;
             return;
         }
+        if (!tree->GetBranch(branch.c_str())) {
+            throw runtime_error("Missing scalar branch: " + branch);
+        }
 
         if (type == DataType::Float) {
             tree->SetBranchAddress(branch.c_str(), &floatValue);
@@ -174,6 +189,9 @@ struct ArrayInputConfig {
         if (onlyMC && !isMC) {
             bound = false;
             return;
+        }
+        if (!tree->GetBranch(branch.c_str())) {
+            throw runtime_error("Missing array branch: " + branch);
         }
 
         if (type == DataType::Float) {
@@ -281,10 +299,14 @@ struct OutputTreeState {
     unordered_map<string, size_t> branchIndexByName;
 };
 
+struct ThreadConvertResult {
+    vector<OutputTreeState> outputTrees;
+};
+
 struct SampleRuleConfig {
     vector<string> containsAny;
     string category;
-    string inputRootKey;
+    string path;
     int sampleType = 0;
     bool hasSampleType = false;
     bool isSignal = false;
@@ -293,13 +315,11 @@ struct SampleRuleConfig {
 
 struct AppConfig {
     string treeName = "Events";
-    unordered_map<string, string> inputRoots;
     string outputRoot;
-    string inputPattern;
     string outputPattern;
     string runSample;
+    int maxThreads = 12;
     string defaultCategory = "bkg";
-    string defaultInputRootKey = "mc";
     int defaultSampleType = -1;
     bool defaultIsSignal = false;
     vector<SampleRuleConfig> sampleRules;
@@ -314,65 +334,14 @@ struct PileupBin {
     float weightHigh = 1.f;
 };
 
-vector<PileupBin> loadPileupWeights(const string& path) {
-    ifstream fin(path);
-    if (!fin) {
-        throw runtime_error("Cannot open pileup weight CSV: " + path);
-    }
-    vector<PileupBin> bins;
-    string line;
-    bool firstLine = true;
-    while (getline(fin, line)) {
-        if (firstLine) { firstLine = false; continue; }  // skip header
-        if (line.empty()) { continue; }
-        istringstream ss(line);
-        string tok;
-        PileupBin bin;
-        int col = 0;
-        while (getline(ss, tok, ',')) {
-            switch (col) {
-                case 0: bin.binLow    = stof(tok); break;
-                case 1: bin.binHigh   = stof(tok); break;
-                case 2: bin.weight    = stof(tok); break;
-                case 3: bin.weightLow = stof(tok); break;
-                case 4: bin.weightHigh = stof(tok); break;
-            }
-            ++col;
-        }
-        if (col >= 5) {
-            bins.push_back(bin);
-        }
-    }
-    return bins;
-}
-
-long double lookupPileupWeight(const vector<PileupBin>& bins, float pu, int col) {
-    for (const auto& bin : bins) {
-        if (pu >= bin.binLow && pu < bin.binHigh) {
-            if (col == 0) return static_cast<long double>(bin.weight);
-            if (col == 1) return static_cast<long double>(bin.weightLow);
-            return static_cast<long double>(bin.weightHigh);
-        }
-    }
-    // Handle upper edge of last bin
-    if (!bins.empty() && pu == bins.back().binHigh) {
-        const auto& last = bins.back();
-        if (col == 0) return static_cast<long double>(last.weight);
-        if (col == 1) return static_cast<long double>(last.weightLow);
-        return static_cast<long double>(last.weightHigh);
-    }
-    return 1.0L;  // out of range: no reweighting
-}
-
 struct SampleMeta {
     string sample;
     string category;
-    string inputRootKey;
-    string inputRoot;
-    string inputFileName;
+    string inputPath;
     string outputFileName;
     int sampleType = -1;
     bool isSignal = false;
+    bool isRemoteDataset = false;
 
     bool isMC() const {
         return category != "data";
@@ -682,6 +651,11 @@ private:
     }
 };
 
+bool endsWith(const string& text, const string& suffix) {
+    return text.size() >= suffix.size() &&
+           text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 DataType parseDataType(const string& text) {
     if (text == "F") {
         return DataType::Float;
@@ -719,21 +693,21 @@ char outputLeafCode(DataType type) {
 
 string resolveConfigPath(const char* preferredPath, const char* envVar = nullptr) {
     if (envVar != nullptr) {
-        const char* envPath = gSystem->Getenv(envVar);
+        const char* envPath = getenv(envVar);
         if (envPath != nullptr && *envPath != '\0') {
-            if (!gSystem->AccessPathName(envPath)) {
+            if (fs::exists(envPath)) {
                 return envPath;
             }
             throw runtime_error(string("Cannot find config file from environment variable ") + envVar + ": " + envPath);
         }
     }
 
-    if (!gSystem->AccessPathName(preferredPath)) {
+    if (fs::exists(preferredPath)) {
         return preferredPath;
     }
 
-    const string fallback = gSystem->BaseName(preferredPath);
-    if (!gSystem->AccessPathName(fallback.c_str())) {
+    const string fallback = fs::path(preferredPath).filename().string();
+    if (fs::exists(fallback)) {
         return fallback;
     }
 
@@ -792,21 +766,13 @@ AppConfig loadAppConfig() {
     AppConfig config;
     config.treeName = payload.value("tree_name", "Events");
     config.runSample = payload.value("run_sample", "");
-
-    if (payload.contains("input_roots")) {
-        for (auto it = payload.at("input_roots").begin(); it != payload.at("input_roots").end(); ++it) {
-            config.inputRoots[it.key()] = it.value().get<string>();
-        }
-    }
-
     config.outputRoot = payload.at("output_root").get<string>();
-    config.inputPattern = payload.at("input_pattern").get<string>();
     config.outputPattern = payload.at("output_pattern").get<string>();
+    config.maxThreads = payload.value("max_threads", 12);
 
     if (payload.contains("defaults")) {
         const auto& defaults = payload.at("defaults");
         config.defaultCategory = defaults.value("category", config.defaultCategory);
-        config.defaultInputRootKey = defaults.value("input_root_key", config.defaultInputRootKey);
         config.defaultSampleType = defaults.value("sample_type", config.defaultSampleType);
         config.defaultIsSignal = defaults.value("is_signal", config.defaultIsSignal);
     }
@@ -815,12 +781,8 @@ AppConfig loadAppConfig() {
         for (const auto& node : payload.at("sample_rules")) {
             SampleRuleConfig rule;
             rule.containsAny = node.at("contains_any").get<vector<string>>();
-            if (node.contains("category")) {
-                rule.category = node.at("category").get<string>();
-            }
-            if (node.contains("input_root_key")) {
-                rule.inputRootKey = node.at("input_root_key").get<string>();
-            }
+            rule.category = node.value("category", "");
+            rule.path = node.value("path", "");
             if (node.contains("sample_type")) {
                 rule.sampleType = node.at("sample_type").get<int>();
                 rule.hasSampleType = true;
@@ -834,7 +796,6 @@ AppConfig loadAppConfig() {
     }
 
     config.puWeightPathPattern = payload.value("pu_weight_path", "");
-
     return config;
 }
 
@@ -927,7 +888,6 @@ BranchConfig loadBranchConfig() {
     }
 
     const auto& output = payload.at("output");
-
     for (const auto& node : output.at("trees")) {
         TreeConfig treeConfig;
         treeConfig.name = node.at("name").get<string>();
@@ -1052,6 +1012,68 @@ RuntimeCollection mergeCollections(const string& name, const vector<const Runtim
     }
 
     return merged;
+}
+
+vector<PileupBin> loadPileupWeights(const string& path) {
+    ifstream fin(path);
+    if (!fin) {
+        throw runtime_error("Cannot open pileup weight CSV: " + path);
+    }
+    vector<PileupBin> bins;
+    string line;
+    bool firstLine = true;
+    while (getline(fin, line)) {
+        if (firstLine) {
+            firstLine = false;
+            continue;
+        }
+        if (line.empty()) {
+            continue;
+        }
+        istringstream ss(line);
+        string tok;
+        PileupBin bin;
+        int col = 0;
+        while (getline(ss, tok, ',')) {
+            switch (col) {
+                case 0: bin.binLow = stof(tok); break;
+                case 1: bin.binHigh = stof(tok); break;
+                case 2: bin.weight = stof(tok); break;
+                case 3: bin.weightLow = stof(tok); break;
+                case 4: bin.weightHigh = stof(tok); break;
+            }
+            ++col;
+        }
+        if (col >= 5) {
+            bins.push_back(bin);
+        }
+    }
+    return bins;
+}
+
+long double lookupPileupWeight(const vector<PileupBin>& bins, float pu, int col) {
+    for (const auto& bin : bins) {
+        if (pu >= bin.binLow && pu < bin.binHigh) {
+            if (col == 0) {
+                return static_cast<long double>(bin.weight);
+            }
+            if (col == 1) {
+                return static_cast<long double>(bin.weightLow);
+            }
+            return static_cast<long double>(bin.weightHigh);
+        }
+    }
+    if (!bins.empty() && pu == bins.back().binHigh) {
+        const auto& last = bins.back();
+        if (col == 0) {
+            return static_cast<long double>(last.weight);
+        }
+        if (col == 1) {
+            return static_cast<long double>(last.weightLow);
+        }
+        return static_cast<long double>(last.weightHigh);
+    }
+    return 1.0L;
 }
 
 unordered_map<string, long double> buildRawScalarValues(const BranchConfig& branchConfig,
@@ -1256,7 +1278,8 @@ Value evalPairwiseMetric(const string& op,
         throw runtime_error(op + " requires a collection argument");
     }
     const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
-    const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context))) : static_cast<int>(collection->objects.size());
+    const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context)))
+                                         : static_cast<int>(collection->objects.size());
     const int count = min(limit, static_cast<int>(collection->objects.size()));
     if (count < 2) {
         return makeNumberValue(kMissingDistance);
@@ -1317,7 +1340,8 @@ Value evalMinDeltaR(const vector<ExprPtr>& args, const EvalContext& context) {
 
     const TLorentzVector objectP4 = toP4(evalExpression(args[0], context));
     const RuntimeCollection* collection = toCollection(evalExpression(args[1], context));
-    const int limit = (args.size() >= 3) ? static_cast<int>(llround(evalNumber(args[2], context))) : static_cast<int>(collection->objects.size());
+    const int limit = (args.size() >= 3) ? static_cast<int>(llround(evalNumber(args[2], context)))
+                                         : static_cast<int>(collection->objects.size());
     const int count = min(limit, static_cast<int>(collection->objects.size()));
     if (count < 1) {
         return makeNumberValue(kLargeDistance);
@@ -1711,6 +1735,9 @@ const RuntimeCollection& buildRuntimeCollection(const string& name,
 }
 
 string replaceAll(string text, const string& from, const string& to) {
+    if (from.empty()) {
+        return text;
+    }
     size_t pos = 0;
     while ((pos = text.find(from, pos)) != string::npos) {
         text.replace(pos, from.size(), to);
@@ -1735,15 +1762,128 @@ bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
     return false;
 }
 
+bool isCmsDatasetPath(const string& path) {
+    if (path.empty() || path[0] != '/' || endsWith(path, ".root")) {
+        return false;
+    }
+
+    size_t parts = 0;
+    string token;
+    stringstream ss(path);
+    while (getline(ss, token, '/')) {
+        if (!token.empty()) {
+            ++parts;
+        }
+    }
+    return parts == 3;
+}
+
+bool isUserDataset(const string& path) {
+    return endsWith(path, "/USER");
+}
+
+string runCommand(const string& command) {
+    unique_ptr<FILE, int(*)(FILE*)> pipe(popen(command.c_str(), "r"), pclose);
+    if (!pipe) {
+        throw runtime_error("Failed to run command: " + command);
+    }
+
+    string output;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
+        output += buffer;
+    }
+
+    const int status = pclose(pipe.release());
+    if (status != 0) {
+        throw runtime_error("Command failed (" + to_string(status) + "): " + command + "\n" + output);
+    }
+    return output;
+}
+
+vector<string> splitLines(const string& text) {
+    vector<string> out;
+    string line;
+    stringstream ss(text);
+    while (getline(ss, line)) {
+        if (!line.empty()) {
+            out.push_back(line);
+        }
+    }
+    return out;
+}
+
+vector<string> listRemoteRootFiles(const string& datasetPath) {
+    string query = "file dataset=" + datasetPath;
+    if (isUserDataset(datasetPath)) {
+        query += " instance=prod/phys03";
+    }
+
+    const string command = "dasgoclient -query=\"" + query + "\" 2>&1";
+    vector<string> lines = splitLines(runCommand(command));
+    vector<string> files;
+    files.reserve(lines.size());
+    for (const auto& line : lines) {
+        if (endsWith(line, ".root")) {
+            files.push_back(string(kRemotePrefix) + line);
+        }
+    }
+    sort(files.begin(), files.end());
+    return files;
+}
+
+vector<string> listLocalRootFiles(const string& inputPath) {
+    vector<string> files;
+    const fs::path path(inputPath);
+
+    if (!fs::exists(path)) {
+        throw runtime_error("Local input path does not exist: " + inputPath);
+    }
+
+    if (fs::is_regular_file(path)) {
+        if (!endsWith(path.string(), ".root")) {
+            throw runtime_error("Local input file is not a ROOT file: " + inputPath);
+        }
+        files.push_back(fs::absolute(path).string());
+        return files;
+    }
+
+    if (!fs::is_directory(path)) {
+        throw runtime_error("Unsupported local input path: " + inputPath);
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(path)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const string filePath = entry.path().string();
+        if (endsWith(filePath, ".root")) {
+            files.push_back(fs::absolute(entry.path()).string());
+        }
+    }
+
+    sort(files.begin(), files.end());
+    return files;
+}
+
+vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
+    sampleMeta.isRemoteDataset = isCmsDatasetPath(sampleMeta.inputPath);
+    vector<string> files = sampleMeta.isRemoteDataset ? listRemoteRootFiles(sampleMeta.inputPath)
+                                                      : listLocalRootFiles(sampleMeta.inputPath);
+    if (files.empty()) {
+        throw runtime_error("No ROOT files found for sample " + sampleMeta.sample + " from path " + sampleMeta.inputPath);
+    }
+    return files;
+}
+
 SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
     SampleMeta meta;
     meta.sample = sample;
     meta.category = appConfig.defaultCategory;
-    meta.inputRootKey = appConfig.defaultInputRootKey;
     meta.sampleType = appConfig.defaultSampleType;
     meta.isSignal = appConfig.defaultIsSignal;
 
-    // sample_rules are checked strictly from front to back. The first match wins.
+    string pathTemplate;
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
             continue;
@@ -1751,8 +1891,8 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         if (!rule.category.empty()) {
             meta.category = rule.category;
         }
-        if (!rule.inputRootKey.empty()) {
-            meta.inputRootKey = rule.inputRootKey;
+        if (!rule.path.empty()) {
+            pathTemplate = rule.path;
         }
         if (rule.hasSampleType) {
             meta.sampleType = rule.sampleType;
@@ -1765,40 +1905,47 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         break;
     }
 
-    const auto inputRootIt = appConfig.inputRoots.find(meta.inputRootKey);
-    if (inputRootIt == appConfig.inputRoots.end()) {
-        throw runtime_error("Unknown input root key: " + meta.inputRootKey);
+    if (pathTemplate.empty()) {
+        throw runtime_error("No input path configured for sample: " + sample);
     }
 
-    meta.inputRoot = inputRootIt->second;
     unordered_map<string, string> templateValues;
     templateValues["sample"] = meta.sample;
     templateValues["category"] = meta.category;
-    templateValues["input_root"] = meta.inputRoot;
     templateValues["output_root"] = appConfig.outputRoot;
 
-    meta.inputFileName = applyTemplate(appConfig.inputPattern, templateValues);
+    meta.inputPath = applyTemplate(pathTemplate, templateValues);
     meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
     return meta;
 }
 
-string resolveRequestedSample(const char* typeArg, const AppConfig& appConfig) {
-    if (typeArg != nullptr && *typeArg != '\0') {
-        return typeArg;
+string resolveRequestedSample(int argc, char** argv, const AppConfig& appConfig) {
+    if (argc >= 2 && argv[1] != nullptr && *argv[1] != '\0') {
+        return argv[1];
     }
     if (!appConfig.runSample.empty()) {
         return appConfig.runSample;
     }
-    throw runtime_error("No sample specified. Pass typeArg explicitly or set run_sample in convert/config.json.");
+    throw runtime_error("No sample specified. Pass sample as argv[1] or set run_sample in ./config.json.");
 }
 
 string resolvePileupWeightPath(const AppConfig& appConfig, const SampleMeta& sampleMeta) {
     unordered_map<string, string> templateValues;
     templateValues["sample"] = sampleMeta.sample;
     templateValues["category"] = sampleMeta.category;
-    templateValues["input_root"] = sampleMeta.inputRoot;
     templateValues["output_root"] = appConfig.outputRoot;
     return applyTemplate(appConfig.puWeightPathPattern, templateValues);
+}
+
+size_t countOutputGroupBranches(const vector<OutputScalarConfig>& configs, bool isMC) {
+    size_t count = 0;
+    for (const auto& config : configs) {
+        if (config.onlyMC && !isMC) {
+            continue;
+        }
+        count += config.collection.empty() ? 1u : static_cast<size_t>(config.slots);
+    }
+    return count;
 }
 
 void appendOutputBranch(OutputTreeState& treeState,
@@ -1845,9 +1992,31 @@ void bookOutputGroup(OutputTreeState& treeState,
 }
 
 void bookTreeBranches(OutputTreeState& treeState, bool isMC) {
+    const size_t totalBranches = countOutputGroupBranches(treeState.config.regularScalars, isMC) +
+                                 countOutputGroupBranches(treeState.config.extremaScalars, isMC);
     treeState.tree = new TTree(treeState.config.name.c_str(), treeState.config.title.c_str());
+    treeState.branches.reserve(totalBranches);
+    treeState.branchIndexByName.reserve(totalBranches);
     bookOutputGroup(treeState, treeState.config.regularScalars, isMC);
     bookOutputGroup(treeState, treeState.config.extremaScalars, isMC);
+}
+
+vector<OutputTreeState> makeOutputTrees(const BranchConfig& branchConfig, bool isMC) {
+    vector<OutputTreeState> outputTrees;
+    outputTrees.reserve(branchConfig.trees.size());
+    for (const auto& treeConfig : branchConfig.trees) {
+        outputTrees.emplace_back();
+        outputTrees.back().config = treeConfig;
+        bookTreeBranches(outputTrees.back(), isMC);
+    }
+    return outputTrees;
+}
+
+void destroyOutputTrees(vector<OutputTreeState>& outputTrees) {
+    for (auto& treeState : outputTrees) {
+        delete treeState.tree;
+        treeState.tree = nullptr;
+    }
 }
 
 void resetBranchValue(OutputBranchRuntime& branch) {
@@ -1929,8 +2098,7 @@ void fillOutputGroup(const vector<OutputScalarConfig>& configs,
             context.inputCollections = &inputCollections;
             context.rawScalars = &rawScalars;
 
-            const string branchName = config.name;
-            const auto branchIt = treeState.branchIndexByName.find(branchName);
+            const auto branchIt = treeState.branchIndexByName.find(config.name);
             if (branchIt == treeState.branchIndexByName.end()) {
                 continue;
             }
@@ -1991,9 +2159,191 @@ void fillOutputTree(OutputTreeState& treeState,
     treeState.tree->Fill();
 }
 
+unordered_map<string, string> buildScalarBranchMap(const BranchConfig& branchConfig) {
+    unordered_map<string, string> branches;
+    branches.reserve(branchConfig.scalars.size());
+    for (const auto& scalar : branchConfig.scalars) {
+        branches[scalar.name] = scalar.branch;
+    }
+    return branches;
+}
+
+void configureActiveBranches(TTree* tree, const BranchConfig& branchConfig, bool isMC) {
+    tree->SetBranchStatus("*", 0);
+    unordered_set<string> activeBranches;
+    activeBranches.reserve(branchConfig.scalars.size() + branchConfig.collections.size() * 8);
+    const auto scalarBranchMap = buildScalarBranchMap(branchConfig);
+
+    for (const auto& scalar : branchConfig.scalars) {
+        if (scalar.onlyMC && !isMC) {
+            continue;
+        }
+        activeBranches.insert(scalar.branch);
+    }
+
+    for (const auto& collection : branchConfig.collections) {
+        const auto sizeIt = scalarBranchMap.find(collection.sizeName);
+        activeBranches.insert(sizeIt != scalarBranchMap.end() ? sizeIt->second : collection.sizeName);
+        for (const auto& field : collection.fields) {
+            if (field.onlyMC && !isMC) {
+                continue;
+            }
+            activeBranches.insert(field.branch);
+        }
+    }
+
+    for (const auto& branch : activeBranches) {
+        tree->SetBranchStatus(branch.c_str(), 1);
+    }
+    tree->SetCacheSize(50 * 1024 * 1024);
+    for (const auto& branch : activeBranches) {
+        tree->AddBranchToCache(branch.c_str(), true);
+    }
+}
+
+unordered_map<string, const ScalarInputConfig*> bindInputBranches(TTree* tree,
+                                                                  BranchConfig& branchConfig,
+                                                                  bool isMC) {
+    unordered_map<string, const ScalarInputConfig*> rawScalarByName;
+    rawScalarByName.reserve(branchConfig.scalars.size());
+    for (auto& scalar : branchConfig.scalars) {
+        scalar.bind(tree, isMC);
+        rawScalarByName[scalar.name] = &scalar;
+    }
+    for (auto& collection : branchConfig.collections) {
+        for (auto& field : collection.fields) {
+            field.bind(tree, isMC);
+        }
+    }
+    return rawScalarByName;
+}
+
+int determineThreadCount(int configuredThreads, size_t workItems) {
+    int threads = max(1, configuredThreads);
+#ifdef _OPENMP
+    threads = min(threads, omp_get_max_threads());
+#else
+    threads = 1;
+#endif
+    if (workItems > 0) {
+        threads = min<int>(threads, static_cast<int>(workItems));
+    }
+    return max(1, threads);
+}
+
+void printFileProgress(const string& sample, size_t done, size_t total) {
+    ostringstream ss;
+    const double percent = (total == 0) ? 100. : (100.0 * static_cast<double>(done) / static_cast<double>(total));
+    ss << "\r[" << sample << "] files " << done << "/" << total
+       << " (" << fixed << setprecision(1) << percent << "%)";
+    cout << ss.str() << flush;
+    if (done >= total) {
+        cout << '\n';
+    }
+}
+
+TTree* mergeOutputTree(const vector<ThreadConvertResult>& results,
+                       size_t treeIndex,
+                       const TreeConfig& treeConfig,
+                       bool isMC) {
+    TList list;
+    list.SetOwner(false);
+    bool hasEntries = false;
+    for (const auto& result : results) {
+        if (treeIndex >= result.outputTrees.size() || result.outputTrees[treeIndex].tree == nullptr) {
+            continue;
+        }
+        list.Add(result.outputTrees[treeIndex].tree);
+        hasEntries = hasEntries || (result.outputTrees[treeIndex].tree->GetEntries() > 0);
+    }
+
+    TTree* merged = nullptr;
+    if (hasEntries) {
+        merged = TTree::MergeTrees(&list);
+    }
+    if (merged == nullptr) {
+        OutputTreeState emptyState;
+        emptyState.config = treeConfig;
+        bookTreeBranches(emptyState, isMC);
+        merged = emptyState.tree;
+        emptyState.tree = nullptr;
+    }
+    merged->SetNameTitle(treeConfig.name.c_str(), treeConfig.title.c_str());
+    return merged;
+}
+
+void processInputFile(const string& inputFileName,
+                      const AppConfig& appConfig,
+                      const SelectionConfig& selectionConfig,
+                      const SampleMeta& sampleMeta,
+                      const vector<PileupBin>& pileupWeights,
+                      BranchConfig& branchConfig,
+                      vector<OutputTreeState>& outputTrees) {
+    unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
+    if (!inputFile || inputFile->IsZombie()) {
+        throw runtime_error("Error opening input file " + inputFileName);
+    }
+
+    TTree* tree = static_cast<TTree*>(inputFile->Get(appConfig.treeName.c_str()));
+    if (!tree) {
+        throw runtime_error("Tree " + appConfig.treeName + " not found in " + inputFileName);
+    }
+
+    configureActiveBranches(tree, branchConfig, sampleMeta.isMC());
+    unordered_map<string, const ScalarInputConfig*> rawScalarByName = bindInputBranches(tree, branchConfig, sampleMeta.isMC());
+
+    const Long64_t nEntries = tree->GetEntries();
+    for (Long64_t entry = 0; entry < nEntries; ++entry) {
+        tree->GetEntry(entry);
+
+        unordered_map<string, long double> baseVars = buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights);
+
+        EvalContext preContext;
+        preContext.vars = &baseVars;
+        preContext.rawScalars = &rawScalarByName;
+        if (!evaluateCondition(selectionConfig.eventPreselection, preContext)) {
+            continue;
+        }
+
+        unordered_map<string, RuntimeCollection> inputCollections;
+        inputCollections.reserve(branchConfig.collections.size());
+        for (const auto& inputConfig : branchConfig.collections) {
+            inputCollections[inputConfig.name] = buildInputCollection(inputConfig, baseVars);
+        }
+
+        unordered_map<string, RuntimeCollection> runtimeCollections;
+        runtimeCollections.reserve(selectionConfig.collectionOrder.size());
+        unordered_set<string> activeCollections;
+        activeCollections.reserve(selectionConfig.collectionOrder.size());
+        for (const auto& name : selectionConfig.collectionOrder) {
+            buildRuntimeCollection(name, selectionConfig, inputCollections, runtimeCollections, activeCollections, baseVars, rawScalarByName);
+        }
+
+        for (auto& treeState : outputTrees) {
+            const auto cutIt = selectionConfig.treeSelections.find(treeState.config.selection);
+            if (cutIt == selectionConfig.treeSelections.end()) {
+                throw runtime_error("Missing tree selection: " + treeState.config.selection);
+            }
+
+            EvalContext treeContext;
+            treeContext.vars = &baseVars;
+            treeContext.collections = &runtimeCollections;
+            treeContext.inputCollections = &inputCollections;
+            treeContext.rawScalars = &rawScalarByName;
+            if (!evaluateCondition(cutIt->second, treeContext)) {
+                continue;
+            }
+
+            fillOutputTree(treeState, runtimeCollections, inputCollections, baseVars, rawScalarByName, sampleMeta.isMC());
+        }
+    }
+}
+
 }  // namespace
 
-void convert_branch(const char* typeArg = nullptr) {
+int main(int argc, char** argv) {
+    TH1::AddDirectory(false);
+
     AppConfig appConfig;
     BranchConfig branchConfig;
     SelectionConfig selectionConfig;
@@ -2003,28 +2353,37 @@ void convert_branch(const char* typeArg = nullptr) {
         selectionConfig = loadSelectionConfig();
     } catch (const exception& ex) {
         cerr << "Configuration error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
     string sample;
     try {
-        sample = resolveRequestedSample(typeArg, appConfig);
+        sample = resolveRequestedSample(argc, argv, appConfig);
     } catch (const exception& ex) {
         cerr << "Sample selection error: " << ex.what() << endl;
-        return;
+        return 1;
     }
-
-    cout << "Running convert_branch with sample = " << sample << endl;
 
     SampleMeta sampleMeta;
     try {
         sampleMeta = resolveSampleMeta(sample, appConfig);
     } catch (const exception& ex) {
         cerr << "Sample resolution error: " << ex.what() << endl;
-        return;
+        return 1;
     }
 
-    cout << "Processing file: " << sampleMeta.inputFileName << endl;
+    vector<string> inputFiles;
+    try {
+        inputFiles = discoverInputFiles(sampleMeta);
+    } catch (const exception& ex) {
+        cerr << "Input discovery error: " << ex.what() << endl;
+        return 1;
+    }
+
+    cout << "Running convert_branch for sample = " << sample
+         << ", files = " << inputFiles.size()
+         << ", source = " << sampleMeta.inputPath
+         << (sampleMeta.isRemoteDataset ? " [dataset]" : " [local]") << endl;
 
     vector<PileupBin> pileupWeights;
     if (sampleMeta.isMC() && !appConfig.puWeightPathPattern.empty()) {
@@ -2034,126 +2393,106 @@ void convert_branch(const char* typeArg = nullptr) {
             cout << "Loaded pileup weights from: " << puWeightPath << endl;
         } catch (const exception& ex) {
             cerr << "Pileup weight error: " << ex.what() << endl;
-            return;
+            return 1;
         }
     }
 
-    TFile* inFile = TFile::Open(sampleMeta.inputFileName.c_str(), "READ");
-    if (!inFile || inFile->IsZombie()) {
-        cerr << "Error opening input file " << sampleMeta.inputFileName << endl;
-        return;
+    const int threadCount = determineThreadCount(appConfig.maxThreads, inputFiles.size());
+#ifdef _OPENMP
+    if (threadCount > 1) {
+        ROOT::EnableThreadSafety();
     }
+#endif
 
-    TTree* tree = static_cast<TTree*>(inFile->Get(appConfig.treeName.c_str()));
-    if (!tree) {
-        cerr << "Error: tree " << appConfig.treeName << " not found in " << sampleMeta.inputFileName << endl;
-        inFile->Close();
-        return;
+    cout << "Thread mode: ";
+#ifdef _OPENMP
+    cout << "OpenMP";
+#else
+    cout << "serial";
+#endif
+    cout << ", threads = " << threadCount << endl;
+
+    vector<ThreadConvertResult> threadResults(threadCount);
+    for (auto& result : threadResults) {
+        result.outputTrees = makeOutputTrees(branchConfig, sampleMeta.isMC());
     }
+    vector<BranchConfig> threadConfigs(threadCount, branchConfig);
 
-    unordered_map<string, const ScalarInputConfig*> rawScalarByName;
-    rawScalarByName.reserve(branchConfig.scalars.size());
+    atomic<size_t> processedFiles{0};
+    atomic<bool> failed{false};
+    vector<string> errors;
 
-    try {
-        for (auto& scalar : branchConfig.scalars) {
-            scalar.bind(tree, sampleMeta.isMC());
-            rawScalarByName[scalar.name] = &scalar;
-        }
-        for (auto& collection : branchConfig.collections) {
-            for (auto& field : collection.fields) {
-                field.bind(tree, sampleMeta.isMC());
-            }
-        }
-    } catch (const exception& ex) {
-        cerr << "Input branch binding error: " << ex.what() << endl;
-        inFile->Close();
-        return;
-    }
+#pragma omp parallel num_threads(threadCount) if(threadCount > 1)
+    {
+        const int tid =
+#ifdef _OPENMP
+            omp_get_thread_num();
+#else
+            0;
+#endif
 
-    gSystem->mkdir(gSystem->DirName(sampleMeta.outputFileName.c_str()), true);
-    TFile* outFile = TFile::Open(sampleMeta.outputFileName.c_str(), "RECREATE");
-    if (!outFile || outFile->IsZombie()) {
-        cerr << "Error opening output file " << sampleMeta.outputFileName << endl;
-        inFile->Close();
-        return;
-    }
-
-    vector<OutputTreeState> outputTrees;
-    try {
-        outputTrees.reserve(branchConfig.trees.size());
-        for (const auto& treeConfig : branchConfig.trees) {
-            outputTrees.emplace_back();
-            outputTrees.back().config = treeConfig;
-            bookTreeBranches(outputTrees.back(), sampleMeta.isMC());
-        }
-    } catch (const exception& ex) {
-        cerr << "Output branch booking error: " << ex.what() << endl;
-        outFile->Close();
-        inFile->Close();
-        return;
-    }
-
-    const Long64_t nEntries = tree->GetEntries();
-    try {
-        for (Long64_t entry = 0; entry < nEntries; ++entry) {
-            if (entry % 200000 == 0) {
-                cout << "Processing entry " << entry << " / " << nEntries << endl;
-            }
-
-            tree->GetEntry(entry);
-
-            unordered_map<string, long double> baseVars = buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights);
-
-            EvalContext preContext;
-            preContext.vars = &baseVars;
-            preContext.rawScalars = &rawScalarByName;
-            if (!evaluateCondition(selectionConfig.eventPreselection, preContext)) {
+#pragma omp for schedule(dynamic)
+        for (int index = 0; index < static_cast<int>(inputFiles.size()); ++index) {
+            if (failed.load()) {
                 continue;
             }
 
-            unordered_map<string, RuntimeCollection> inputCollections;
-            inputCollections.reserve(branchConfig.collections.size());
-            for (const auto& inputConfig : branchConfig.collections) {
-                inputCollections[inputConfig.name] = buildInputCollection(inputConfig, baseVars);
-            }
-
-            unordered_map<string, RuntimeCollection> runtimeCollections;
-            unordered_set<string> activeCollections;
-            for (const auto& name : selectionConfig.collectionOrder) {
-                buildRuntimeCollection(name, selectionConfig, inputCollections, runtimeCollections, activeCollections, baseVars, rawScalarByName);
-            }
-
-            for (auto& treeState : outputTrees) {
-                const auto cutIt = selectionConfig.treeSelections.find(treeState.config.selection);
-                if (cutIt == selectionConfig.treeSelections.end()) {
-                    throw runtime_error("Missing tree selection: " + treeState.config.selection);
-                }
-
-                EvalContext treeContext;
-                treeContext.vars = &baseVars;
-                treeContext.collections = &runtimeCollections;
-                treeContext.inputCollections = &inputCollections;
-                treeContext.rawScalars = &rawScalarByName;
-                if (!evaluateCondition(cutIt->second, treeContext)) {
-                    continue;
-                }
-
-                fillOutputTree(treeState, runtimeCollections, inputCollections, baseVars, rawScalarByName, sampleMeta.isMC());
+            try {
+                processInputFile(inputFiles[index],
+                                 appConfig,
+                                 selectionConfig,
+                                 sampleMeta,
+                                 pileupWeights,
+                                 threadConfigs[tid],
+                                 threadResults[tid].outputTrees);
+                const size_t done = processedFiles.fetch_add(1) + 1;
+#pragma omp critical(convert_progress)
+                printFileProgress(sampleMeta.sample, done, inputFiles.size());
+            } catch (const exception& ex) {
+                failed.store(true);
+#pragma omp critical(convert_error)
+                errors.push_back(ex.what());
             }
         }
-    } catch (const exception& ex) {
-        cerr << "Runtime error while processing " << sampleMeta.inputFileName << ": " << ex.what() << endl;
+    }
+
+    if (!errors.empty()) {
+        cerr << "Runtime error: " << errors.front() << endl;
+        for (auto& result : threadResults) {
+            destroyOutputTrees(result.outputTrees);
+        }
+        return 1;
+    }
+
+    try {
+        const fs::path outputPath(sampleMeta.outputFileName);
+        if (!outputPath.parent_path().empty()) {
+            fs::create_directories(outputPath.parent_path());
+        }
+
+        unique_ptr<TFile> outFile(TFile::Open(sampleMeta.outputFileName.c_str(), "RECREATE"));
+        if (!outFile || outFile->IsZombie()) {
+            throw runtime_error("Error opening output file " + sampleMeta.outputFileName);
+        }
+
+        outFile->cd();
+        for (size_t treeIndex = 0; treeIndex < branchConfig.trees.size(); ++treeIndex) {
+            unique_ptr<TTree> mergedTree(mergeOutputTree(threadResults, treeIndex, branchConfig.trees[treeIndex], sampleMeta.isMC()));
+            mergedTree->Write();
+        }
         outFile->Close();
-        inFile->Close();
-        return;
+    } catch (const exception& ex) {
+        cerr << "Output error: " << ex.what() << endl;
+        for (auto& result : threadResults) {
+            destroyOutputTrees(result.outputTrees);
+        }
+        return 1;
     }
 
-    outFile->cd();
-    for (auto& treeState : outputTrees) {
-        treeState.tree->Write();
+    for (auto& result : threadResults) {
+        destroyOutputTrees(result.outputTrees);
     }
-    outFile->Close();
-    inFile->Close();
 
-    cout << "Finished processing file: " << sampleMeta.inputFileName << endl;
+    cout << "Wrote output file: " << sampleMeta.outputFileName << endl;
+    return 0;
 }

@@ -3,21 +3,16 @@
   "run_sample": "www",
   "pileup_branch": "Pileup_nTrueInt",
   "pileup_histogram": "pileup",
+  "max_threads": 12,
   "pileup_data_files": {
     "nominal": "",
     "low": "",
     "high": ""
   },
-  "input_roots": {
-    "mc": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3",
-    "data": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/2024/skim"
-  },
-  "output_root": "weight/pileup",
-  "input_pattern": "{input_root}/{sample}.root",
+  "output_root": "./pileup",
   "output_pattern": "{output_root}/pileup_{sample}.csv",
   "defaults": {
     "category": "bkg",
-    "input_root_key": "mc",
     "sample_type": -1,
     "is_signal": false
   },
@@ -25,91 +20,91 @@
     {
       "contains_any": ["202"],
       "category": "data",
-      "input_root_key": "data",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/2024/skim/{sample}.root",
       "sample_type": -2,
       "is_signal": false
     },
     {
       "contains_any": ["www"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 0,
       "is_signal": true
     },
     {
       "contains_any": ["wwz"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 1,
       "is_signal": true
     },
     {
       "contains_any": ["wzz"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 2,
       "is_signal": true
     },
     {
       "contains_any": ["zzz"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 3,
       "is_signal": true
     },
     {
       "contains_any": ["zh"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 4,
       "is_signal": true
     },
     {
       "contains_any": ["wplush", "wminush"],
       "category": "signal",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 5,
       "is_signal": true
     },
     {
       "contains_any": ["qcd"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 10,
       "is_signal": false
     },
     {
       "contains_any": ["tt_had"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 11,
       "is_signal": false
     },
     {
       "contains_any": ["tt_semilep"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 12,
       "is_signal": false
     },
     {
       "contains_any": ["ww"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 13,
       "is_signal": false
     },
     {
       "contains_any": ["wz"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 14,
       "is_signal": false
     },
     {
       "contains_any": ["zz"],
       "category": "bkg",
-      "input_root_key": "mc",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
       "sample_type": 15,
       "is_signal": false
     }
