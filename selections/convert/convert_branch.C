@@ -1016,10 +1016,18 @@ ObjectSchema makeSchema(const vector<string>& fields) {
 ObjectSchema makeSchemaFromCollection(const InputCollectionConfig& collection) {
     vector<string> fields;
     fields.reserve(collection.fields.size());
+    ObjectSchema schema;
+    schema.fields.reserve(collection.fields.size());
+    schema.indexByName.reserve(collection.fields.size() * 2);
     for (const auto& field : collection.fields) {
         fields.push_back(field.name);
+        schema.fields.push_back(field.name);
+        schema.indexByName[field.name] = schema.fields.size() - 1;
+        if (!field.branch.empty()) {
+            schema.indexByName[field.branch] = schema.fields.size() - 1;
+        }
     }
-    return makeSchema(fields);
+    return schema;
 }
 
 bool hasObjectField(const RuntimeCollection& collection, const string& fieldName) {
@@ -1554,6 +1562,12 @@ Value evalExpression(const ExprPtr& expr, const EvalContext& context) {
         const RuntimeCollection* collection = findCollection(context, expr->text);
         if (collection) {
             return makeCollectionValue(collection);
+        }
+        if (context.currentCollection) {
+            ostringstream ss;
+            ss << "Unknown identifier in expression: " << expr->text
+               << " (current collection: " << context.currentCollection->name << ")";
+            throw runtime_error(ss.str());
         }
         throw runtime_error("Unknown identifier in expression: " + expr->text);
     }
