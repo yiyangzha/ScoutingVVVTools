@@ -1,0 +1,47 @@
+{
+  "event_preselection": "nScoutingFatPFJetRecluster > 1 && DST_PFScouting_JetHT",
+  "collections": [
+    {
+      "name": "ak8",
+      "source": "ScoutingFatPFJetRecluster",
+      "selection": "1",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "ak4",
+      "source": "ScoutingPFJetRecluster",
+      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster_nConstituents > 1 && ScoutingPFJetRecluster_neHEF < 0.99 && ScoutingPFJetRecluster_neEmEF < 0.90 && ScoutingPFJetRecluster_chHadMultiplicity > 0 && ScoutingPFJetRecluster_muEF < 0.80 && min_deltaR(self, ak8) > 0.8",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "ele",
+      "source": "ScoutingElectron",
+      "selection": "pt(self) > 10 && abs(eta(self)) < 2.5 && min_deltaR(self, ak8) > 0.8",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "mu_vtx",
+      "source": "ScoutingMuonVtx",
+      "selection": "pt(self) > 10 && abs(eta(self)) < 2.4 && min_deltaR(self, ak8) > 0.8",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "mu_novtx",
+      "source": "ScoutingMuonNoVtx",
+      "selection": "pt(self) > 10 && abs(eta(self)) < 2.4 && min_deltaR(self, ak8) > 0.8",
+      "deduplicate_against": "mu_vtx",
+      "deduplicate": "deltaR(self, other) < 0.2 && relPtDiff(self, other) < 0.1",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "lep",
+      "merge": ["ele", "mu_vtx", "mu_novtx"],
+      "selection": "1",
+      "sort": "pt(self) desc"
+    }
+  ],
+  "tree_selection": {
+    "fat2": "size(ak8) == 2 && size(ak4) >= 2",
+    "fat3": "size(ak8) >= 3"
+  }
+}
