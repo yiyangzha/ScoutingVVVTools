@@ -599,7 +599,7 @@ void writePileupPdf(const string& outputPath,
     drawMcWeightedLow->Draw("HIST SAME");
     drawMcWeightedHigh->Draw("HIST SAME");
 
-    TLegend legend(0.52, 0.58, 0.88, 0.88);
+    TLegend legend(0.55, 0.58, 0.90, 0.88);
     legend.SetBorderSize(0);
     legend.SetFillStyle(0);
     legend.SetTextSize(0.038);
