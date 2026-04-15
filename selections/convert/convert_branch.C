@@ -26,15 +26,16 @@
 #include <TLorentzVector.h>
 #include <TROOT.h>
 #include <TTree.h>
-#include <nlohmann/json.hpp>
+
+#include "../src/simple_json.h"
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-using json = nlohmann::json;
 using namespace std;
 namespace fs = std::filesystem;
+using JsonValue = simple_json::Value;
 
 namespace {
 
@@ -714,16 +715,9 @@ string resolveConfigPath(const char* preferredPath, const char* envVar = nullptr
     throw runtime_error("Cannot find config file: " + string(preferredPath));
 }
 
-json loadJson(const char* path, const char* envVar = nullptr) {
+JsonValue loadJson(const char* path, const char* envVar = nullptr) {
     const string resolved = resolveConfigPath(path, envVar);
-    ifstream fin(resolved);
-    if (!fin) {
-        throw runtime_error("Failed to open JSON file: " + resolved);
-    }
-
-    json payload;
-    fin >> payload;
-    return payload;
+    return simple_json::parseFile(resolved);
 }
 
 ExprPtr compileExpression(const string& text) {
@@ -761,65 +755,65 @@ SortRule parseSortRule(const string& text) {
 }
 
 AppConfig loadAppConfig() {
-    const json payload = loadJson(kAppConfigPath, kAppConfigEnvVar);
+    const JsonValue payload = loadJson(kAppConfigPath, kAppConfigEnvVar);
 
     AppConfig config;
-    config.treeName = payload.value("tree_name", "Events");
-    config.runSample = payload.value("run_sample", "");
-    config.outputRoot = payload.at("output_root").get<string>();
-    config.outputPattern = payload.at("output_pattern").get<string>();
-    config.maxThreads = payload.value("max_threads", 12);
+    config.treeName = payload.getStringOr("tree_name", "Events");
+    config.runSample = payload.getStringOr("run_sample", "");
+    config.outputRoot = payload.at("output_root").asString();
+    config.outputPattern = payload.at("output_pattern").asString();
+    config.maxThreads = payload.getIntOr("max_threads", 12);
 
     if (payload.contains("defaults")) {
         const auto& defaults = payload.at("defaults");
-        config.defaultCategory = defaults.value("category", config.defaultCategory);
-        config.defaultSampleType = defaults.value("sample_type", config.defaultSampleType);
-        config.defaultIsSignal = defaults.value("is_signal", config.defaultIsSignal);
+        config.defaultCategory = defaults.getStringOr("category", config.defaultCategory);
+        config.defaultSampleType = defaults.getIntOr("sample_type", config.defaultSampleType);
+        config.defaultIsSignal = defaults.getBoolOr("is_signal", config.defaultIsSignal);
     }
 
     if (payload.contains("sample_rules")) {
-        for (const auto& node : payload.at("sample_rules")) {
+        for (const auto& node : payload.at("sample_rules").asArray()) {
             SampleRuleConfig rule;
-            rule.containsAny = node.at("contains_any").get<vector<string>>();
-            rule.category = node.value("category", "");
-            rule.path = node.value("path", "");
+            rule.containsAny = node.at("contains_any").toStringArray();
+            rule.category = node.getStringOr("category", "");
+            rule.path = node.getStringOr("path", "");
             if (node.contains("sample_type")) {
-                rule.sampleType = node.at("sample_type").get<int>();
+                rule.sampleType = node.at("sample_type").asInt();
                 rule.hasSampleType = true;
             }
             if (node.contains("is_signal")) {
-                rule.isSignal = node.at("is_signal").get<bool>();
+                rule.isSignal = node.at("is_signal").asBool();
                 rule.hasIsSignal = true;
             }
             config.sampleRules.push_back(std::move(rule));
         }
     }
 
-    config.puWeightPathPattern = payload.value("pu_weight_path", "");
+    config.puWeightPathPattern = payload.getStringOr("pu_weight_path", "");
     return config;
 }
 
-OutputScalarConfig parseOutputScalar(const json& node) {
+OutputScalarConfig parseOutputScalar(const JsonValue& node) {
     OutputScalarConfig config;
-    config.name = node.at("name").get<string>();
-    config.type = parseDataType(node.at("type").get<string>());
-    config.onlyMC = node.value("onlyMC", false);
-    config.formulaText = node.at("formula").get<string>();
+    config.name = node.at("name").asString();
+    config.type = parseDataType(node.at("type").asString());
+    config.onlyMC = node.getBoolOr("onlyMC", false);
+    config.formulaText = node.at("formula").asString();
     config.formula = compileExpression(config.formulaText);
-    config.collection = node.value("collection", "");
-    config.slots = node.value("slots", 0);
+    config.collection = node.getStringOr("collection", "");
+    config.slots = node.getIntOr("slots", 0);
     if (!config.collection.empty() && config.slots <= 0) {
         throw runtime_error("Output scalar with collection must define slots: " + config.name);
     }
     return config;
 }
 
-vector<OutputScalarConfig> parseOutputScalarGroup(const json& node, const string& key) {
+vector<OutputScalarConfig> parseOutputScalarGroup(const JsonValue& node, const string& key) {
     vector<OutputScalarConfig> out;
     if (!node.contains(key)) {
         return out;
     }
-    for (const auto& item : node.at(key)) {
+    for (const auto& item : node.at(key).asArray()) {
         out.push_back(parseOutputScalar(item));
     }
     return out;
@@ -848,37 +842,37 @@ void finalizeInputCollection(InputCollectionConfig& collection) {
 }
 
 BranchConfig loadBranchConfig() {
-    const json payload = loadJson(kBranchConfigPath);
+    const JsonValue payload = loadJson(kBranchConfigPath);
 
     BranchConfig config;
-    for (const auto& node : payload.at("input").at("scalars")) {
+    for (const auto& node : payload.at("input").at("scalars").asArray()) {
         ScalarInputConfig scalar;
-        scalar.name = node.at("name").get<string>();
-        scalar.branch = node.value("branch", scalar.name);
-        scalar.type = parseDataType(node.at("type").get<string>());
-        scalar.onlyMC = node.value("onlyMC", false);
+        scalar.name = node.at("name").asString();
+        scalar.branch = node.getStringOr("branch", scalar.name);
+        scalar.type = parseDataType(node.at("type").asString());
+        scalar.onlyMC = node.getBoolOr("onlyMC", false);
         config.scalars.push_back(std::move(scalar));
     }
 
-    for (const auto& node : payload.at("input").at("collections")) {
+    for (const auto& node : payload.at("input").at("collections").asArray()) {
         InputCollectionConfig collection;
-        collection.name = node.at("name").get<string>();
-        collection.sizeName = node.at("size").get<string>();
-        collection.maxSize = node.at("max_size").get<int>();
+        collection.name = node.at("name").asString();
+        collection.sizeName = node.at("size").asString();
+        collection.maxSize = node.at("max_size").asInt();
         if (node.contains("p4")) {
             const auto& p4 = node.at("p4");
-            collection.ptField = p4.at("pt").get<string>();
-            collection.etaField = p4.at("eta").get<string>();
-            collection.phiField = p4.at("phi").get<string>();
-            collection.massField = p4.value("mass", "");
-            collection.defaultMass = p4.value("default_mass", 0.f);
+            collection.ptField = p4.at("pt").asString();
+            collection.etaField = p4.at("eta").asString();
+            collection.phiField = p4.at("phi").asString();
+            collection.massField = p4.getStringOr("mass", "");
+            collection.defaultMass = static_cast<float>(p4.getNumberOr("default_mass", 0.));
         }
-        for (const auto& fieldNode : node.at("fields")) {
+        for (const auto& fieldNode : node.at("fields").asArray()) {
             ArrayInputConfig field;
-            field.name = fieldNode.at("name").get<string>();
-            field.branch = fieldNode.value("branch", field.name);
-            field.type = parseDataType(fieldNode.at("type").get<string>());
-            field.onlyMC = fieldNode.value("onlyMC", false);
+            field.name = fieldNode.at("name").asString();
+            field.branch = fieldNode.getStringOr("branch", field.name);
+            field.type = parseDataType(fieldNode.at("type").asString());
+            field.onlyMC = fieldNode.getBoolOr("onlyMC", false);
             field.maxSize = collection.maxSize;
             field.initBuffer();
             collection.fields.push_back(std::move(field));
@@ -888,11 +882,11 @@ BranchConfig loadBranchConfig() {
     }
 
     const auto& output = payload.at("output");
-    for (const auto& node : output.at("trees")) {
+    for (const auto& node : output.at("trees").asArray()) {
         TreeConfig treeConfig;
-        treeConfig.name = node.at("name").get<string>();
-        treeConfig.title = node.at("title").get<string>();
-        treeConfig.selection = node.at("selection").get<string>();
+        treeConfig.name = node.at("name").asString();
+        treeConfig.title = node.at("title").asString();
+        treeConfig.selection = node.at("selection").asString();
         if (node.contains("scalars")) {
             const auto& scalarNode = node.at("scalars");
             treeConfig.regularScalars = parseOutputScalarGroup(scalarNode, "regular");
@@ -905,27 +899,27 @@ BranchConfig loadBranchConfig() {
 }
 
 SelectionConfig loadSelectionConfig() {
-    const json payload = loadJson(kSelectionConfigPath);
+    const JsonValue payload = loadJson(kSelectionConfigPath);
 
     SelectionConfig config;
-    config.eventPreselectionText = payload.value("event_preselection", "1");
+    config.eventPreselectionText = payload.getStringOr("event_preselection", "1");
     config.eventPreselection = compileExpression(config.eventPreselectionText);
 
-    for (const auto& node : payload.at("collections")) {
+    for (const auto& node : payload.at("collections").asArray()) {
         RuntimeCollectionConfig collection;
-        collection.name = node.at("name").get<string>();
-        collection.source = node.value("source", "");
+        collection.name = node.at("name").asString();
+        collection.source = node.getStringOr("source", "");
         if (node.contains("merge")) {
-            collection.merge = node.at("merge").get<vector<string>>();
+            collection.merge = node.at("merge").toStringArray();
         }
-        collection.selectionText = node.value("selection", "1");
+        collection.selectionText = node.getStringOr("selection", "1");
         collection.selectionExpr = compileExpression(collection.selectionText);
-        collection.dedupCollection = node.value("deduplicate_against", "");
-        collection.dedupText = node.value("deduplicate", "");
+        collection.dedupCollection = node.getStringOr("deduplicate_against", "");
+        collection.dedupText = node.getStringOr("deduplicate", "");
         if (!collection.dedupText.empty()) {
             collection.dedupExpr = compileExpression(collection.dedupText);
         }
-        collection.sortText = node.value("sort", "");
+        collection.sortText = node.getStringOr("sort", "");
         if (!collection.sortText.empty()) {
             collection.sortRule = parseSortRule(collection.sortText);
         }
@@ -934,9 +928,9 @@ SelectionConfig loadSelectionConfig() {
     }
 
     if (payload.contains("tree_selection")) {
-        for (auto it = payload.at("tree_selection").begin(); it != payload.at("tree_selection").end(); ++it) {
-            config.treeSelectionText[it.key()] = it.value().get<string>();
-            config.treeSelections[it.key()] = compileExpression(it.value().get<string>());
+        for (const auto& item : payload.at("tree_selection").asObject()) {
+            config.treeSelectionText[item.first] = item.second.asString();
+            config.treeSelections[item.first] = compileExpression(item.second.asString());
         }
     }
 

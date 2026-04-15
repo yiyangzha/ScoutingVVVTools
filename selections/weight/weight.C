@@ -20,15 +20,16 @@
 #include <TH1.h>
 #include <TROOT.h>
 #include <TTree.h>
-#include <nlohmann/json.hpp>
+
+#include "../src/simple_json.h"
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-using json = nlohmann::json;
 using namespace std;
 namespace fs = std::filesystem;
+using JsonValue = simple_json::Value;
 
 namespace {
 
@@ -127,16 +128,9 @@ string resolveConfigPath(const char* preferredPath, const char* envVar) {
     throw runtime_error("Cannot find config file: " + string(preferredPath));
 }
 
-json loadJson(const char* path, const char* envVar) {
+JsonValue loadJson(const char* path, const char* envVar) {
     const string resolved = resolveConfigPath(path, envVar);
-    ifstream fin(resolved);
-    if (!fin) {
-        throw runtime_error("Failed to open JSON file: " + resolved);
-    }
-
-    json payload;
-    fin >> payload;
-    return payload;
+    return simple_json::parseFile(resolved);
 }
 
 bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
@@ -149,42 +143,42 @@ bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
 }
 
 AppConfig loadAppConfig() {
-    const json payload = loadJson(kConfigPath, kConfigEnvVar);
+    const JsonValue payload = loadJson(kConfigPath, kConfigEnvVar);
 
     AppConfig config;
-    config.treeName = payload.value("tree_name", "Events");
-    config.runSample = payload.value("run_sample", "");
-    config.pileupBranch = payload.value("pileup_branch", "Pileup_nTrueInt");
-    config.pileupHistogram = payload.value("pileup_histogram", "pileup");
-    config.outputRoot = payload.at("output_root").get<string>();
-    config.outputPattern = payload.at("output_pattern").get<string>();
-    config.maxThreads = payload.value("max_threads", 12);
+    config.treeName = payload.getStringOr("tree_name", "Events");
+    config.runSample = payload.getStringOr("run_sample", "");
+    config.pileupBranch = payload.getStringOr("pileup_branch", "Pileup_nTrueInt");
+    config.pileupHistogram = payload.getStringOr("pileup_histogram", "pileup");
+    config.outputRoot = payload.at("output_root").asString();
+    config.outputPattern = payload.at("output_pattern").asString();
+    config.maxThreads = payload.getIntOr("max_threads", 12);
 
     if (payload.contains("pileup_data_files")) {
-        for (auto it = payload.at("pileup_data_files").begin(); it != payload.at("pileup_data_files").end(); ++it) {
-            config.pileupDataFiles[it.key()] = it.value().get<string>();
+        for (const auto& item : payload.at("pileup_data_files").asObject()) {
+            config.pileupDataFiles[item.first] = item.second.asString();
         }
     }
 
     if (payload.contains("defaults")) {
         const auto& defaults = payload.at("defaults");
-        config.defaultCategory = defaults.value("category", config.defaultCategory);
-        config.defaultSampleType = defaults.value("sample_type", config.defaultSampleType);
-        config.defaultIsSignal = defaults.value("is_signal", config.defaultIsSignal);
+        config.defaultCategory = defaults.getStringOr("category", config.defaultCategory);
+        config.defaultSampleType = defaults.getIntOr("sample_type", config.defaultSampleType);
+        config.defaultIsSignal = defaults.getBoolOr("is_signal", config.defaultIsSignal);
     }
 
     if (payload.contains("sample_rules")) {
-        for (const auto& node : payload.at("sample_rules")) {
+        for (const auto& node : payload.at("sample_rules").asArray()) {
             SampleRuleConfig rule;
-            rule.containsAny = node.at("contains_any").get<vector<string>>();
-            rule.category = node.value("category", "");
-            rule.path = node.value("path", "");
+            rule.containsAny = node.at("contains_any").toStringArray();
+            rule.category = node.getStringOr("category", "");
+            rule.path = node.getStringOr("path", "");
             if (node.contains("sample_type")) {
-                rule.sampleType = node.at("sample_type").get<int>();
+                rule.sampleType = node.at("sample_type").asInt();
                 rule.hasSampleType = true;
             }
             if (node.contains("is_signal")) {
-                rule.isSignal = node.at("is_signal").get<bool>();
+                rule.isSignal = node.at("is_signal").asBool();
                 rule.hasIsSignal = true;
             }
             config.sampleRules.push_back(std::move(rule));

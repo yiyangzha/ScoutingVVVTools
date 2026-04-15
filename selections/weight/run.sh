@@ -36,33 +36,6 @@ if ! command -v root-config >/dev/null 2>&1; then
   exit 1
 fi
 
-detect_nlohmann_include() {
-  local candidate
-  for candidate in \
-    /opt/homebrew/opt/nlohmann-json/include \
-    /usr/local/opt/nlohmann-json/include
-  do
-    if [ -f "${candidate}/nlohmann/json.hpp" ]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-
-  candidate="$(find /opt/homebrew/Cellar /usr/local/Cellar -path '*/nlohmann/json.hpp' 2>/dev/null | head -n 1 || true)"
-  if [ -n "${candidate}" ]; then
-    dirname "$(dirname "${candidate}")"
-    return 0
-  fi
-
-  return 1
-}
-
-NLOHMANN_INCLUDE="$(detect_nlohmann_include || true)"
-if [ -z "${NLOHMANN_INCLUDE}" ]; then
-  echo "nlohmann/json.hpp was not found. Please install nlohmann-json." >&2
-  exit 1
-fi
-
 detect_openmp_flags() {
   local test_src test_bin
   test_src="$(mktemp "${TMPDIR:-/tmp}/omp_test.XXXXXX.cpp")"
@@ -110,7 +83,7 @@ echo "[$(timestamp)] max_concurrent_jobs=${MAX_CONCURRENT_JOBS}"
 
 ROOT_CFLAGS="$(root-config --cflags)"
 ROOT_LIBS="$(root-config --libs)"
-COMPILE_CMD="c++ -O3 -DNDEBUG -std=c++17 ${ROOT_CFLAGS} -I${NLOHMANN_INCLUDE} ${OMP_CFLAGS} ./weight.C -o ${BIN_PATH} ${ROOT_LIBS} ${OMP_LDFLAGS}"
+COMPILE_CMD="c++ -O3 -DNDEBUG -std=c++17 ${ROOT_CFLAGS} ${OMP_CFLAGS} ./weight.C -o ${BIN_PATH} ${ROOT_LIBS} ${OMP_LDFLAGS}"
 echo "[$(timestamp)] compile: ${COMPILE_CMD}"
 eval "${COMPILE_CMD}"
 echo "[$(timestamp)] compile finished"
