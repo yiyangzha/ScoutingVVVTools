@@ -9,8 +9,8 @@
     },
     {
       "name": "ak4",
-      "source": "ScoutingPFJetRecluster",
-      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster_nConstituents > 1 && ScoutingPFJetRecluster_neHEF < 0.99 && ScoutingPFJetRecluster_neEmEF < 0.90 && ScoutingPFJetRecluster_chHadMultiplicity > 0 && ScoutingPFJetRecluster_muEF < 0.80 && min_deltaR(self, ak8) > 0.8",
+      "source": "ScoutingPFJetRecluster2",
+      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster2_nConstituents > 1 && ScoutingPFJetRecluster2_neHEF < 0.99 && ScoutingPFJetRecluster2_neEmEF < 0.90 && ScoutingPFJetRecluster2_chHadMultiplicity > 0 && ScoutingPFJetRecluster2_muEF < 0.80 && min_deltaR(self, ak8) > 0.8",
       "sort": "pt(self) desc"
     },
     {

@@ -1,15 +1,15 @@
 {
   "input": {
     "scalars": [
-      { "name": "run", "type": "I", "onlyMC": false },
-      { "name": "luminosityBlock", "type": "I", "onlyMC": false },
-      { "name": "event", "type": "L64", "onlyMC": false },
-      { "name": "bunchCrossing", "type": "I", "onlyMC": false },
-      { "name": "orbitNumber", "type": "I", "onlyMC": false },
+      { "name": "run", "type": "UI", "onlyMC": false },
+      { "name": "luminosityBlock", "type": "UI", "onlyMC": false },
+      { "name": "event", "type": "UL64", "onlyMC": false },
+      { "name": "bunchCrossing", "type": "UI", "onlyMC": false },
+      { "name": "orbitNumber", "type": "UI", "onlyMC": false },
       { "name": "DST_PFScouting_JetHT", "type": "O", "onlyMC": false },
       { "name": "Pileup_nTrueInt", "type": "F", "onlyMC": true },
       { "name": "nScoutingFatPFJetRecluster", "type": "I", "onlyMC": false },
-      { "name": "nScoutingPFJetRecluster", "type": "I", "onlyMC": false },
+      { "name": "nScoutingPFJetRecluster2", "type": "I", "onlyMC": false },
       { "name": "nScoutingElectron", "type": "I", "onlyMC": false },
       { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false },
       { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
@@ -94,22 +94,22 @@
         ]
       },
       {
-        "name": "ScoutingPFJetRecluster",
-        "size": "nScoutingPFJetRecluster",
+        "name": "ScoutingPFJetRecluster2",
+        "size": "nScoutingPFJetRecluster2",
         "max_size": 30,
         "p4": {
-          "pt": "ScoutingPFJetRecluster_pt",
-          "eta": "ScoutingPFJetRecluster_eta",
-          "phi": "ScoutingPFJetRecluster_phi",
-          "mass": "ScoutingPFJetRecluster_mass",
+          "pt": "ScoutingPFJetRecluster2_pt",
+          "eta": "ScoutingPFJetRecluster2_eta",
+          "phi": "ScoutingPFJetRecluster2_phi",
+          "mass": "ScoutingPFJetRecluster2_mass",
           "default_mass": 0.0
         },
         "fields": [
-          { "name": "ScoutingPFJetRecluster_pt", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster_eta", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster_phi", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster_mass", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster_scoutUParT_probb", "type": "F", "onlyMC": false }
+          { "name": "ScoutingPFJetRecluster2_pt", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false }
         ]
       }
     ]
@@ -122,15 +122,15 @@
         "selection": "fat2",
         "scalars": {
           "regular": [
-            { "name": "run", "type": "I", "formula": "run", "onlyMC": false },
-            { "name": "luminosityBlock", "type": "I", "formula": "luminosityBlock", "onlyMC": false },
-            { "name": "event", "type": "L64", "formula": "event", "onlyMC": false },
-            { "name": "bunchCrossing", "type": "I", "formula": "bunchCrossing", "onlyMC": false },
-            { "name": "orbitNumber", "type": "I", "formula": "orbitNumber", "onlyMC": false },
+            { "name": "run", "type": "UI", "formula": "run", "onlyMC": false },
+            { "name": "luminosityBlock", "type": "UI", "formula": "luminosityBlock", "onlyMC": false },
+            { "name": "event", "type": "UL64", "formula": "event", "onlyMC": false },
+            { "name": "bunchCrossing", "type": "UI", "formula": "bunchCrossing", "onlyMC": false },
+            { "name": "orbitNumber", "type": "UI", "formula": "orbitNumber", "onlyMC": false },
             { "name": "sample_type", "type": "I", "formula": "sample_type", "onlyMC": false },
             { "name": "is_signal", "type": "O", "formula": "is_signal", "onlyMC": false },
             { "name": "nScoutingFatPFJetRecluster_selected", "type": "I", "formula": "size(ak8)", "onlyMC": false },
-            { "name": "nScoutingPFJetRecluster_selected", "type": "I", "formula": "size(ak4)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_selected", "type": "I", "formula": "size(ak4)", "onlyMC": false },
             { "name": "nScoutingPrimaryVertex", "type": "I", "formula": "nScoutingPrimaryVertex", "onlyMC": false },
             { "name": "nScoutingElectron_selected", "type": "I", "formula": "size(ele)", "onlyMC": false },
             { "name": "nScoutingMuon_selected", "type": "I", "formula": "size(mu_vtx) + size(mu_novtx)", "onlyMC": false },
@@ -148,13 +148,13 @@
               "onlyMC": false
             },
             {
-              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster_mass",
+              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_mass",
               "type": "F",
               "formula": "mass(ak8[0] + ak8[1] + ak4[0] + ak4[1])",
               "onlyMC": false
             },
             {
-              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt",
+              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt",
               "type": "F",
               "formula": "pt(ak8[0] + ak8[1] + ak4[0] + ak4[1])",
               "onlyMC": false
@@ -184,21 +184,21 @@
               "onlyMC": false
             },
             {
-              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt_fraction_1",
+              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt_fraction_1",
               "type": "F",
-              "formula": "safe_div(pt(ak8[0]), ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt, 0)",
+              "formula": "safe_div(pt(ak8[0]), ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt, 0)",
               "onlyMC": false
             },
             {
-              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt_fraction_2",
+              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt_fraction_2",
               "type": "F",
-              "formula": "safe_div(pt(ak8[1]), ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt, 0)",
+              "formula": "safe_div(pt(ak8[1]), ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt, 0)",
               "onlyMC": false
             },
             {
-              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt_balance",
+              "name": "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt_balance",
               "type": "F",
-              "formula": "safe_div(ScoutingFatPFJetReclusterScoutingPFJetRecluster_pt, pt(ak8[0]) + pt(ak8[1]) + pt(ak4[0]) + pt(ak4[1]), 0)",
+              "formula": "safe_div(ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt, pt(ak8[0]) + pt(ak8[1]) + pt(ak4[0]) + pt(ak4[1]), 0)",
               "onlyMC": false
             },
             {
@@ -208,13 +208,13 @@
               "onlyMC": false
             },
             {
-              "name": "ScoutingPFJetRecluster_deltaR_min_ScoutingFatPFJetRecluster",
+              "name": "ScoutingPFJetRecluster2_deltaR_min_ScoutingFatPFJetRecluster",
               "type": "F",
               "formula": "closest_deltaR(ak4, ak8[0], ak8[1])",
               "onlyMC": false
             },
             {
-              "name": "ScoutingPFJetRecluster_deltaR_min",
+              "name": "ScoutingPFJetRecluster2_deltaR_min",
               "type": "F",
               "formula": "pair_min_deltaR(ak4)",
               "onlyMC": false
@@ -232,9 +232,9 @@
             { "name": "ScoutingFatPFJetRecluster_mass", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_mass", "onlyMC": false },
             { "name": "ScoutingFatPFJetRecluster_WvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
 
-            { "name": "ScoutingPFJetRecluster_pt", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster_pt", "onlyMC": false },
-            { "name": "ScoutingPFJetRecluster_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster_eta", "onlyMC": false },
-            { "name": "ScoutingPFJetRecluster_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster_mass", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_pt", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_pt", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_eta", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_mass", "onlyMC": false },
 
             { "name": "SelectedLepton_pt", "type": "F", "collection": "lep", "slots": 3, "formula": "pt(self)", "onlyMC": false },
             { "name": "SelectedLepton_eta", "type": "F", "collection": "lep", "slots": 3, "formula": "eta(self)", "onlyMC": false },
@@ -244,9 +244,9 @@
           ],
           "extrema": [
             {
-              "name": "ScoutingPFJetRecluster_scoutUParT_probb_max",
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max",
               "type": "F",
-              "formula": "max_value(ak4, ScoutingPFJetRecluster_scoutUParT_probb, -99)",
+              "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
               "onlyMC": false
             }
           ]
@@ -258,15 +258,15 @@
         "selection": "fat3",
         "scalars": {
           "regular": [
-            { "name": "run", "type": "I", "formula": "run", "onlyMC": false },
-            { "name": "luminosityBlock", "type": "I", "formula": "luminosityBlock", "onlyMC": false },
-            { "name": "event", "type": "L64", "formula": "event", "onlyMC": false },
-            { "name": "bunchCrossing", "type": "I", "formula": "bunchCrossing", "onlyMC": false },
-            { "name": "orbitNumber", "type": "I", "formula": "orbitNumber", "onlyMC": false },
+            { "name": "run", "type": "UI", "formula": "run", "onlyMC": false },
+            { "name": "luminosityBlock", "type": "UI", "formula": "luminosityBlock", "onlyMC": false },
+            { "name": "event", "type": "UL64", "formula": "event", "onlyMC": false },
+            { "name": "bunchCrossing", "type": "UI", "formula": "bunchCrossing", "onlyMC": false },
+            { "name": "orbitNumber", "type": "UI", "formula": "orbitNumber", "onlyMC": false },
             { "name": "sample_type", "type": "I", "formula": "sample_type", "onlyMC": false },
             { "name": "is_signal", "type": "O", "formula": "is_signal", "onlyMC": false },
             { "name": "nScoutingFatPFJetRecluster_selected", "type": "I", "formula": "size(ak8)", "onlyMC": false },
-            { "name": "nScoutingPFJetRecluster_selected", "type": "I", "formula": "size(ak4)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_selected", "type": "I", "formula": "size(ak4)", "onlyMC": false },
             { "name": "nScoutingPrimaryVertex", "type": "I", "formula": "nScoutingPrimaryVertex", "onlyMC": false },
             { "name": "nScoutingElectron_selected", "type": "I", "formula": "size(ele)", "onlyMC": false },
             { "name": "nScoutingMuon_selected", "type": "I", "formula": "size(mu_vtx) + size(mu_novtx)", "onlyMC": false },
@@ -382,9 +382,9 @@
           ],
           "extrema": [
             {
-              "name": "ScoutingPFJetRecluster_scoutUParT_probb_max",
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max",
               "type": "F",
-              "formula": "max_value(ak4, ScoutingPFJetRecluster_scoutUParT_probb, -99)",
+              "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
               "onlyMC": false
             }
           ]

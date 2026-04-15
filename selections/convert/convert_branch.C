@@ -52,9 +52,11 @@ const char* kAppConfigEnvVar = "CONVERT_CONFIG_PATH";
 enum class DataType {
     Float,
     Int,
+    UInt,
     UChar,
     Bool,
     Long64,
+    ULong64,
 };
 
 struct Expression;
@@ -114,10 +116,12 @@ struct ScalarInputConfig {
     bool onlyMC = false;
     bool bound = false;
     Int_t intValue = 0;
+    UInt_t uintValue = 0;
     Float_t floatValue = 0.f;
     UChar_t ucharValue = 0;
     Bool_t boolValue = false;
     Long64_t long64Value = 0;
+    ULong64_t ulong64Value = 0;
 
     void bind(TTree* tree, bool isMC) {
         if (onlyMC && !isMC) {
@@ -132,12 +136,16 @@ struct ScalarInputConfig {
             tree->SetBranchAddress(branch.c_str(), &floatValue);
         } else if (type == DataType::Int) {
             tree->SetBranchAddress(branch.c_str(), &intValue);
+        } else if (type == DataType::UInt) {
+            tree->SetBranchAddress(branch.c_str(), &uintValue);
         } else if (type == DataType::UChar) {
             tree->SetBranchAddress(branch.c_str(), &ucharValue);
         } else if (type == DataType::Bool) {
             tree->SetBranchAddress(branch.c_str(), &boolValue);
-        } else {
+        } else if (type == DataType::Long64) {
             tree->SetBranchAddress(branch.c_str(), &long64Value);
+        } else {
+            tree->SetBranchAddress(branch.c_str(), &ulong64Value);
         }
         bound = true;
     }
@@ -149,13 +157,19 @@ struct ScalarInputConfig {
         if (type == DataType::Int) {
             return intValue;
         }
+        if (type == DataType::UInt) {
+            return uintValue;
+        }
         if (type == DataType::UChar) {
             return ucharValue;
         }
         if (type == DataType::Bool) {
             return boolValue ? 1. : 0.;
         }
-        return static_cast<long double>(long64Value);
+        if (type == DataType::Long64) {
+            return static_cast<long double>(long64Value);
+        }
+        return static_cast<long double>(ulong64Value);
     }
 };
 
@@ -168,21 +182,27 @@ struct ArrayInputConfig {
     bool bound = false;
     vector<Float_t> floatValues;
     vector<Int_t> intValues;
+    vector<UInt_t> uintValues;
     vector<UChar_t> ucharValues;
     vector<UChar_t> boolValues;
     vector<Long64_t> long64Values;
+    vector<ULong64_t> ulong64Values;
 
     void initBuffer() {
         if (type == DataType::Float) {
             floatValues.assign(maxSize, 0.f);
         } else if (type == DataType::Int) {
             intValues.assign(maxSize, 0);
+        } else if (type == DataType::UInt) {
+            uintValues.assign(maxSize, 0);
         } else if (type == DataType::UChar) {
             ucharValues.assign(maxSize, 0);
         } else if (type == DataType::Bool) {
             boolValues.assign(maxSize, 0);
-        } else {
+        } else if (type == DataType::Long64) {
             long64Values.assign(maxSize, 0);
+        } else {
+            ulong64Values.assign(maxSize, 0);
         }
     }
 
@@ -199,12 +219,16 @@ struct ArrayInputConfig {
             tree->SetBranchAddress(branch.c_str(), floatValues.data());
         } else if (type == DataType::Int) {
             tree->SetBranchAddress(branch.c_str(), intValues.data());
+        } else if (type == DataType::UInt) {
+            tree->SetBranchAddress(branch.c_str(), uintValues.data());
         } else if (type == DataType::UChar) {
             tree->SetBranchAddress(branch.c_str(), ucharValues.data());
         } else if (type == DataType::Bool) {
             tree->SetBranchAddress(branch.c_str(), boolValues.data());
-        } else {
+        } else if (type == DataType::Long64) {
             tree->SetBranchAddress(branch.c_str(), long64Values.data());
+        } else {
+            tree->SetBranchAddress(branch.c_str(), ulong64Values.data());
         }
         bound = true;
     }
@@ -216,13 +240,19 @@ struct ArrayInputConfig {
         if (type == DataType::Int) {
             return intValues[index];
         }
+        if (type == DataType::UInt) {
+            return uintValues[index];
+        }
         if (type == DataType::UChar) {
             return ucharValues[index];
         }
         if (type == DataType::Bool) {
             return boolValues[index] ? 1.f : 0.f;
         }
-        return static_cast<float>(long64Values[index]);
+        if (type == DataType::Long64) {
+            return static_cast<float>(long64Values[index]);
+        }
+        return static_cast<float>(ulong64Values[index]);
     }
 };
 
@@ -289,8 +319,10 @@ struct OutputBranchRuntime {
     int slotIndex = -1;
     Float_t floatValue = def;
     Int_t intValue = 0;
+    UInt_t uintValue = 0;
     Bool_t boolValue = false;
     Long64_t long64Value = 0;
+    ULong64_t ulong64Value = 0;
 };
 
 struct OutputTreeState {
@@ -664,6 +696,9 @@ DataType parseDataType(const string& text) {
     if (text == "I") {
         return DataType::Int;
     }
+    if (text == "UI") {
+        return DataType::UInt;
+    }
     if (text == "b") {
         return DataType::UChar;
     }
@@ -672,6 +707,9 @@ DataType parseDataType(const string& text) {
     }
     if (text == "L64") {
         return DataType::Long64;
+    }
+    if (text == "UL64") {
+        return DataType::ULong64;
     }
     throw runtime_error("Unsupported data type: " + text);
 }
@@ -683,11 +721,17 @@ char outputLeafCode(DataType type) {
     if (type == DataType::Int) {
         return 'I';
     }
+    if (type == DataType::UInt) {
+        return 'i';
+    }
     if (type == DataType::Bool) {
         return 'O';
     }
     if (type == DataType::Long64) {
         return 'L';
+    }
+    if (type == DataType::ULong64) {
+        return 'l';
     }
     throw runtime_error("Unsupported output type for tree branch");
 }
@@ -1958,10 +2002,14 @@ void appendOutputBranch(OutputTreeState& treeState,
         treeState.tree->Branch(branchName.c_str(), &branch.floatValue, leafList.c_str());
     } else if (config.type == DataType::Int) {
         treeState.tree->Branch(branchName.c_str(), &branch.intValue, leafList.c_str());
+    } else if (config.type == DataType::UInt) {
+        treeState.tree->Branch(branchName.c_str(), &branch.uintValue, leafList.c_str());
     } else if (config.type == DataType::Bool) {
         treeState.tree->Branch(branchName.c_str(), &branch.boolValue, leafList.c_str());
     } else if (config.type == DataType::Long64) {
         treeState.tree->Branch(branchName.c_str(), &branch.long64Value, leafList.c_str());
+    } else if (config.type == DataType::ULong64) {
+        treeState.tree->Branch(branchName.c_str(), &branch.ulong64Value, leafList.c_str());
     } else {
         throw runtime_error("Unsupported output branch type for booking: " + branchName);
     }
@@ -2018,10 +2066,14 @@ void resetBranchValue(OutputBranchRuntime& branch) {
         branch.floatValue = def;
     } else if (branch.type == DataType::Int) {
         branch.intValue = 0;
+    } else if (branch.type == DataType::UInt) {
+        branch.uintValue = 0;
     } else if (branch.type == DataType::Bool) {
         branch.boolValue = false;
     } else if (branch.type == DataType::Long64) {
         branch.long64Value = 0;
+    } else if (branch.type == DataType::ULong64) {
+        branch.ulong64Value = 0;
     }
 }
 
@@ -2050,10 +2102,16 @@ void assignExactScalar(OutputBranchRuntime& branch, const ScalarInputConfig& sca
         branch.floatValue = static_cast<Float_t>(scalar.numericValue());
     } else if (branch.type == DataType::Int) {
         branch.intValue = static_cast<Int_t>(scalar.numericValue());
+    } else if (branch.type == DataType::UInt) {
+        branch.uintValue = static_cast<UInt_t>(scalar.numericValue());
     } else if (branch.type == DataType::Bool) {
         branch.boolValue = (scalar.numericValue() != 0.);
     } else if (branch.type == DataType::Long64) {
-        branch.long64Value = scalar.long64Value;
+        branch.long64Value = (scalar.type == DataType::Long64) ? scalar.long64Value
+                                                               : static_cast<Long64_t>(scalar.numericValue());
+    } else if (branch.type == DataType::ULong64) {
+        branch.ulong64Value = (scalar.type == DataType::ULong64) ? scalar.ulong64Value
+                                                                 : static_cast<ULong64_t>(scalar.numericValue());
     } else {
         throw runtime_error("Unsupported exact scalar output assignment");
     }
@@ -2064,10 +2122,14 @@ void assignNumericValue(OutputBranchRuntime& branch, long double value) {
         branch.floatValue = static_cast<Float_t>(value);
     } else if (branch.type == DataType::Int) {
         branch.intValue = static_cast<Int_t>(value);
+    } else if (branch.type == DataType::UInt) {
+        branch.uintValue = static_cast<UInt_t>(value);
     } else if (branch.type == DataType::Bool) {
         branch.boolValue = (value != 0.);
     } else if (branch.type == DataType::Long64) {
         branch.long64Value = static_cast<Long64_t>(value);
+    } else if (branch.type == DataType::ULong64) {
+        branch.ulong64Value = static_cast<ULong64_t>(value);
     } else {
         throw runtime_error("Unsupported numeric output assignment");
     }
