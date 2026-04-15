@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 #include <TFile.h>
 #include <TH1.h>
@@ -349,6 +350,8 @@ struct OutputTreeState {
 
 struct ThreadConvertResult {
     vector<OutputTreeState> outputTrees;
+    TFile* tempFile = nullptr;
+    string tempFilePath;
 };
 
 struct SampleRuleConfig {
@@ -2213,31 +2216,75 @@ void bookOutputGroup(OutputTreeState& treeState,
     }
 }
 
-void bookTreeBranches(OutputTreeState& treeState, bool isMC) {
+void bookTreeBranches(OutputTreeState& treeState, bool isMC, TDirectory* directory) {
     const size_t totalBranches = countOutputGroupBranches(treeState.config.regularScalars, isMC) +
                                  countOutputGroupBranches(treeState.config.extremaScalars, isMC);
+    if (directory != nullptr) {
+        directory->cd();
+    }
     treeState.tree = new TTree(treeState.config.name.c_str(), treeState.config.title.c_str());
+    if (directory != nullptr) {
+        treeState.tree->SetDirectory(directory);
+    }
+    treeState.tree->SetAutoSave(64LL * 1024LL * 1024LL);
     treeState.branches.reserve(totalBranches);
     treeState.branchIndexByName.reserve(totalBranches);
     bookOutputGroup(treeState, treeState.config.regularScalars, isMC);
     bookOutputGroup(treeState, treeState.config.extremaScalars, isMC);
 }
 
-vector<OutputTreeState> makeOutputTrees(const BranchConfig& branchConfig, bool isMC) {
+vector<OutputTreeState> makeOutputTrees(const BranchConfig& branchConfig, bool isMC, TDirectory* directory) {
     vector<OutputTreeState> outputTrees;
     outputTrees.reserve(branchConfig.trees.size());
     for (const auto& treeConfig : branchConfig.trees) {
         outputTrees.emplace_back();
         outputTrees.back().config = treeConfig;
-        bookTreeBranches(outputTrees.back(), isMC);
+        bookTreeBranches(outputTrees.back(), isMC, directory);
     }
     return outputTrees;
 }
 
-void destroyOutputTrees(vector<OutputTreeState>& outputTrees) {
+void destroyOutputTrees(vector<OutputTreeState>& outputTrees, bool deleteTrees) {
     for (auto& treeState : outputTrees) {
-        delete treeState.tree;
+        if (deleteTrees && treeState.tree != nullptr) {
+            treeState.tree->SetDirectory(nullptr);
+            delete treeState.tree;
+        }
         treeState.tree = nullptr;
+    }
+}
+
+string makeThreadTempFilePath(const string& sample, int threadIndex) {
+    fs::path tmpDir = fs::temp_directory_path();
+    const string fileName = "convert_" + sample + "_" + to_string(static_cast<long long>(getpid())) +
+                            "_" + to_string(threadIndex) + ".root";
+    return (tmpDir / fileName).string();
+}
+
+void initializeThreadResult(ThreadConvertResult& result,
+                            const BranchConfig& branchConfig,
+                            bool isMC,
+                            const string& sample,
+                            int threadIndex) {
+    result.tempFilePath = makeThreadTempFilePath(sample, threadIndex);
+    result.tempFile = TFile::Open(result.tempFilePath.c_str(), "RECREATE");
+    if (!result.tempFile || result.tempFile->IsZombie()) {
+        throw runtime_error("Error opening temporary output file " + result.tempFilePath);
+    }
+    result.outputTrees = makeOutputTrees(branchConfig, isMC, result.tempFile);
+}
+
+void cleanupThreadResult(ThreadConvertResult& result) {
+    destroyOutputTrees(result.outputTrees, result.tempFile == nullptr);
+    if (result.tempFile != nullptr) {
+        result.tempFile->Close();
+        delete result.tempFile;
+        result.tempFile = nullptr;
+    }
+    if (!result.tempFilePath.empty()) {
+        std::error_code ec;
+        fs::remove(result.tempFilePath, ec);
+        result.tempFilePath.clear();
     }
 }
 
@@ -2500,7 +2547,7 @@ TTree* mergeOutputTree(const vector<ThreadConvertResult>& results,
     if (merged == nullptr) {
         OutputTreeState emptyState;
         emptyState.config = treeConfig;
-        bookTreeBranches(emptyState, isMC);
+        bookTreeBranches(emptyState, isMC, nullptr);
         merged = emptyState.tree;
         emptyState.tree = nullptr;
     }
@@ -2649,8 +2696,16 @@ int main(int argc, char** argv) {
     cout << ", threads = " << threadCount << endl;
 
     vector<ThreadConvertResult> threadResults(threadCount);
-    for (auto& result : threadResults) {
-        result.outputTrees = makeOutputTrees(branchConfig, sampleMeta.isMC());
+    try {
+        for (int threadIndex = 0; threadIndex < threadCount; ++threadIndex) {
+            initializeThreadResult(threadResults[threadIndex], branchConfig, sampleMeta.isMC(), sampleMeta.sample, threadIndex);
+        }
+    } catch (const exception& ex) {
+        cerr << "Temporary output initialization error: " << ex.what() << endl;
+        for (auto& result : threadResults) {
+            cleanupThreadResult(result);
+        }
+        return 1;
     }
     vector<BranchConfig> threadConfigs(threadCount, branchConfig);
 
@@ -2695,7 +2750,7 @@ int main(int argc, char** argv) {
     if (!errors.empty()) {
         cerr << "Runtime error: " << errors.front() << endl;
         for (auto& result : threadResults) {
-            destroyOutputTrees(result.outputTrees);
+            cleanupThreadResult(result);
         }
         return 1;
     }
@@ -2731,13 +2786,13 @@ int main(int argc, char** argv) {
     } catch (const exception& ex) {
         cerr << "Output error: " << ex.what() << endl;
         for (auto& result : threadResults) {
-            destroyOutputTrees(result.outputTrees);
+            cleanupThreadResult(result);
         }
         return 1;
     }
 
     for (auto& result : threadResults) {
-        destroyOutputTrees(result.outputTrees);
+        cleanupThreadResult(result);
     }
     return 0;
 }
