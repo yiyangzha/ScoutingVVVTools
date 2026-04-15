@@ -1,7 +1,7 @@
 {
   "tree_name": "Events",
   "run_sample": "www",
-  "submit_samples": [],
+  "submit_samples": ["www", "wwz", "wzz", "zzz", "zh_had", "ggzh_had"],
   "max_threads": 16,
   "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
   "output_root": "../dataset",
