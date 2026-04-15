@@ -77,7 +77,6 @@ timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
 }
 
-echo "[$(timestamp)] start run_all_mc_nohup.sh"
 echo "[$(timestamp)] config=${CONFIG_PATH}"
 echo "[$(timestamp)] max_concurrent_jobs=${MAX_CONCURRENT_JOBS}"
 
