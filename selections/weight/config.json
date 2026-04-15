@@ -5,9 +5,9 @@
   "pileup_histogram": "pileup",
   "max_threads": 12,
   "pileup_data_files": {
-    "nominal": "",
-    "low": "",
-    "high": ""
+    "nominal": "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-69200ub.root",
+    "low":     "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-66000ub.root",
+    "high":    "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-72400ub.root"
   },
   "output_root": "./pileup",
   "output_pattern": "{output_root}/pileup_{sample}.csv",
@@ -18,95 +18,11 @@
   },
   "sample_rules": [
     {
-      "contains_any": ["202"],
-      "category": "data",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/2024/skim/{sample}.root",
-      "sample_type": -2,
-      "is_signal": false
-    },
-    {
       "contains_any": ["www"],
       "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
+      "path": "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNanoUPart_v2-00000000000000000000000000000000/USER",
       "sample_type": 0,
       "is_signal": true
-    },
-    {
-      "contains_any": ["wwz"],
-      "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 1,
-      "is_signal": true
-    },
-    {
-      "contains_any": ["wzz"],
-      "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 2,
-      "is_signal": true
-    },
-    {
-      "contains_any": ["zzz"],
-      "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 3,
-      "is_signal": true
-    },
-    {
-      "contains_any": ["zh"],
-      "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 4,
-      "is_signal": true
-    },
-    {
-      "contains_any": ["wplush", "wminush"],
-      "category": "signal",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 5,
-      "is_signal": true
-    },
-    {
-      "contains_any": ["qcd"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 10,
-      "is_signal": false
-    },
-    {
-      "contains_any": ["tt_had"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 11,
-      "is_signal": false
-    },
-    {
-      "contains_any": ["tt_semilep"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 12,
-      "is_signal": false
-    },
-    {
-      "contains_any": ["ww"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 13,
-      "is_signal": false
-    },
-    {
-      "contains_any": ["wz"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 14,
-      "is_signal": false
-    },
-    {
-      "contains_any": ["zz"],
-      "category": "bkg",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/skim/v3/{sample}.root",
-      "sample_type": 15,
-      "is_signal": false
     }
   ]
 }
