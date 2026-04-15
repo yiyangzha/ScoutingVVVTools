@@ -51,6 +51,7 @@ const char* kAppConfigEnvVar = "CONVERT_CONFIG_PATH";
 
 enum class DataType {
     Float,
+    Short,
     Int,
     UInt,
     UChar,
@@ -115,6 +116,7 @@ struct ScalarInputConfig {
     DataType type = DataType::Int;
     bool onlyMC = false;
     bool bound = false;
+    Short_t shortValue = 0;
     Int_t intValue = 0;
     UInt_t uintValue = 0;
     Float_t floatValue = 0.f;
@@ -134,6 +136,8 @@ struct ScalarInputConfig {
 
         if (type == DataType::Float) {
             tree->SetBranchAddress(branch.c_str(), &floatValue);
+        } else if (type == DataType::Short) {
+            tree->SetBranchAddress(branch.c_str(), &shortValue);
         } else if (type == DataType::Int) {
             tree->SetBranchAddress(branch.c_str(), &intValue);
         } else if (type == DataType::UInt) {
@@ -153,6 +157,9 @@ struct ScalarInputConfig {
     long double numericValue() const {
         if (type == DataType::Float) {
             return floatValue;
+        }
+        if (type == DataType::Short) {
+            return shortValue;
         }
         if (type == DataType::Int) {
             return intValue;
@@ -181,6 +188,7 @@ struct ArrayInputConfig {
     int maxSize = 0;
     bool bound = false;
     vector<Float_t> floatValues;
+    vector<Short_t> shortValues;
     vector<Int_t> intValues;
     vector<UInt_t> uintValues;
     vector<UChar_t> ucharValues;
@@ -191,6 +199,8 @@ struct ArrayInputConfig {
     void initBuffer() {
         if (type == DataType::Float) {
             floatValues.assign(maxSize, 0.f);
+        } else if (type == DataType::Short) {
+            shortValues.assign(maxSize, 0);
         } else if (type == DataType::Int) {
             intValues.assign(maxSize, 0);
         } else if (type == DataType::UInt) {
@@ -217,6 +227,8 @@ struct ArrayInputConfig {
 
         if (type == DataType::Float) {
             tree->SetBranchAddress(branch.c_str(), floatValues.data());
+        } else if (type == DataType::Short) {
+            tree->SetBranchAddress(branch.c_str(), shortValues.data());
         } else if (type == DataType::Int) {
             tree->SetBranchAddress(branch.c_str(), intValues.data());
         } else if (type == DataType::UInt) {
@@ -236,6 +248,9 @@ struct ArrayInputConfig {
     float valueAt(int index) const {
         if (type == DataType::Float) {
             return floatValues[index];
+        }
+        if (type == DataType::Short) {
+            return shortValues[index];
         }
         if (type == DataType::Int) {
             return intValues[index];
@@ -694,6 +709,9 @@ DataType parseDataType(const string& text) {
     if (text == "F") {
         return DataType::Float;
     }
+    if (text == "S") {
+        return DataType::Short;
+    }
     if (text == "I") {
         return DataType::Int;
     }
@@ -718,6 +736,9 @@ DataType parseDataType(const string& text) {
 char outputLeafCode(DataType type) {
     if (type == DataType::Float) {
         return 'F';
+    }
+    if (type == DataType::Short) {
+        return 'S';
     }
     if (type == DataType::Int) {
         return 'I';
