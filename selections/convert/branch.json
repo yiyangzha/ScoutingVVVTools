@@ -109,6 +109,11 @@
           { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_nConstituents", "type": "I", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_neHEF", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_neEmEF", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_chHadMultiplicity", "type": "I", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_muEF", "type": "F", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false }
         ]
       }
