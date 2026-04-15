@@ -479,6 +479,7 @@ double histogramMaxWithError(const TH1* hist) {
 
 void configureLineStyle(TH1* hist,
                         int color,
+                        int lineStyle,
                         int lineWidth,
                         const char* xTitle,
                         const char* yTitle) {
@@ -487,6 +488,7 @@ void configureLineStyle(TH1* hist,
     hist->SetLineColor(color);
     hist->SetMarkerColor(color);
     hist->SetMarkerSize(0.);
+    hist->SetLineStyle(lineStyle);
     hist->SetLineWidth(lineWidth);
     hist->GetXaxis()->SetTitle(xTitle);
     hist->GetYaxis()->SetTitle(yTitle);
@@ -506,6 +508,22 @@ void configureBandStyle(TH1* hist, int color) {
     hist->SetFillColorAlpha(color, 0.3);
 }
 
+void applyBinWeights(TH1* target, const TH1* weightsSource, const TH1* mcReference) {
+    for (int bin = 1; bin <= target->GetNbinsX(); ++bin) {
+        const double mcValue = mcReference->GetBinContent(bin);
+        const double mcError = mcReference->GetBinError(bin);
+        double weight = 0.;
+        if (mcValue > 0.) {
+            weight = weightsSource->GetBinContent(bin) / mcValue;
+        }
+        target->SetBinContent(bin, target->GetBinContent(bin) * weight);
+        target->SetBinError(bin, target->GetBinError(bin) * weight);
+        if (mcValue <= 0. && mcError > 0.) {
+            target->SetBinError(bin, 0.);
+        }
+    }
+}
+
 void writePileupPdf(const string& outputPath,
                     const TH1* dataNominal,
                     const TH1* dataLow,
@@ -517,6 +535,9 @@ void writePileupPdf(const string& outputPath,
     unique_ptr<TH1> drawDataLow = cloneHistogram(dataLow, "pileup_draw_data_low", false);
     unique_ptr<TH1> drawDataHigh = cloneHistogram(dataHigh, "pileup_draw_data_high", false);
     unique_ptr<TH1> drawMc = cloneHistogram(mc, "pileup_draw_mc", false);
+    unique_ptr<TH1> drawMcWeightedNominal = cloneHistogram(mc, "pileup_draw_mc_weighted_nominal", false);
+    unique_ptr<TH1> drawMcWeightedLow = cloneHistogram(mc, "pileup_draw_mc_weighted_low", false);
+    unique_ptr<TH1> drawMcWeightedHigh = cloneHistogram(mc, "pileup_draw_mc_weighted_high", false);
     unique_ptr<TH1> bandDataNominal = cloneHistogram(dataNominal, "pileup_band_data_nominal", false);
     unique_ptr<TH1> bandDataLow = cloneHistogram(dataLow, "pileup_band_data_low", false);
     unique_ptr<TH1> bandDataHigh = cloneHistogram(dataHigh, "pileup_band_data_high", false);
@@ -527,10 +548,17 @@ void writePileupPdf(const string& outputPath,
     const int darkRedColor = TColor::GetColor("#7f0000");
     const int mcColor = kBlack;
 
-    configureLineStyle(drawDataNominal.get(), nominalColor, 3, "pileup", "A.U.");
-    configureLineStyle(drawDataLow.get(), lightRedColor, 3, "pileup", "A.U.");
-    configureLineStyle(drawDataHigh.get(), darkRedColor, 3, "pileup", "A.U.");
-    configureLineStyle(drawMc.get(), mcColor, 3, "pileup", "A.U.");
+    applyBinWeights(drawMcWeightedNominal.get(), dataNominal, mc);
+    applyBinWeights(drawMcWeightedLow.get(), dataLow, mc);
+    applyBinWeights(drawMcWeightedHigh.get(), dataHigh, mc);
+
+    configureLineStyle(drawDataNominal.get(), nominalColor, 1, 3, "pileup", "A.U.");
+    configureLineStyle(drawDataLow.get(), lightRedColor, 1, 3, "pileup", "A.U.");
+    configureLineStyle(drawDataHigh.get(), darkRedColor, 1, 3, "pileup", "A.U.");
+    configureLineStyle(drawMc.get(), mcColor, 1, 3, "pileup", "A.U.");
+    configureLineStyle(drawMcWeightedNominal.get(), nominalColor, 2, 3, "pileup", "A.U.");
+    configureLineStyle(drawMcWeightedLow.get(), lightRedColor, 2, 3, "pileup", "A.U.");
+    configureLineStyle(drawMcWeightedHigh.get(), darkRedColor, 2, 3, "pileup", "A.U.");
 
     configureBandStyle(bandDataNominal.get(), nominalColor);
     configureBandStyle(bandDataLow.get(), lightRedColor);
@@ -542,6 +570,9 @@ void writePileupPdf(const string& outputPath,
     maxValue = max(maxValue, histogramMaxWithError(drawDataLow.get()));
     maxValue = max(maxValue, histogramMaxWithError(drawDataHigh.get()));
     maxValue = max(maxValue, histogramMaxWithError(drawMc.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawMcWeightedNominal.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawMcWeightedLow.get()));
+    maxValue = max(maxValue, histogramMaxWithError(drawMcWeightedHigh.get()));
     drawDataNominal->SetMaximum(maxValue * 1.25);
     drawDataNominal->SetMinimum(0.);
 
@@ -564,8 +595,11 @@ void writePileupPdf(const string& outputPath,
     drawDataLow->Draw("HIST SAME");
     drawDataHigh->Draw("HIST SAME");
     drawMc->Draw("HIST SAME");
+    drawMcWeightedNominal->Draw("HIST SAME");
+    drawMcWeightedLow->Draw("HIST SAME");
+    drawMcWeightedHigh->Draw("HIST SAME");
 
-    TLegend legend(0.63, 0.70, 0.88, 0.88);
+    TLegend legend(0.52, 0.58, 0.88, 0.88);
     legend.SetBorderSize(0);
     legend.SetFillStyle(0);
     legend.SetTextSize(0.038);
@@ -573,6 +607,9 @@ void writePileupPdf(const string& outputPath,
     legend.AddEntry(drawDataLow.get(), "Data low", "l");
     legend.AddEntry(drawDataHigh.get(), "Data high", "l");
     legend.AddEntry(drawMc.get(), "MC", "l");
+    legend.AddEntry(drawMcWeightedNominal.get(), "MC x weight", "l");
+    legend.AddEntry(drawMcWeightedLow.get(), "MC x weight low", "l");
+    legend.AddEntry(drawMcWeightedHigh.get(), "MC x weight high", "l");
     legend.Draw();
 
     canvas.SaveAs(outputPath.c_str());

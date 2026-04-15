@@ -24,6 +24,13 @@
       "path": "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNanoUPart_v2-00000000000000000000000000000000/USER",
       "sample_type": 0,
       "is_signal": true
+    },
+    {
+      "contains_any": ["tt_had"],
+      "category": "bkg",
+      "path": "/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNanoUPart_v2-00000000000000000000000000000000/USER",
+      "sample_type": 11,
+      "is_signal": false
     }
   ]
 }
