@@ -14,7 +14,6 @@ plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
 plt.style.use(hep.style.CMS)
 
-_EPS = 1e-12
 # _SCRIPT_DIR is selections/signal_region/.
 # Trained BDT config copies still store paths relative to selections/BDT/, where train.py lives.
 _SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
