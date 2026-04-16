@@ -366,7 +366,7 @@ struct ThreadConvertResult {
 struct SampleRuleConfig {
     vector<string> containsAny;
     string category;
-    string path;
+    vector<string> paths;
     int sampleType = 0;
     bool hasSampleType = false;
     bool isSignal = false;
@@ -398,11 +398,11 @@ struct PileupBin {
 struct SampleMeta {
     string sample;
     string category;
-    string inputPath;
+    vector<string> inputPaths;
     string outputFileName;
     int sampleType = -1;
     bool isSignal = false;
-    bool isRemoteDataset = false;
+    size_t remoteSourceCount = 0;
 
     bool isMC() const {
         return category != "data";
@@ -434,6 +434,9 @@ struct Value {
     const RuntimeObject* object = nullptr;
     TLorentzVector p4;
 };
+
+vector<string> getStringListOrScalar(const JsonValue& node, const string& key);
+string formatInputSources(const vector<string>& sources);
 
 class ExpressionParser {
 public:
@@ -855,7 +858,7 @@ AppConfig loadAppConfig() {
             SampleRuleConfig rule;
             rule.containsAny = node.at("contains_any").toStringArray();
             rule.category = node.getStringOr("category", "");
-            rule.path = node.getStringOr("path", "");
+            rule.paths = getStringListOrScalar(node, "path");
             if (node.contains("sample_type")) {
                 rule.sampleType = node.at("sample_type").asInt();
                 rule.hasSampleType = true;
@@ -1849,6 +1852,38 @@ bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
     return false;
 }
 
+vector<string> getStringListOrScalar(const JsonValue& node, const string& key) {
+    const JsonValue* child = node.find(key);
+    if (child == nullptr || child->isNull()) {
+        return {};
+    }
+    if (child->isString()) {
+        return {child->asString()};
+    }
+    if (child->isArray()) {
+        return child->toStringArray();
+    }
+    throw runtime_error("JSON key '" + key + "' must be a string or array of strings.");
+}
+
+string formatInputSources(const vector<string>& sources) {
+    if (sources.empty()) {
+        return "";
+    }
+    if (sources.size() == 1) {
+        return sources.front();
+    }
+
+    ostringstream ss;
+    for (size_t index = 0; index < sources.size(); ++index) {
+        if (index != 0) {
+            ss << ", ";
+        }
+        ss << sources[index];
+    }
+    return ss.str();
+}
+
 bool isCmsDatasetPath(const string& path) {
     if (path.empty() || path[0] != '/' || endsWith(path, ".root")) {
         return false;
@@ -2097,11 +2132,24 @@ vector<string> listLocalRootFiles(const string& inputPath) {
 }
 
 vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
-    sampleMeta.isRemoteDataset = isCmsDatasetPath(sampleMeta.inputPath);
-    vector<string> files = sampleMeta.isRemoteDataset ? listRemoteRootFiles(sampleMeta.inputPath)
-                                                      : listLocalRootFiles(sampleMeta.inputPath);
+    sampleMeta.remoteSourceCount = 0;
+    vector<string> files;
+    for (const auto& inputPath : sampleMeta.inputPaths) {
+        const bool isRemoteDataset = isCmsDatasetPath(inputPath);
+        if (isRemoteDataset) {
+            ++sampleMeta.remoteSourceCount;
+        }
+
+        vector<string> sourceFiles = isRemoteDataset ? listRemoteRootFiles(inputPath)
+                                                     : listLocalRootFiles(inputPath);
+        files.insert(files.end(), sourceFiles.begin(), sourceFiles.end());
+    }
+
+    sort(files.begin(), files.end());
+    files.erase(unique(files.begin(), files.end()), files.end());
     if (files.empty()) {
-        throw runtime_error("No ROOT files found for sample " + sampleMeta.sample + " from path " + sampleMeta.inputPath);
+        throw runtime_error("No ROOT files found for sample " + sampleMeta.sample +
+                            " from configured path(s): " + formatInputSources(sampleMeta.inputPaths));
     }
     return files;
 }
@@ -2113,7 +2161,7 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
     meta.sampleType = appConfig.defaultSampleType;
     meta.isSignal = appConfig.defaultIsSignal;
 
-    string pathTemplate;
+    vector<string> pathTemplates;
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
             continue;
@@ -2121,8 +2169,8 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         if (!rule.category.empty()) {
             meta.category = rule.category;
         }
-        if (!rule.path.empty()) {
-            pathTemplate = rule.path;
+        if (!rule.paths.empty()) {
+            pathTemplates = rule.paths;
         }
         if (rule.hasSampleType) {
             meta.sampleType = rule.sampleType;
@@ -2135,7 +2183,7 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
         break;
     }
 
-    if (pathTemplate.empty()) {
+    if (pathTemplates.empty()) {
         throw runtime_error("No input path configured for sample: " + sample);
     }
 
@@ -2144,7 +2192,15 @@ SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
     templateValues["category"] = meta.category;
     templateValues["output_root"] = appConfig.outputRoot;
 
-    meta.inputPath = applyTemplate(pathTemplate, templateValues);
+    for (const auto& pathTemplate : pathTemplates) {
+        const string resolvedPath = applyTemplate(pathTemplate, templateValues);
+        if (find(meta.inputPaths.begin(), meta.inputPaths.end(), resolvedPath) == meta.inputPaths.end()) {
+            meta.inputPaths.push_back(resolvedPath);
+        }
+    }
+    if (meta.inputPaths.empty()) {
+        throw runtime_error("No input path configured for sample: " + sample);
+    }
     meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
     return meta;
 }
@@ -2693,9 +2749,16 @@ int main(int argc, char** argv) {
     }
 
     cout << "Running convert_branch for sample = " << sample
-         << ", files = " << inputFiles.size()
-         << ", source = " << sampleMeta.inputPath
-         << (sampleMeta.isRemoteDataset ? " [dataset]" : " [local]") << endl;
+         << ", files = " << inputFiles.size();
+    if (sampleMeta.inputPaths.size() == 1) {
+        cout << ", source = " << sampleMeta.inputPaths.front()
+             << (sampleMeta.remoteSourceCount == 1 ? " [dataset]" : " [local]");
+    } else {
+        cout << ", sources = " << sampleMeta.inputPaths.size()
+             << " (dataset = " << sampleMeta.remoteSourceCount
+             << ", local = " << (sampleMeta.inputPaths.size() - sampleMeta.remoteSourceCount) << ")";
+    }
+    cout << endl;
 
     vector<PileupBin> pileupWeights;
     if (sampleMeta.isMC() && !appConfig.puWeightPathPattern.empty()) {
