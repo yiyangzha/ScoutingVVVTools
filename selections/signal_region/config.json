@@ -1,0 +1,8 @@
+{
+  "lumi": 171.0,
+  "N": 4,
+  "output_root": "../BDT/fat2",
+  "n_thresholds": 10,
+  "min_bkg_weight": 5.0,
+  "rounds": 5
+}

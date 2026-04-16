@@ -453,6 +453,18 @@ def write_config_copy(output_root):
     log_message(f"Wrote config file: {config_copy_path}")
 
 
+def write_branch_copy(output_root):
+    branch_copy_path = os.path.join(output_root, "branch.json")
+    shutil.copy2(os.path.join(_SCRIPT_DIR, "branch.json"), branch_copy_path)
+    log_message(f"Wrote branch file: {branch_copy_path}")
+
+
+def write_selection_copy(output_root):
+    selection_copy_path = os.path.join(output_root, "selection.json")
+    shutil.copy2(os.path.join(_SCRIPT_DIR, "selection.json"), selection_copy_path)
+    log_message(f"Wrote selection file: {selection_copy_path}")
+
+
 # ── Event filtering ────────────────────────────────────────────────────────────
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
@@ -1212,6 +1224,8 @@ def main():
         )
         split_plans = build_split_plans(tree_name)
         write_config_copy(output_root)
+        write_branch_copy(output_root)
+        write_selection_copy(output_root)
         write_split_metadata(output_root, tree_name, split_plans)
 
         log_message(f"Loading training split for tree = {tree_name}")
