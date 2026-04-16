@@ -144,10 +144,14 @@ if [ "${MODE}" = "2" ]; then
   echo "[$(timestamp)] mode=${MODE} (${MODE_LABEL})"
   echo "[$(timestamp)] work_dir=${WORK_DIR}"
   echo "[$(timestamp)] config=${CONFIG_PATH}"
-  echo "[$(timestamp)] command=env ${CONFIG_ENV_VAR}=${CONFIG_PATH} python3 ./${PYTHON_SCRIPT}"
+  echo "[$(timestamp)] started job=${MODE_LABEL} pid=$$"
+  echo "[$(timestamp)] run: env ${CONFIG_ENV_VAR}=${CONFIG_PATH} python3 ./${PYTHON_SCRIPT}"
+  set +e
   env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" python3 "./${PYTHON_SCRIPT}"
-  echo "[$(timestamp)] training finished"
-  exit 0
+  status=$?
+  set -e
+  echo "[$(timestamp)] finished job=${MODE_LABEL} pid=$$ status=${status}"
+  exit "${status}"
 fi
 
 if ! command -v c++ >/dev/null 2>&1; then

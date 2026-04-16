@@ -175,7 +175,7 @@ jupyter lab  # open selections/BDT/train.ipynb
 python3 selections/BDT/train.py
 ```
 
-BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`.
+BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`, and both `run.sh` and `train.py` follow the same concise run-log style as the convert and weight programs: a `Running ...` header, thread information, `Wrote ...` output records, and `Runtime error: ...` on failure.
 
 ## Configuration Architecture
 
@@ -211,7 +211,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - `mode=1` compiles and runs `weight/weight.C`.
 - `mode=2` runs `BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
 
-For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, or `selections/BDT/log.txt` depending on mode. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
+For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, or `selections/BDT/log.txt` depending on mode. All three modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2` logs one `started` / `finished` record for the whole BDT job with an explicit exit `status=`. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 
