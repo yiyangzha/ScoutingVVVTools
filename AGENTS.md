@@ -90,3 +90,106 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## Overview
+
+This is a CMS physics analysis toolkit for a VVV (triple vector boson) scouting search using Run 3 data. The workflow processes CMS NanoAOD-style ROOT files from DAS, applies selections, trains BDT models, and estimates backgrounds.
+
+**Dependencies:** ROOT (with `root-config`), C++17, Python 3, OpenMP (optional), XRootD for remote files.
+
+## Pipeline Overview
+
+The analysis runs in this order:
+
+1. **Skim** — reduce raw NanoAOD files to manageable size (`legacy/skim/`)
+2. **Pileup weights** — derive MC pileup reweighting CSVs (`selections/weight/`)
+3. **Convert** — apply physics selections, build BDT training trees (`selections/convert/`)
+4. **B-veto** — derive AK4 b-jet veto working points (`selections/b_veto/`)
+5. **BDT training** — train `fat2`/`fat3` classifiers (`selections/BDT/`)
+6. **Background estimation** — QCD ABCD method and data/MC comparisons (`background_estimation/`)
+7. **Systematics** — trigger efficiency studies (`systematics/`)
+
+## Key Commands
+
+### Convert branches (build training trees)
+```bash
+# Run all MC samples defined in selections/convert/config.json
+cd selections && ./run.sh 0
+
+# Run specific samples
+cd selections && ./run.sh 0 convert/config.json www qcd_ht2000
+
+# Run with a custom config
+cd selections && ./run.sh 0 /path/to/custom_config.json
+```
+
+### Pileup reweighting
+```bash
+cd selections && ./run.sh 1
+cd selections && ./run.sh 1 weight/config.json www
+```
+
+### Compile and run C++ tools manually
+```bash
+# compile
+c++ -O3 -std=c++17 $(root-config --cflags --libs) selections/convert/convert_branch.C -o convert_branch
+# run one sample
+CONVERT_CONFIG_PATH=selections/convert/config.json ./convert_branch www
+```
+
+### ROOT macro tools
+```bash
+root -l -q 'systematics/efficiency.C("2024F", 200)'
+root -l -q 'systematics/efficiency.C("vvv", 0)'
+root -l -q 'selections/b_veto/b_veto.C'
+```
+
+### Python tools
+```bash
+python3 background_estimation/qcd_est.py \
+  --base-dir /path/to/dataset \
+  --model /path/to/model.json \
+  --out-dir qcd_est
+
+python3 background_estimation/data_mc.py group_hists_out.root
+
+python3 selections/b_veto/ttbar_score.py
+```
+
+### BDT training
+```bash
+jupyter lab  # open selections/BDT/train.ipynb
+# or run as script:
+python3 selections/BDT/train.py
+```
+
+## Configuration Architecture
+
+All tools are driven by JSON config files. Sample definitions live centrally in [selections/config/sample.json](selections/config/sample.json); individual tool configs reference it via the `sample_config` key.
+
+- **[selections/config/sample.json](selections/config/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`.
+- **[selections/convert/config.json](selections/convert/config.json)** — controls convert step: output paths, thread count, file size limits, pileup weight CSV path pattern.
+- **[selections/convert/selection.json](selections/convert/selection.json)** — physics selection: event preselection string, per-collection cuts/sorts, and `tree_selection` that splits output into `fat2` (exactly 2 AK8 jets) and `fat3` (≥3 AK8 jets) trees. Selections are parsed and JIT-compiled by the C++ expression engine.
+- **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
+- **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
+
+## `run.sh` Behavior
+
+[selections/run.sh](selections/run.sh) compiles the C++ tool, resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt` or `selections/weight/log.txt`. The compiled binary is removed on exit. OpenMP is auto-detected for intra-job parallelism.
+
+## C++ Expression Engine (convert_branch.C)
+
+The selection and branch formulas in JSON are parsed by a mini expression engine inside [selections/convert/convert_branch.C](selections/convert/convert_branch.C). Supported syntax:
+- Arithmetic/logical operators, comparisons
+- Functions: `pt(obj)`, `eta(obj)`, `phi(obj)`, `mass(obj)`, `abs()`, `min()`, `max()`, `size(coll)`, `deltaR(a,b)`, `min_deltaR(self, coll)`, `relPtDiff(a,b)`
+- Collection indexing: `ak8[0]`, `ak4[1]`
+- `self` / `other` keywords in per-object selection strings
+
+## Physics Context
+
+- **Signal:** VVV hadronic decays — WWW, WWZ, WZZ, ZZZ, and VH(→WW) associated production
+- **Trigger:** `DST_PFScouting_JetHT` scouting stream
+- **Jets:** AK8 fat jets (`ScoutingFatPFJetRecluster`) and AK4 jets (`ScoutingPFJetRecluster2`)
+- **Signal regions:** `fat2` (2 AK8 jets, ≥2 AK4 jets) and `fat3` (≥3 AK8 jets)
+- **QCD background:** estimated with ABCD method using BDT score as discriminant
+- **Pileup corrections:** three variations (nominal/low/high) for systematic uncertainty
