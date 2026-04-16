@@ -40,15 +40,16 @@ namespace {
 const char* kConfigPath = "./config.json";
 const char* kConfigEnvVar = "WEIGHT_CONFIG_PATH";
 const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
+const char* kDefaultSampleConfigPath = "../config/sample.json";
 
 struct SampleRuleConfig {
-    vector<string> containsAny;
-    string category;
+    string name;
     vector<string> paths;
-    int sampleType = 0;
-    bool hasSampleType = false;
+    int sampleId = -1;
+    bool isMC = true;
     bool isSignal = false;
-    bool hasIsSignal = false;
+    double xsection = -1.;
+    double lumi = -1.;
 };
 
 struct AppConfig {
@@ -59,24 +60,27 @@ struct AppConfig {
     unordered_map<string, string> pileupDataFiles;
     string outputRoot;
     string outputPattern;
+    string sampleConfigPath = kDefaultSampleConfigPath;
     int maxThreads = 12;
-    string defaultCategory = "bkg";
-    int defaultSampleType = -1;
-    bool defaultIsSignal = false;
     vector<SampleRuleConfig> sampleRules;
 };
 
 struct SampleMeta {
     string sample;
-    string category;
     vector<string> inputPaths;
     string outputFileName;
-    int sampleType = -1;
+    int sampleId = -1;
+    bool isMC = true;
     bool isSignal = false;
+    double xsection = -1.;
+    double lumi = -1.;
     size_t remoteSourceCount = 0;
 
-    bool isMC() const {
-        return category != "data";
+    string sampleGroup() const {
+        if (!isMC) {
+            return "data";
+        }
+        return isSignal ? "signal" : "bkg";
     }
 };
 
@@ -137,13 +141,21 @@ JsonValue loadJson(const char* path, const char* envVar) {
     return simple_json::parseFile(resolved);
 }
 
-bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
-    for (const auto& token : rule.containsAny) {
-        if (sample.find(token) != string::npos) {
-            return true;
-        }
+string resolveReferencedPath(const string& baseConfigPath, const string& targetPath) {
+    if (targetPath.empty()) {
+        return targetPath;
     }
-    return false;
+
+    const fs::path path(targetPath);
+    if (path.is_absolute()) {
+        return path.lexically_normal().string();
+    }
+
+    return (fs::path(baseConfigPath).parent_path() / path).lexically_normal().string();
+}
+
+bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
+    return sample == rule.name;
 }
 
 vector<string> getStringListOrScalar(const JsonValue& node, const string& key) {
@@ -179,7 +191,8 @@ string formatInputSources(const vector<string>& sources) {
 }
 
 AppConfig loadAppConfig() {
-    const JsonValue payload = loadJson(kConfigPath, kConfigEnvVar);
+    const string configPath = resolveConfigPath(kConfigPath, kConfigEnvVar);
+    const JsonValue payload = simple_json::parseFile(configPath);
 
     AppConfig config;
     config.treeName = payload.getStringOr("tree_name", "Events");
@@ -188,6 +201,8 @@ AppConfig loadAppConfig() {
     config.pileupHistogram = payload.getStringOr("pileup_histogram", "pileup");
     config.outputRoot = payload.at("output_root").asString();
     config.outputPattern = payload.at("output_pattern").asString();
+    config.sampleConfigPath = resolveReferencedPath(
+        configPath, payload.getStringOr("sample_config", kDefaultSampleConfigPath));
     config.maxThreads = payload.getIntOr("max_threads", 12);
 
     if (payload.contains("pileup_data_files")) {
@@ -196,27 +211,17 @@ AppConfig loadAppConfig() {
         }
     }
 
-    if (payload.contains("defaults")) {
-        const auto& defaults = payload.at("defaults");
-        config.defaultCategory = defaults.getStringOr("category", config.defaultCategory);
-        config.defaultSampleType = defaults.getIntOr("sample_type", config.defaultSampleType);
-        config.defaultIsSignal = defaults.getBoolOr("is_signal", config.defaultIsSignal);
-    }
-
-    if (payload.contains("sample_rules")) {
-        for (const auto& node : payload.at("sample_rules").asArray()) {
+    const JsonValue samplePayload = simple_json::parseFile(config.sampleConfigPath);
+    if (samplePayload.contains("sample")) {
+        for (const auto& node : samplePayload.at("sample").asArray()) {
             SampleRuleConfig rule;
-            rule.containsAny = node.at("contains_any").toStringArray();
-            rule.category = node.getStringOr("category", "");
+            rule.name = node.at("name").asString();
             rule.paths = getStringListOrScalar(node, "path");
-            if (node.contains("sample_type")) {
-                rule.sampleType = node.at("sample_type").asInt();
-                rule.hasSampleType = true;
-            }
-            if (node.contains("is_signal")) {
-                rule.isSignal = node.at("is_signal").asBool();
-                rule.hasIsSignal = true;
-            }
+            rule.sampleId = node.at("sample_ID").asInt();
+            rule.isMC = node.at("is_MC").asBool();
+            rule.isSignal = node.at("is_signal").asBool();
+            rule.xsection = static_cast<double>(node.getNumberOr("xsection", -1.));
+            rule.lumi = static_cast<double>(node.getNumberOr("lumi", -1.));
             config.sampleRules.push_back(std::move(rule));
         }
     }
@@ -362,54 +367,41 @@ vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
 }
 
 SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
-    SampleMeta meta;
-    meta.sample = sample;
-    meta.category = appConfig.defaultCategory;
-    meta.sampleType = appConfig.defaultSampleType;
-    meta.isSignal = appConfig.defaultIsSignal;
-
-    vector<string> pathTemplates;
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
             continue;
         }
-        if (!rule.category.empty()) {
-            meta.category = rule.category;
+        SampleMeta meta;
+        meta.sample = sample;
+        meta.sampleId = rule.sampleId;
+        meta.isMC = rule.isMC;
+        meta.isSignal = rule.isSignal;
+        meta.xsection = rule.xsection;
+        meta.lumi = rule.lumi;
+
+        if (rule.paths.empty()) {
+            throw runtime_error("No input path configured for sample: " + sample);
         }
-        if (!rule.paths.empty()) {
-            pathTemplates = rule.paths;
+
+        unordered_map<string, string> templateValues;
+        templateValues["sample"] = meta.sample;
+        templateValues["sample_group"] = meta.sampleGroup();
+        templateValues["output_root"] = appConfig.outputRoot;
+
+        for (const auto& pathTemplate : rule.paths) {
+            const string resolvedPath = applyTemplate(pathTemplate, templateValues);
+            if (find(meta.inputPaths.begin(), meta.inputPaths.end(), resolvedPath) == meta.inputPaths.end()) {
+                meta.inputPaths.push_back(resolvedPath);
+            }
         }
-        if (rule.hasSampleType) {
-            meta.sampleType = rule.sampleType;
+        if (meta.inputPaths.empty()) {
+            throw runtime_error("No input path configured for sample: " + sample);
         }
-        if (rule.hasIsSignal) {
-            meta.isSignal = rule.isSignal;
-        } else {
-            meta.isSignal = (meta.category == "signal");
-        }
-        break;
+        meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
+        return meta;
     }
 
-    if (pathTemplates.empty()) {
-        throw runtime_error("No input path configured for sample: " + sample);
-    }
-
-    unordered_map<string, string> templateValues;
-    templateValues["sample"] = meta.sample;
-    templateValues["category"] = meta.category;
-    templateValues["output_root"] = appConfig.outputRoot;
-
-    for (const auto& pathTemplate : pathTemplates) {
-        const string resolvedPath = applyTemplate(pathTemplate, templateValues);
-        if (find(meta.inputPaths.begin(), meta.inputPaths.end(), resolvedPath) == meta.inputPaths.end()) {
-            meta.inputPaths.push_back(resolvedPath);
-        }
-    }
-    if (meta.inputPaths.empty()) {
-        throw runtime_error("No input path configured for sample: " + sample);
-    }
-    meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
-    return meta;
+    throw runtime_error("No sample named '" + sample + "' found in " + appConfig.sampleConfigPath);
 }
 
 string getRequiredDataFile(const AppConfig& appConfig, const string& key) {
@@ -752,8 +744,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!sampleMeta.isMC()) {
-        cerr << "weight only supports MC samples, but got category = " << sampleMeta.category << endl;
+    if (!sampleMeta.isMC) {
+        cerr << "weight only supports MC samples, but sample " << sampleMeta.sample
+             << " has is_MC = false" << endl;
         return 1;
     }
 

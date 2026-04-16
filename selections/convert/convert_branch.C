@@ -49,6 +49,7 @@ const char* kAppConfigPath = "./config.json";
 const char* kBranchConfigPath = "./branch.json";
 const char* kSelectionConfigPath = "./selection.json";
 const char* kAppConfigEnvVar = "CONVERT_CONFIG_PATH";
+const char* kDefaultSampleConfigPath = "../config/sample.json";
 
 enum class DataType {
     Float,
@@ -364,13 +365,13 @@ struct ThreadConvertResult {
 };
 
 struct SampleRuleConfig {
-    vector<string> containsAny;
-    string category;
+    string name;
     vector<string> paths;
-    int sampleType = 0;
-    bool hasSampleType = false;
+    int sampleId = -1;
+    bool isMC = true;
     bool isSignal = false;
-    bool hasIsSignal = false;
+    double xsection = -1.;
+    double lumi = -1.;
 };
 
 struct AppConfig {
@@ -378,11 +379,9 @@ struct AppConfig {
     string outputRoot;
     string outputPattern;
     string runSample;
+    string sampleConfigPath = kDefaultSampleConfigPath;
     int maxThreads = 12;
     double maxOutputFileSizeGB = 5.;
-    string defaultCategory = "bkg";
-    int defaultSampleType = -1;
-    bool defaultIsSignal = false;
     vector<SampleRuleConfig> sampleRules;
     string puWeightPathPattern;
 };
@@ -397,15 +396,20 @@ struct PileupBin {
 
 struct SampleMeta {
     string sample;
-    string category;
     vector<string> inputPaths;
     string outputFileName;
-    int sampleType = -1;
+    int sampleId = -1;
+    bool isMC = true;
     bool isSignal = false;
+    double xsection = -1.;
+    double lumi = -1.;
     size_t remoteSourceCount = 0;
 
-    bool isMC() const {
-        return category != "data";
+    string sampleGroup() const {
+        if (!isMC) {
+            return "data";
+        }
+        return isSignal ? "signal" : "bkg";
     }
 };
 
@@ -801,6 +805,19 @@ JsonValue loadJson(const char* path, const char* envVar = nullptr) {
     return simple_json::parseFile(resolved);
 }
 
+string resolveReferencedPath(const string& baseConfigPath, const string& targetPath) {
+    if (targetPath.empty()) {
+        return targetPath;
+    }
+
+    const fs::path path(targetPath);
+    if (path.is_absolute()) {
+        return path.lexically_normal().string();
+    }
+
+    return (fs::path(baseConfigPath).parent_path() / path).lexically_normal().string();
+}
+
 ExprPtr compileExpression(const string& text) {
     return ExpressionParser(text).parse();
 }
@@ -836,37 +853,30 @@ SortRule parseSortRule(const string& text) {
 }
 
 AppConfig loadAppConfig() {
-    const JsonValue payload = loadJson(kAppConfigPath, kAppConfigEnvVar);
+    const string appConfigPath = resolveConfigPath(kAppConfigPath, kAppConfigEnvVar);
+    const JsonValue payload = simple_json::parseFile(appConfigPath);
 
     AppConfig config;
     config.treeName = payload.getStringOr("tree_name", "Events");
     config.runSample = payload.getStringOr("run_sample", "");
     config.outputRoot = payload.at("output_root").asString();
     config.outputPattern = payload.at("output_pattern").asString();
+    config.sampleConfigPath = resolveReferencedPath(
+        appConfigPath, payload.getStringOr("sample_config", kDefaultSampleConfigPath));
     config.maxThreads = payload.getIntOr("max_threads", 12);
     config.maxOutputFileSizeGB = static_cast<double>(payload.getNumberOr("max_output_file_size_gb", 5.));
 
-    if (payload.contains("defaults")) {
-        const auto& defaults = payload.at("defaults");
-        config.defaultCategory = defaults.getStringOr("category", config.defaultCategory);
-        config.defaultSampleType = defaults.getIntOr("sample_type", config.defaultSampleType);
-        config.defaultIsSignal = defaults.getBoolOr("is_signal", config.defaultIsSignal);
-    }
-
-    if (payload.contains("sample_rules")) {
-        for (const auto& node : payload.at("sample_rules").asArray()) {
+    const JsonValue samplePayload = simple_json::parseFile(config.sampleConfigPath);
+    if (samplePayload.contains("sample")) {
+        for (const auto& node : samplePayload.at("sample").asArray()) {
             SampleRuleConfig rule;
-            rule.containsAny = node.at("contains_any").toStringArray();
-            rule.category = node.getStringOr("category", "");
+            rule.name = node.at("name").asString();
             rule.paths = getStringListOrScalar(node, "path");
-            if (node.contains("sample_type")) {
-                rule.sampleType = node.at("sample_type").asInt();
-                rule.hasSampleType = true;
-            }
-            if (node.contains("is_signal")) {
-                rule.isSignal = node.at("is_signal").asBool();
-                rule.hasIsSignal = true;
-            }
+            rule.sampleId = node.at("sample_ID").asInt();
+            rule.isMC = node.at("is_MC").asBool();
+            rule.isSignal = node.at("is_signal").asBool();
+            rule.xsection = static_cast<double>(node.getNumberOr("xsection", -1.));
+            rule.lumi = static_cast<double>(node.getNumberOr("lumi", -1.));
             config.sampleRules.push_back(std::move(rule));
         }
     }
@@ -1164,13 +1174,16 @@ unordered_map<string, long double> buildRawScalarValues(const BranchConfig& bran
                                                         const SampleMeta& sampleMeta,
                                                         const vector<PileupBin>* pileupWeights = nullptr) {
     unordered_map<string, long double> values;
-    values.reserve(branchConfig.scalars.size() + 5);
+    values.reserve(branchConfig.scalars.size() + 8);
     for (const auto& scalar : branchConfig.scalars) {
         values[scalar.name] = scalar.numericValue();
     }
-    values["sample_type"] = sampleMeta.sampleType;
+    values["sample_ID"] = sampleMeta.sampleId;
+    values["is_MC"] = sampleMeta.isMC ? 1. : 0.;
     values["is_signal"] = sampleMeta.isSignal ? 1. : 0.;
-    if (sampleMeta.isMC()) {
+    values["xsection"] = sampleMeta.xsection;
+    values["lumi"] = sampleMeta.lumi;
+    if (sampleMeta.isMC) {
         const auto puIt = values.find("Pileup_nTrueInt");
         const float puValue = (puIt != values.end()) ? static_cast<float>(puIt->second) : 0.f;
         if (pileupWeights != nullptr && !pileupWeights->empty()) {
@@ -1844,12 +1857,7 @@ string applyTemplate(string text, const unordered_map<string, string>& values) {
 }
 
 bool matchesRule(const string& sample, const SampleRuleConfig& rule) {
-    for (const auto& token : rule.containsAny) {
-        if (sample.find(token) != string::npos) {
-            return true;
-        }
-    }
-    return false;
+    return sample == rule.name;
 }
 
 vector<string> getStringListOrScalar(const JsonValue& node, const string& key) {
@@ -2155,54 +2163,41 @@ vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
 }
 
 SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
-    SampleMeta meta;
-    meta.sample = sample;
-    meta.category = appConfig.defaultCategory;
-    meta.sampleType = appConfig.defaultSampleType;
-    meta.isSignal = appConfig.defaultIsSignal;
-
-    vector<string> pathTemplates;
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
             continue;
         }
-        if (!rule.category.empty()) {
-            meta.category = rule.category;
+        SampleMeta meta;
+        meta.sample = sample;
+        meta.sampleId = rule.sampleId;
+        meta.isMC = rule.isMC;
+        meta.isSignal = rule.isSignal;
+        meta.xsection = rule.xsection;
+        meta.lumi = rule.lumi;
+
+        if (rule.paths.empty()) {
+            throw runtime_error("No input path configured for sample: " + sample);
         }
-        if (!rule.paths.empty()) {
-            pathTemplates = rule.paths;
+
+        unordered_map<string, string> templateValues;
+        templateValues["sample"] = meta.sample;
+        templateValues["sample_group"] = meta.sampleGroup();
+        templateValues["output_root"] = appConfig.outputRoot;
+
+        for (const auto& pathTemplate : rule.paths) {
+            const string resolvedPath = applyTemplate(pathTemplate, templateValues);
+            if (find(meta.inputPaths.begin(), meta.inputPaths.end(), resolvedPath) == meta.inputPaths.end()) {
+                meta.inputPaths.push_back(resolvedPath);
+            }
         }
-        if (rule.hasSampleType) {
-            meta.sampleType = rule.sampleType;
+        if (meta.inputPaths.empty()) {
+            throw runtime_error("No input path configured for sample: " + sample);
         }
-        if (rule.hasIsSignal) {
-            meta.isSignal = rule.isSignal;
-        } else {
-            meta.isSignal = (meta.category == "signal");
-        }
-        break;
+        meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
+        return meta;
     }
 
-    if (pathTemplates.empty()) {
-        throw runtime_error("No input path configured for sample: " + sample);
-    }
-
-    unordered_map<string, string> templateValues;
-    templateValues["sample"] = meta.sample;
-    templateValues["category"] = meta.category;
-    templateValues["output_root"] = appConfig.outputRoot;
-
-    for (const auto& pathTemplate : pathTemplates) {
-        const string resolvedPath = applyTemplate(pathTemplate, templateValues);
-        if (find(meta.inputPaths.begin(), meta.inputPaths.end(), resolvedPath) == meta.inputPaths.end()) {
-            meta.inputPaths.push_back(resolvedPath);
-        }
-    }
-    if (meta.inputPaths.empty()) {
-        throw runtime_error("No input path configured for sample: " + sample);
-    }
-    meta.outputFileName = applyTemplate(appConfig.outputPattern, templateValues);
-    return meta;
+    throw runtime_error("No sample named '" + sample + "' found in " + appConfig.sampleConfigPath);
 }
 
 string resolveRequestedSample(int argc, char** argv, const AppConfig& appConfig) {
@@ -2218,7 +2213,7 @@ string resolveRequestedSample(int argc, char** argv, const AppConfig& appConfig)
 string resolvePileupWeightPath(const AppConfig& appConfig, const SampleMeta& sampleMeta) {
     unordered_map<string, string> templateValues;
     templateValues["sample"] = sampleMeta.sample;
-    templateValues["category"] = sampleMeta.category;
+    templateValues["sample_group"] = sampleMeta.sampleGroup();
     templateValues["output_root"] = appConfig.outputRoot;
     return applyTemplate(appConfig.puWeightPathPattern, templateValues);
 }
@@ -2656,9 +2651,9 @@ void processInputFile(const string& inputFileName,
         throw runtime_error("Tree " + appConfig.treeName + " not found in " + inputFileName);
     }
 
-    configureActiveBranches(tree, branchConfig, sampleMeta.isMC());
-    ensureCollectionBufferCapacities(tree, branchConfig, sampleMeta.isMC());
-    unordered_map<string, const ScalarInputConfig*> rawScalarByName = bindInputBranches(tree, branchConfig, sampleMeta.isMC());
+    configureActiveBranches(tree, branchConfig, sampleMeta.isMC);
+    ensureCollectionBufferCapacities(tree, branchConfig, sampleMeta.isMC);
+    unordered_map<string, const ScalarInputConfig*> rawScalarByName = bindInputBranches(tree, branchConfig, sampleMeta.isMC);
 
     const Long64_t nEntries = tree->GetEntries();
     for (Long64_t entry = 0; entry < nEntries; ++entry) {
@@ -2702,7 +2697,7 @@ void processInputFile(const string& inputFileName,
                 continue;
             }
 
-            fillOutputTree(treeState, runtimeCollections, inputCollections, baseVars, rawScalarByName, sampleMeta.isMC());
+            fillOutputTree(treeState, runtimeCollections, inputCollections, baseVars, rawScalarByName, sampleMeta.isMC);
         }
     }
 }
@@ -2761,7 +2756,7 @@ int main(int argc, char** argv) {
     cout << endl;
 
     vector<PileupBin> pileupWeights;
-    if (sampleMeta.isMC() && !appConfig.puWeightPathPattern.empty()) {
+    if (sampleMeta.isMC && !appConfig.puWeightPathPattern.empty()) {
         try {
             const string puWeightPath = resolvePileupWeightPath(appConfig, sampleMeta);
             pileupWeights = loadPileupWeights(puWeightPath);
@@ -2790,7 +2785,7 @@ int main(int argc, char** argv) {
     vector<ThreadConvertResult> threadResults(threadCount);
     try {
         for (int threadIndex = 0; threadIndex < threadCount; ++threadIndex) {
-            initializeThreadResult(threadResults[threadIndex], branchConfig, sampleMeta.isMC(), sampleMeta.sample, threadIndex);
+            initializeThreadResult(threadResults[threadIndex], branchConfig, sampleMeta.isMC, sampleMeta.sample, threadIndex);
         }
     } catch (const exception& ex) {
         cerr << "Temporary output initialization error: " << ex.what() << endl;
@@ -2855,7 +2850,7 @@ int main(int argc, char** argv) {
         vector<unique_ptr<TTree>> mergedTrees;
         mergedTrees.reserve(branchConfig.trees.size());
         for (size_t treeIndex = 0; treeIndex < branchConfig.trees.size(); ++treeIndex) {
-            mergedTrees.emplace_back(mergeOutputTree(threadResults, treeIndex, branchConfig.trees[treeIndex], sampleMeta.isMC()));
+            mergedTrees.emplace_back(mergeOutputTree(threadResults, treeIndex, branchConfig.trees[treeIndex], sampleMeta.isMC));
         }
 
         const Long64_t maxOutputBytes = outputSizeLimitBytes(appConfig.maxOutputFileSizeGB);

@@ -16,7 +16,7 @@ Modes:
 Sample selection:
   1. If sample names are given on the command line, they are used.
   2. Otherwise the script reads submit_samples from the chosen config.json.
-  3. If submit_samples is empty or missing, all non-data samples are submitted.
+  3. If submit_samples is empty or missing, all MC samples are submitted.
 EOF
 }
 
@@ -170,34 +170,47 @@ while IFS= read -r sample; do
 done < <(
   python3 - "${CONFIG_PATH}" "${REQUESTED_SAMPLES[@]}" <<'PY'
 import json
+import os
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-rules = payload.get("sample_rules", [])
+sample_config = payload.get("sample_config", "../config/sample.json")
+if not isinstance(sample_config, str) or not sample_config:
+    raise SystemExit("sample_config must be a non-empty string")
+
+config_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
+sample_config_path = sample_config if os.path.isabs(sample_config) else os.path.normpath(os.path.join(config_dir, sample_config))
+
+with open(sample_config_path, "r", encoding="utf-8") as handle:
+    sample_payload = json.load(handle)
+
+rules = sample_payload.get("sample", [])
 if not isinstance(rules, list):
-    raise SystemExit("sample_rules must be a JSON array")
+    raise SystemExit("sample must be a JSON array")
 
 seen = set()
 all_samples = []
+mc_samples = []
 for rule in rules:
     if not isinstance(rule, dict):
         continue
 
-    category = rule.get("category", "")
-    if category == "data":
+    name = rule.get("name", "")
+    if not isinstance(name, str) or not name:
+        raise SystemExit("sample.name must be a non-empty string")
+
+    is_mc = rule.get("is_MC")
+    if not isinstance(is_mc, bool):
+        raise SystemExit("sample.is_MC must be a boolean")
+
+    if name in seen:
         continue
-
-    contains_any = rule.get("contains_any", [])
-    if not isinstance(contains_any, list):
-        raise SystemExit("sample_rules.contains_any must be a JSON array")
-
-    for sample in contains_any:
-        if not isinstance(sample, str) or not sample or sample in seen:
-            continue
-        seen.add(sample)
-        all_samples.append(sample)
+    seen.add(name)
+    all_samples.append(name)
+    if is_mc:
+        mc_samples.append(name)
 
 configured = payload.get("submit_samples", [])
 if configured is None:
@@ -211,7 +224,7 @@ for sample in configured:
 requested = [sample for sample in sys.argv[2:] if sample]
 selected = requested if requested else configured
 if not selected:
-    selected = all_samples
+    selected = mc_samples
 
 available = set(all_samples)
 emitted = set()
