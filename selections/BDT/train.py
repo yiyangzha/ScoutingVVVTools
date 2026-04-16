@@ -46,13 +46,13 @@ INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"
 INPUT_PATTERN      = cfg["input_pattern"]
 OUTPUT_ROOT        = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg.get("output_root", ".")))
 MODEL_PATTERN      = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
+CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
 
 # ── Sample registry from sample.json ──────────────────────────────────────────
 SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
         "xsection":    _rule["xsection"],
-        "raw_entries": _rule.get("raw_entries", 100),
         "is_MC":       _rule["is_MC"],
         "is_signal":   _rule["is_signal"],
         "sample_ID":   _rule["sample_ID"],
@@ -69,11 +69,7 @@ for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
         SAMPLE_TO_CLASS[_s] = _idx
 
 # Resolve training sample list
-_submit_cfg = cfg.get("submit_samples", [])
-if _submit_cfg:
-    TRAINING_SAMPLES = [s for s in _submit_cfg if s in SAMPLE_TO_CLASS]
-else:
-    TRAINING_SAMPLES = [r["name"] for r in sample_cfg["sample"] if r["name"] in SAMPLE_TO_CLASS]
+TRAINING_SAMPLES = [r["name"] for r in sample_cfg["sample"] if r["name"] in SAMPLE_TO_CLASS]
 
 
 # ── File discovery ─────────────────────────────────────────────────────────────
@@ -88,11 +84,64 @@ def _input_files(sample_name):
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
+def _report_sample_weights(df_all, stage_label):
+    print(f"  [{stage_label}]")
+    for cls_idx, cls_name in enumerate(CLASS_NAMES):
+        mask_cls = df_all["class_idx"] == cls_idx
+        if not np.any(mask_cls):
+            print(f"    {cls_name}: no entries")
+            continue
+        total_w = float(df_all.loc[mask_cls, "weight"].sum())
+        print(f"    {cls_name}: total_w={total_w:.6g}")
+        for sample_name in CLASS_GROUPS[cls_name]:
+            mask_sample = mask_cls & (df_all["sample_name"] == sample_name)
+            if not np.any(mask_sample):
+                continue
+            sample_w = float(df_all.loc[mask_sample, "weight"].sum())
+            print(f"      {sample_name}: sum_w={sample_w:.6g}, xsec={SAMPLE_INFO[sample_name]['xsection']:.6g}")
+
+
+def _validate_sample_weight_totals(df_all):
+    for sample_name in TRAINING_SAMPLES:
+        info = SAMPLE_INFO[sample_name]
+        mask = df_all["sample_name"] == sample_name
+        if not np.any(mask):
+            continue
+        total_w = float(df_all.loc[mask, "weight"].sum())
+        xsec = float(info["xsection"])
+        if xsec <= 0.0:
+            if abs(total_w) > 1e-8:
+                raise RuntimeError(f"Sample '{sample_name}' has xsection=0 but total weight {total_w:.6g}")
+            continue
+        rel = abs(total_w - xsec) / max(abs(xsec), _EPS)
+        if rel > 1e-6:
+            raise RuntimeError(
+                f"Sample '{sample_name}' weight sum {total_w:.6g} is not proportional to xsection {xsec:.6g}"
+            )
+
+
+def _validate_class_weight_totals(df_all):
+    positive_totals = []
+    for cls_idx in range(NUM_CLASSES):
+        total_w = float(df_all.loc[df_all["class_idx"] == cls_idx, "weight"].sum())
+        if total_w > 0.0:
+            positive_totals.append(total_w)
+    if not positive_totals:
+        raise RuntimeError("No positive class weights after normalisation.")
+    ref = positive_totals[0]
+    for total_w in positive_totals[1:]:
+        rel = abs(total_w - ref) / max(abs(ref), _EPS)
+        if rel > 1e-6:
+            raise RuntimeError("Class totals are not equal after class normalisation.")
+
+
 def prepare_data(tree_name, branches):
     """Load training data for one tree (fat2 or fat3).
 
-    Weight formula: per_evt_w = xsection * raw_entries / n_read
-    Each class is then rescaled so its total weight sums to 1e10.
+    Each sample is reweighted so its selected events sum to its xsection.
+    Within a sample, `weight_pu` shapes the event distribution and is then
+    renormalised away so the total sample weight still tracks xsection.
+    Each class is finally rescaled to the same total weight.
     """
     dfs = []
 
@@ -114,10 +163,20 @@ def prepare_data(tree_name, branches):
                 if tree_name not in uf:
                     continue
                 tree = uf[tree_name]
+                available = set(tree.keys())
+                missing = [branch for branch in branches if branch not in available]
+                if missing:
+                    raise KeyError(
+                        f"Missing branches in {fpath}:{tree_name}: {', '.join(missing[:10])}"
+                        + (" ..." if len(missing) > 10 else "")
+                    )
                 n_to_read = min(remain, tree.num_entries)
                 if n_to_read <= 0:
                     continue
-                df_part = tree.arrays(branches, library="pd",
+                read_branches = list(branches)
+                if "weight_pu" in available and "weight_pu" not in read_branches:
+                    read_branches.append("weight_pu")
+                df_part = tree.arrays(read_branches, library="pd",
                                       entry_start=0, entry_stop=n_to_read)
                 parts.append(df_part)
                 n_read += len(df_part)
@@ -130,13 +189,31 @@ def prepare_data(tree_name, branches):
         del parts
         gc.collect()
 
-        per_evt_w = (info["xsection"] * info["raw_entries"]) / float(n_read)
-        df["weight"]    = per_evt_w
+        if "weight_pu" in df.columns:
+            pu_weight = df.pop("weight_pu").to_numpy(dtype=float, copy=False)
+            pu_weight = np.where(np.isfinite(pu_weight), pu_weight, 1.0)
+            pu_weight = np.clip(pu_weight, 0.0, None)
+        else:
+            pu_weight = np.ones(n_read, dtype=float)
+
+        pu_sum = float(np.sum(pu_weight))
+        xsec = float(info["xsection"])
+        if xsec <= 0.0 or pu_sum <= 0.0:
+            df["weight"] = 0.0
+            if xsec <= 0.0:
+                print(f"  [WARN] sample '{sample_name}' has non-positive xsection={xsec:.6g}; assigning zero weight")
+            else:
+                print(f"  [WARN] sample '{sample_name}' has non-positive total PU weight; assigning zero weight")
+        else:
+            df["weight"] = pu_weight * (xsec / pu_sum)
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
+        df["sample_name"] = sample_name
 
         dfs.append(df)
-        print(f"  {sample_name}: {n_read} entries, w={per_evt_w:.4g}, "
-              f"class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}")
+        print(
+            f"  {sample_name}: {n_read} entries, total_w={df['weight'].sum():.6g}, "
+            f"mean_pu={pu_weight.mean():.6g}, class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
+        )
 
     if not dfs:
         raise RuntimeError(f"No data loaded for tree '{tree_name}'")
@@ -145,32 +222,50 @@ def prepare_data(tree_name, branches):
     del dfs
     gc.collect()
 
-    # Per-class weight normalisation: scale each class total to 1e10
+    _validate_sample_weight_totals(df_all)
+    _report_sample_weights(df_all, "Sample totals before class balancing")
+    missing_classes = [
+        cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
+        if float(df_all.loc[df_all["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
+    ]
+    if missing_classes:
+        raise RuntimeError(
+            "Missing positive-weight training content for classes: " + ", ".join(missing_classes)
+        )
+
+    # Per-class weight normalisation: scale each class total to the same target
     for cls_idx, cls_name in enumerate(CLASS_NAMES):
         mask  = df_all["class_idx"] == cls_idx
         w_sum = df_all.loc[mask, "weight"].sum()
         if w_sum > 0:
-            scale = 1e10 / w_sum
+            scale = CLASS_TARGET_WEIGHT / w_sum
             df_all.loc[mask, "weight"] *= scale
             print(f"  [{cls_name}] total_w={w_sum:.4g}, scale={scale:.4g}")
+
+    _validate_class_weight_totals(df_all)
+    _report_sample_weights(df_all, "Sample totals after class balancing")
 
     df_all = df_all.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
     X = df_all[branches].copy()
     y = df_all["class_idx"].values.astype(int)
     w = df_all["weight"].values
+    sample_labels = df_all["sample_name"].astype(str).values
 
     del df_all
     gc.collect()
-    return X, y, w
+    return X, y, w, sample_labels
 
 
 # ── Event filtering ────────────────────────────────────────────────────────────
 def filter_X(X: pd.DataFrame, y, w, branch: list,
-             thresholds: dict = None, apply_to_sentinel: bool = True):
+             thresholds: dict = None, apply_to_sentinel: bool = True,
+             sample_labels=None):
     """Apply per-branch threshold cuts; sentinel values (< -990) handled separately."""
     if thresholds is None:
-        return X.copy(), y.copy(), w.copy()
+        if sample_labels is None:
+            return X.copy(), y.copy(), w.copy()
+        return X.copy(), y.copy(), w.copy(), np.asarray(sample_labels).copy()
 
     mask = pd.Series(True, index=X.index)
 
@@ -220,7 +315,12 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
             if cond is not None:
                 mask &= (_mask_from_cond(col, cond) | sentinel)
 
-    return X.loc[mask].copy(), y[mask.values].copy(), w[mask.values].copy()
+    X_out = X.loc[mask].copy()
+    y_out = y[mask.values].copy()
+    w_out = w[mask.values].copy()
+    if sample_labels is None:
+        return X_out, y_out, w_out
+    return X_out, y_out, w_out, np.asarray(sample_labels)[mask.values].copy()
 
 
 # ── Feature standardisation ────────────────────────────────────────────────────
@@ -460,15 +560,23 @@ def _make_multiclass_total_loss_metric(num_class, Z_train, Z_test, w_train, w_te
     Z_test  = np.asarray(Z_test,  dtype=float)
     w_train = np.asarray(w_train, dtype=float).ravel()
     w_test  = np.asarray(w_test,  dtype=float).ravel()
-    n_train = w_train.shape[0]
-    n_test  = w_test.shape[0]
     N_DECOR_BINS = 5
+    datasets = [
+        {"Z": Z_train, "w": w_train},
+        {"Z": Z_test, "w": w_test},
+    ]
+    state = {"idx": 0}
 
     def feval(y_true, y_pred):
         y_true = np.asarray(y_true, dtype=int)
         n      = y_true.shape[0]
-        Z      = Z_train[:n] if n == n_train else Z_test[:n]
-        w      = w_train[:n] if n == n_train else w_test[:n]
+        ds = datasets[state["idx"] % len(datasets)]
+        state["idx"] += 1
+        if ds["w"].shape[0] != n:
+            matches = [cand for cand in datasets if cand["w"].shape[0] == n]
+            ds = matches[0] if matches else {"Z": Z_train[:n], "w": w_train[:n]}
+        Z = ds["Z"][:n]
+        w = ds["w"][:n]
 
         y_pred = np.asarray(y_pred, dtype=float)
         if y_pred.ndim == 1:
@@ -516,8 +624,21 @@ def _make_multiclass_total_loss_metric(num_class, Z_train, Z_test, w_train, w_te
 
 
 # ── Training ───────────────────────────────────────────────────────────────────
+def _make_stratify_labels(y, sample_labels):
+    y = np.asarray(y, dtype=int)
+    if sample_labels is None:
+        return y
+    sample_labels = np.asarray(sample_labels, dtype=str)
+    combo = np.array([f"{cls}:{sample}" for cls, sample in zip(y, sample_labels)], dtype=object)
+    _, counts = np.unique(combo, return_counts=True)
+    if np.all(counts >= 2):
+        return combo
+    print("  [INFO] falling back to class-only stratification because some samples are too small after filtering")
+    return y
+
+
 def train_multi_model(X, y, w, model_name, tree_name,
-                      decorrelate_feature_names=None):
+                      decorrelate_feature_names=None, sample_labels=None):
     """Train a multiclass BDT with optional CvM decorrelation.
 
     Hyperparameters are read from config.json under the key matching tree_name.
@@ -526,9 +647,10 @@ def train_multi_model(X, y, w, model_name, tree_name,
     X = np.asarray(X) if not isinstance(X, pd.DataFrame) else X
     y = np.asarray(y, dtype=int)
     w = np.asarray(w, dtype=float)
+    stratify_labels = _make_stratify_labels(y, sample_labels)
 
     X_train_all, X_test_all, y_train, y_test, w_train, w_test = train_test_split(
-        X, y, w, test_size=0.3, stratify=y, random_state=RANDOM_STATE
+        X, y, w, test_size=0.3, stratify=stratify_labels, random_state=RANDOM_STATE
     )
 
     decor_idx = _resolve_decor_indices(X_train_all, decorrelate_feature_names)
@@ -846,21 +968,31 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
 
     decor_var_names = [full_feature_names[i] for i in decor_idx_full]
 
-    def _build_corr_matrix(probs, Xfull, wv):
+    def _build_corr_matrix(scores, Xfull, y_true, wv):
         Xarr = _as_array(Xfull)
         wv   = _safe_w(wv)
         R    = np.zeros((n_classes, len(decor_idx_full)))
         for r, ci in enumerate(range(n_classes)):
-            s = probs[:, ci]
+            class_mask = np.asarray(y_true) == ci
+            if not np.any(class_mask):
+                continue
+            s = scores[class_mask, ci]
             for c, j in enumerate(decor_idx_full):
-                R[r, c] = _weighted_pearson(Xarr[:, j], s, wv)
+                R[r, c] = _weighted_pearson(Xarr[class_mask, j], s, wv[class_mask])
         return R
 
-    for tag, probs, Xfull, wv in [
-        ("Train", probs_train, X_train_full, w_train),
-        ("Test",  probs_test,  X_test_full,  w_test),
+    try:
+        margins_train = clf.predict(X_train_used, output_margin=True)
+        margins_test  = clf.predict(X_test_used, output_margin=True)
+    except TypeError:
+        margins_train = np.log(np.clip(probs_train, _EPS, 1.0))
+        margins_test  = np.log(np.clip(probs_test, _EPS, 1.0))
+
+    for tag, scores, Xfull, y_true, wv in [
+        ("Train", margins_train, X_train_full, y_train, w_train),
+        ("Test",  margins_test,  X_test_full,  y_test,  w_test),
     ]:
-        R = _build_corr_matrix(probs, Xfull, wv)
+        R = _build_corr_matrix(scores, Xfull, y_true, wv)
         plt.figure(figsize=(max(6, 1.2 * len(decor_idx_full) + 4), n_classes + 4))
         plt.imshow(R, aspect="auto", interpolation="none", vmin=-1, vmax=1, cmap="bwr")
         plt.colorbar(fraction=0.046, pad=0.04, label="weighted Pearson r")
@@ -874,6 +1006,11 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
         plt.tight_layout()
         plt.savefig(f"{tree_name}_Decor_Heatmap_{tag}.png")
         plt.close()
+        for i, cls_name in enumerate(class_names):
+            stats = ", ".join(
+                f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
+            )
+            print(f"  {tree_name} {tag} decor corr [{cls_name}] {stats}")
 
 
 # ── Main execution loop ────────────────────────────────────────────────────────
@@ -892,17 +1029,22 @@ for tree_name in SUBMIT_TREES:
     model_path  = MODEL_PATTERN.format(output_root=OUTPUT_ROOT, tree_name=tree_name)
 
     print("Loading data...")
-    X, y, w = prepare_data(tree_name, branches)
+    X, y, w, sample_labels = prepare_data(tree_name, branches)
+    check_weights(w, f"{tree_name}_weight_before_filter")
 
     print("Applying thresholds...")
-    X, y, w = filter_X(X, y, w, branches, thresholds, apply_to_sentinel=True)
+    X, y, w, sample_labels = filter_X(
+        X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
+    )
+    check_weights(w, f"{tree_name}_weight_after_filter")
 
     print("Standardising features...")
     X_std = standardize_X(X.copy(), clip_ranges, log_tf)
 
     print("Training model...")
     clf, splits = train_multi_model(X_std, y, w, model_path, tree_name,
-                                    decorrelate_feature_names=decorrelate)
+                                    decorrelate_feature_names=decorrelate,
+                                    sample_labels=sample_labels)
 
     print("Plotting results...")
     plot_results(clf, splits, tree_name, decorrelate_feature_names=decorrelate)
