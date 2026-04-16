@@ -15,10 +15,11 @@ plt.rcParams['mathtext.rm'] = 'serif'
 plt.style.use(hep.style.CMS)
 
 _EPS = 1e-12
-# _SCRIPT_DIR is the signal_region/ subdirectory.
-# _BDT_DIR is the parent selections/BDT/ directory, where sample_config paths are anchored.
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_BDT_DIR    = os.path.dirname(_SCRIPT_DIR)
+# _SCRIPT_DIR is selections/signal_region/.
+# Trained BDT config copies still store paths relative to selections/BDT/, where train.py lives.
+_SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
+_SELECTIONS_DIR = os.path.dirname(_SCRIPT_DIR)
+_BDT_DIR        = os.path.join(_SELECTIONS_DIR, "BDT")
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ def _load_json(path):
         return json.load(fh)
 
 
-# ── Load scan.json ─────────────────────────────────────────────────────────────
+# ── Load config.json ─────────────────────────────────────────────────────────────
 _scan_cfg_path = os.environ.get("SCAN_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.json"))
 if not os.path.isabs(_scan_cfg_path):
     _scan_cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _scan_cfg_path))
