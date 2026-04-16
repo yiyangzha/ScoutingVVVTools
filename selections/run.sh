@@ -12,11 +12,13 @@ Usage:
 Modes:
   mode=0  Run convert/convert_branch.C jobs.
   mode=1  Run weight/weight.C pileup jobs.
+  mode=2  Run BDT/train.py.
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
   2. Otherwise the script reads submit_samples from the chosen config.json.
   3. If submit_samples is empty or missing, all MC samples are submitted.
+  4. Sample arguments are only supported for mode=0 and mode=1.
 EOF
 }
 
@@ -45,6 +47,13 @@ case "${MODE}" in
     CONFIG_ENV_VAR="WEIGHT_CONFIG_PATH"
     MODE_LABEL="pileup"
     ;;
+  2)
+    WORK_DIR="${ROOT_DIR}/BDT"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="BDT_CONFIG_PATH"
+    MODE_LABEL="bdt_train"
+    PYTHON_SCRIPT="train.py"
+    ;;
   *)
     echo "Unknown mode: ${MODE}" >&2
     usage
@@ -64,7 +73,7 @@ fi
 
 REQUESTED_SAMPLES=("$@")
 LOG_PATH="${WORK_DIR}/log.txt"
-BIN_PATH="${WORK_DIR}/${BIN_NAME}"
+BIN_PATH="${WORK_DIR}/${BIN_NAME:-}"
 
 if [ ! -f "${CONFIG_INPUT}" ]; then
   echo "config file not found: ${CONFIG_INPUT}" >&2
@@ -82,16 +91,6 @@ CONFIG_PATH="$(cd "$(dirname "${CONFIG_INPUT}")" && pwd)/$(basename "${CONFIG_IN
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required to read JSON config files." >&2
-  exit 1
-fi
-
-if ! command -v c++ >/dev/null 2>&1; then
-  echo "c++ is required to compile ${MODE_LABEL}." >&2
-  exit 1
-fi
-
-if ! command -v root-config >/dev/null 2>&1; then
-  echo "root-config is required to compile ${MODE_LABEL}." >&2
   exit 1
 fi
 
@@ -131,6 +130,35 @@ fi
 cd "${WORK_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
+
+if [ "${MODE}" = "2" ]; then
+  if [ "$#" -gt 0 ]; then
+    echo "mode=2 does not accept sample arguments: $*" >&2
+    exit 1
+  fi
+
+  timestamp() {
+    date '+%Y-%m-%d %H:%M:%S'
+  }
+
+  echo "[$(timestamp)] mode=${MODE} (${MODE_LABEL})"
+  echo "[$(timestamp)] work_dir=${WORK_DIR}"
+  echo "[$(timestamp)] config=${CONFIG_PATH}"
+  echo "[$(timestamp)] command=env ${CONFIG_ENV_VAR}=${CONFIG_PATH} python3 ./${PYTHON_SCRIPT}"
+  env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" python3 "./${PYTHON_SCRIPT}"
+  echo "[$(timestamp)] training finished"
+  exit 0
+fi
+
+if ! command -v c++ >/dev/null 2>&1; then
+  echo "c++ is required to compile ${MODE_LABEL}." >&2
+  exit 1
+fi
+
+if ! command -v root-config >/dev/null 2>&1; then
+  echo "root-config is required to compile ${MODE_LABEL}." >&2
+  exit 1
+fi
 
 cleanup_build_artifacts() {
   if [ -f "${BIN_PATH}" ]; then

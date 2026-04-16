@@ -99,6 +99,10 @@ This is a CMS physics analysis toolkit for a VVV (triple vector boson) scouting 
 
 **Dependencies:** ROOT (with `root-config`), C++17, Python 3, OpenMP (optional), XRootD for remote files.
 
+## Repository Maintenance
+
+- Whenever you modify code or add a new repository-wide requirement, update this `AGENTS.md` to keep the project description and workflow notes in sync.
+
 ## Pipeline Overview
 
 The analysis runs in this order:
@@ -129,6 +133,12 @@ cd selections && ./run.sh 0 /path/to/custom_config.json
 ```bash
 cd selections && ./run.sh 1
 cd selections && ./run.sh 1 weight/config.json www
+```
+
+### BDT training via run.sh
+```bash
+cd selections && ./run.sh 2
+cd selections && ./run.sh 2 BDT/config.json
 ```
 
 ### Compile and run C++ tools manually
@@ -165,19 +175,43 @@ jupyter lab  # open selections/BDT/train.ipynb
 python3 selections/BDT/train.py
 ```
 
+BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`.
+
 ## Configuration Architecture
 
 All tools are driven by JSON config files. Sample definitions live centrally in [selections/config/sample.json](selections/config/sample.json); individual tool configs reference it via the `sample_config` key.
 
-- **[selections/config/sample.json](selections/config/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`.
+- **[selections/config/sample.json](selections/config/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`. For BDT training, `raw_entries` must be the total number of generated MC events before any convert-level filtering.
 - **[selections/convert/config.json](selections/convert/config.json)** — controls convert step: output paths, thread count, file size limits, pileup weight CSV path pattern.
 - **[selections/convert/selection.json](selections/convert/selection.json)** — physics selection: event preselection string, per-collection cuts/sorts, and `tree_selection` that splits output into `fat2` (exactly 2 AK8 jets) and `fat3` (≥3 AK8 jets) trees. Selections are parsed and JIT-compiled by the C++ expression engine.
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
 - **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
+- **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, and per-tree hyperparameters plus `decorrelate`.
+- **[selections/BDT/branch.json](selections/BDT/branch.json)** — lists the BDT feature branches. These names are aligned to the current `convert_branch` output names and include all non-`onlyMC` `fat2`/`fat3` branches except event identifiers, pileup bookkeeping, selection counts, and truth/meta labels.
+- **[selections/BDT/selection.json](selections/BDT/selection.json)** — training-time feature preprocessing: clipping ranges, log transforms, and threshold cuts applied after reading the converted `fat2`/`fat3` trees.
+
+## BDT Training Details
+
+- `selections/BDT/train.py` only trains on the samples explicitly listed in `class_groups`.
+- The number of classes is inferred dynamically from `class_groups`; no fixed 5-class assumption is baked into training.
+- A class is treated as `single` for plotting if every sample in that class has `is_signal=true`; otherwise it is treated as `background`.
+- Sample weights are computed once, immediately after reading each converted sample and before any BDT threshold cuts:
+  `sample_total_weight(tree) = xsection * N_tree / raw_entries`
+  where `N_tree` is the total number of entries in the converted `fat2` or `fat3` tree across all matched ROOT files.
+- If `entries_per_sample` limits how many events are actually loaded, per-event weight is scaled so the loaded subset still sums to `sample_total_weight(tree)`.
+- Class totals are then rescaled once so every class has the same total training weight.
+- After those weights are assigned, later threshold cuts in `selections/BDT/selection.json` do **not** trigger any reweighting; the surviving events keep their original per-event weight. This means threshold efficiency naturally contributes to the effective sample composition seen by the trainer.
+- ROC and score-distribution plots adapt to the configured classes. When both signal-like and background-like classes exist, the code produces all signal-background class pairs; otherwise it falls back to all class pairs.
 
 ## `run.sh` Behavior
 
-[selections/run.sh](selections/run.sh) compiles the C++ tool, resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt` or `selections/weight/log.txt`. The compiled binary is removed on exit. OpenMP is auto-detected for intra-job parallelism.
+[selections/run.sh](selections/run.sh) supports three modes:
+
+- `mode=0` compiles and runs `convert/convert_branch.C`.
+- `mode=1` compiles and runs `weight/weight.C`.
+- `mode=2` runs `BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
+
+For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, or `selections/BDT/log.txt` depending on mode. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 

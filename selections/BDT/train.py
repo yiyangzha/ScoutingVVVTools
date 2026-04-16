@@ -28,7 +28,11 @@ def _load_json(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
 
-cfg     = _load_json(os.path.join(_SCRIPT_DIR, "config.json"))
+_cfg_path = os.environ.get("BDT_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.json"))
+if not os.path.isabs(_cfg_path):
+    _cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _cfg_path))
+
+cfg     = _load_json(_cfg_path)
 br_cfg  = _load_json(os.path.join(_SCRIPT_DIR, "branch.json"))
 sel_cfg = _load_json(os.path.join(_SCRIPT_DIR, "selection.json"))
 
@@ -44,7 +48,7 @@ DECOR_LAMBDA       = cfg.get("decor_lambda", 30)
 SUBMIT_TREES       = cfg.get("submit_trees", ["fat2"])
 INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"]))
 INPUT_PATTERN      = cfg["input_pattern"]
-OUTPUT_ROOT        = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg.get("output_root", ".")))
+OUTPUT_ROOT_PATTERN = cfg.get("output_root", ".")
 MODEL_PATTERN      = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
 CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
 
@@ -53,6 +57,7 @@ SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
         "xsection":    _rule["xsection"],
+        "raw_entries": _rule.get("raw_entries", -1),
         "is_MC":       _rule["is_MC"],
         "is_signal":   _rule["is_signal"],
         "sample_ID":   _rule["sample_ID"],
@@ -62,6 +67,18 @@ for _rule in sample_cfg["sample"]:
 CLASS_GROUPS  = cfg["class_groups"]            # {"VVV": [...], "VH": [...], ...}
 CLASS_NAMES   = list(CLASS_GROUPS.keys())      # ordered class name list
 NUM_CLASSES   = len(CLASS_NAMES)
+
+CLASS_TYPES = {}
+SIGNAL_CLASS_INDICES = []
+BACKGROUND_CLASS_INDICES = []
+for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
+    _flags = [SAMPLE_INFO[_s]["is_signal"] for _s in _members]
+    _kind = "single" if _flags and all(_flags) else "background"
+    CLASS_TYPES[_cls] = _kind
+    if _kind == "single":
+        SIGNAL_CLASS_INDICES.append(_idx)
+    else:
+        BACKGROUND_CLASS_INDICES.append(_idx)
 
 SAMPLE_TO_CLASS = {}
 for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
@@ -83,6 +100,21 @@ def _input_files(sample_name):
     return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
 
 
+def _resolve_output_root(tree_name):
+    output_root = OUTPUT_ROOT_PATTERN.format(tree_name=tree_name)
+    if not os.path.isabs(output_root):
+        output_root = os.path.normpath(os.path.join(_SCRIPT_DIR, output_root))
+    return output_root
+
+
+def _slugify(text):
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
+
+
+def _figure_path(output_root, stem):
+    return os.path.join(output_root, f"{stem}.pdf")
+
+
 # ── Data loading ───────────────────────────────────────────────────────────────
 def _report_sample_weights(df_all, stage_label):
     print(f"  [{stage_label}]")
@@ -101,22 +133,24 @@ def _report_sample_weights(df_all, stage_label):
             print(f"      {sample_name}: sum_w={sample_w:.6g}, xsec={SAMPLE_INFO[sample_name]['xsection']:.6g}")
 
 
-def _validate_sample_weight_totals(df_all):
-    for sample_name in TRAINING_SAMPLES:
+def _validate_sample_weight_totals(df_all, sample_target_totals):
+    for sample_name, target_total in sample_target_totals.items():
         info = SAMPLE_INFO[sample_name]
         mask = df_all["sample_name"] == sample_name
         if not np.any(mask):
             continue
         total_w = float(df_all.loc[mask, "weight"].sum())
-        xsec = float(info["xsection"])
-        if xsec <= 0.0:
+        if target_total <= 0.0:
             if abs(total_w) > 1e-8:
-                raise RuntimeError(f"Sample '{sample_name}' has xsection=0 but total weight {total_w:.6g}")
+                raise RuntimeError(
+                    f"Sample '{sample_name}' has non-positive target weight {target_total:.6g} "
+                    f"but total weight {total_w:.6g}"
+                )
             continue
-        rel = abs(total_w - xsec) / max(abs(xsec), _EPS)
+        rel = abs(total_w - target_total) / max(abs(target_total), _EPS)
         if rel > 1e-6:
             raise RuntimeError(
-                f"Sample '{sample_name}' weight sum {total_w:.6g} is not proportional to xsection {xsec:.6g}"
+                f"Sample '{sample_name}' weight sum {total_w:.6g} does not match target {target_total:.6g}"
             )
 
 
@@ -135,15 +169,29 @@ def _validate_class_weight_totals(df_all):
             raise RuntimeError("Class totals are not equal after class normalisation.")
 
 
+def _rebalance_class_weights(df_all):
+    df_all = df_all.copy()
+    for cls_idx, cls_name in enumerate(CLASS_NAMES):
+        mask = df_all["class_idx"] == cls_idx
+        w_sum = float(df_all.loc[mask, "weight"].sum())
+        if w_sum > 0.0:
+            scale = CLASS_TARGET_WEIGHT / w_sum
+            df_all.loc[mask, "weight"] *= scale
+            print(f"  [{cls_name}] total_w={w_sum:.4g}, scale={scale:.4g}")
+    _validate_class_weight_totals(df_all)
+    return df_all
+
+
 def prepare_data(tree_name, branches):
     """Load training data for one tree (fat2 or fat3).
 
-    Each sample is reweighted so its selected events sum to its xsection.
-    Within a sample, `weight_pu` shapes the event distribution and is then
-    renormalised away so the total sample weight still tracks xsection.
-    Each class is finally rescaled to the same total weight.
+    For each sample, target total weight is:
+        xsection * (n_entries_in_input_tree / raw_entries)
+    If only a subset of the input tree is used because of `entries_per_sample`,
+    the per-event weight is scaled so the used subset still sums to that target.
     """
     dfs = []
+    sample_target_totals = {}
 
     for sample_name in TRAINING_SAMPLES:
         info  = SAMPLE_INFO[sample_name]
@@ -155,10 +203,8 @@ def prepare_data(tree_name, branches):
         limit = ENTRIES_PER_SAMPLE
         parts = []
         n_read = 0
+        n_tree_total = 0
         for fpath in files:
-            remain = limit - n_read
-            if remain <= 0:
-                break
             with uproot.open(fpath) as uf:
                 if tree_name not in uf:
                     continue
@@ -170,18 +216,28 @@ def prepare_data(tree_name, branches):
                         f"Missing branches in {fpath}:{tree_name}: {', '.join(missing[:10])}"
                         + (" ..." if len(missing) > 10 else "")
                     )
+                n_entries = int(tree.num_entries)
+                n_tree_total += n_entries
+                remain = limit - n_read
+                if remain <= 0:
+                    continue
                 n_to_read = min(remain, tree.num_entries)
                 if n_to_read <= 0:
                     continue
-                read_branches = list(branches)
-                if "weight_pu" in available and "weight_pu" not in read_branches:
-                    read_branches.append("weight_pu")
-                df_part = tree.arrays(read_branches, library="pd",
+                df_part = tree.arrays(branches, library="pd",
                                       entry_start=0, entry_stop=n_to_read)
                 parts.append(df_part)
                 n_read += len(df_part)
 
-        if n_read == 0:
+        raw_entries = int(info["raw_entries"])
+        xsec = float(info["xsection"])
+        if xsec > 0.0 and raw_entries <= 0:
+            raise RuntimeError(
+                f"Sample '{sample_name}' has raw_entries={raw_entries}; "
+                "fill selections/config/sample.json before training."
+            )
+
+        if n_tree_total == 0 or n_read == 0:
             print(f"  [WARN] zero entries read for '{sample_name}' in tree '{tree_name}', skipping")
             continue
 
@@ -189,30 +245,27 @@ def prepare_data(tree_name, branches):
         del parts
         gc.collect()
 
-        if "weight_pu" in df.columns:
-            pu_weight = df.pop("weight_pu").to_numpy(dtype=float, copy=False)
-            pu_weight = np.where(np.isfinite(pu_weight), pu_weight, 1.0)
-            pu_weight = np.clip(pu_weight, 0.0, None)
+        if xsec <= 0.0:
+            target_total = 0.0
+        elif raw_entries <= 0:
+            target_total = 0.0
         else:
-            pu_weight = np.ones(n_read, dtype=float)
+            target_total = xsec * (float(n_tree_total) / float(raw_entries))
+        sample_target_totals[sample_name] = target_total
 
-        pu_sum = float(np.sum(pu_weight))
-        xsec = float(info["xsection"])
-        if xsec <= 0.0 or pu_sum <= 0.0:
+        if target_total <= 0.0:
             df["weight"] = 0.0
             if xsec <= 0.0:
                 print(f"  [WARN] sample '{sample_name}' has non-positive xsection={xsec:.6g}; assigning zero weight")
-            else:
-                print(f"  [WARN] sample '{sample_name}' has non-positive total PU weight; assigning zero weight")
         else:
-            df["weight"] = pu_weight * (xsec / pu_sum)
+            df["weight"] = target_total / float(n_read)
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
 
         dfs.append(df)
         print(
-            f"  {sample_name}: {n_read} entries, total_w={df['weight'].sum():.6g}, "
-            f"mean_pu={pu_weight.mean():.6g}, class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
+            f"  {sample_name}: tree_entries={n_tree_total}, used_entries={n_read}, raw_entries={raw_entries}, "
+            f"target_total={target_total:.6g}, class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
         )
 
     if not dfs:
@@ -222,7 +275,7 @@ def prepare_data(tree_name, branches):
     del dfs
     gc.collect()
 
-    _validate_sample_weight_totals(df_all)
+    _validate_sample_weight_totals(df_all, sample_target_totals)
     _report_sample_weights(df_all, "Sample totals before class balancing")
     missing_classes = [
         cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
@@ -233,18 +286,8 @@ def prepare_data(tree_name, branches):
             "Missing positive-weight training content for classes: " + ", ".join(missing_classes)
         )
 
-    # Per-class weight normalisation: scale each class total to the same target
-    for cls_idx, cls_name in enumerate(CLASS_NAMES):
-        mask  = df_all["class_idx"] == cls_idx
-        w_sum = df_all.loc[mask, "weight"].sum()
-        if w_sum > 0:
-            scale = CLASS_TARGET_WEIGHT / w_sum
-            df_all.loc[mask, "weight"] *= scale
-            print(f"  [{cls_name}] total_w={w_sum:.4g}, scale={scale:.4g}")
-
-    _validate_class_weight_totals(df_all)
+    df_all = _rebalance_class_weights(df_all)
     _report_sample_weights(df_all, "Sample totals after class balancing")
-
     df_all = df_all.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
     X = df_all[branches].copy()
@@ -729,7 +772,7 @@ def train_multi_model(X, y, w, model_name, tree_name,
 
 
 # ── Plotting ───────────────────────────────────────────────────────────────────
-def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
+def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=None):
     """ROC curves, feature importance, score distributions, loss curve, decorrelation checks."""
     X_train_full, X_test_full, y_train, y_test, w_train, w_test = splits
 
@@ -768,7 +811,6 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
     X_test_used  = _slice(X_test_full,  keep_idx)
     feat_names_used = [full_feature_names[i] for i in keep_idx]
 
-    # Sanity check
     if hasattr(clf, "n_features_in_") and clf.n_features_in_ == X_train_full.shape[1]:
         X_train_used, X_test_used = X_train_full, X_test_full
         feat_names_used    = full_feature_names
@@ -776,7 +818,12 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
 
     n_classes   = NUM_CLASSES
     class_names = CLASS_NAMES
-    palette     = ["tab:blue", "tab:orange", "tab:green", "tab:purple", "tab:red"]
+    palette     = plt.cm.get_cmap("tab10", max(n_classes, 3))(np.arange(max(n_classes, 3)))
+
+    def _savefig(stem):
+        plt.tight_layout()
+        plt.savefig(_figure_path(output_root, stem))
+        plt.close()
 
     def _as_array(Xlike):
         return Xlike.to_numpy() if hasattr(Xlike, "to_numpy") else np.asarray(Xlike)
@@ -803,68 +850,52 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
         vy  = (wv * y0 * y0).sum() / (sw + eps)
         return float(cov / (np.sqrt(vx * vy) + eps))
 
-    def _weighted_quantile(x, q, wv, eps=1e-12):
-        x  = np.asarray(x, float).ravel()
-        wv = _safe_w(wv)
-        q  = np.asarray(q, float)
-        m  = np.isfinite(x) & np.isfinite(wv)
-        if not np.any(m):
-            return np.full_like(q, np.nan)
-        x, wv = x[m], wv[m]
-        sw = wv.sum()
-        if sw <= eps:
-            return np.quantile(x, q)
-        order    = np.argsort(x)
-        cw       = np.cumsum(wv[order])
-        cw      /= (cw[-1] + eps)
-        return np.interp(q, cw, x[order])
+    probs_train = clf.predict_proba(X_train_used)
+    probs_test  = clf.predict_proba(X_test_used)
 
-    # ── 1) ROC ─────────────────────────────────────────────────────────────────
-    def _roc_1v1(Xs, ys, ws, ti, oi):
-        probs = clf.predict_proba(Xs)
-        mask  = (ys == ti) | (ys == oi)
+    def _roc_binary(mask, scores, ys, ws, positive_idx):
         if not np.any(mask):
             return None
-        y_bin = (ys[mask] == ti).astype(int)
+        y_bin = (ys[mask] == positive_idx).astype(int)
         if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
             return None
-        pt = probs[mask, ti]
-        po = probs[mask, oi]
-        sc = pt / np.clip(pt + po, _EPS, None)
-        auc = roc_auc_score(y_bin, sc, sample_weight=ws[mask])
-        fpr, tpr, _ = roc_curve(y_bin, sc, sample_weight=ws[mask])
+        auc = roc_auc_score(y_bin, scores[mask], sample_weight=ws[mask])
+        fpr, tpr, _ = roc_curve(y_bin, scores[mask], sample_weight=ws[mask])
         return fpr, tpr, auc
 
-    def _plot_roc(target_idx, target_name):
-        opponents = [i for i in range(n_classes) if i != target_idx]
+    def _plot_roc_pair(sig_idx, bkg_idx):
+        sig_name = class_names[sig_idx]
+        bkg_name = class_names[bkg_idx]
+        score_train = probs_train[:, sig_idx] / np.clip(probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None)
+        score_test = probs_test[:, sig_idx] / np.clip(probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None)
+        mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
+        mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
         plt.figure(figsize=(10, 10))
-        for color, opp_idx in zip(palette, opponents):
-            opp = class_names[opp_idx]
-            r_tst = _roc_1v1(X_test_used,  y_test,  w_test,  target_idx, opp_idx)
-            r_trn = _roc_1v1(X_train_used, y_train, w_train, target_idx, opp_idx)
-            if r_tst:
-                fpr, tpr, auc = r_tst
-                plt.plot(tpr, fpr, color=color, linestyle="-",
-                         label=f"{opp} (Test AUC={auc:.3f})")
-                print(f"  {tree_name} Test  AUC ({target_name} vs {opp}) = {auc:.4f}")
-            if r_trn:
-                fpr, tpr, auc = r_trn
-                plt.plot(tpr, fpr, color=color, linestyle="--",
-                         label=f"{opp} (Train AUC={auc:.3f})")
-                print(f"  {tree_name} Train AUC ({target_name} vs {opp}) = {auc:.4f}")
-        plt.xlabel(rf"$\epsilon_{{\rm {target_name}}}$", fontsize=20)
-        plt.ylabel(r"$\epsilon_{\rm bkg}$", fontsize=20)
+        r_tst = _roc_binary(mask_test, score_test, y_test, w_test, sig_idx)
+        r_trn = _roc_binary(mask_train, score_train, y_train, w_train, sig_idx)
+        if r_tst:
+            fpr, tpr, auc = r_tst
+            plt.plot(tpr, fpr, color=palette[sig_idx], linestyle="-", label=f"Test AUC={auc:.3f}")
+            print(f"  {tree_name} Test  AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
+        if r_trn:
+            fpr, tpr, auc = r_trn
+            plt.plot(tpr, fpr, color=palette[sig_idx], linestyle="--", label=f"Train AUC={auc:.3f}")
+            print(f"  {tree_name} Train AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
+        plt.xlabel(rf"$\epsilon_{{\rm {sig_name}}}$", fontsize=20)
+        plt.ylabel(rf"$\epsilon_{{\rm {bkg_name}}}$", fontsize=20)
         plt.yscale("log")
         plt.ylim(1e-6, 1)
         plt.xlim(0, 1)
         plt.legend(loc="lower right", fontsize=14)
-        plt.tight_layout()
-        plt.savefig(f"{tree_name}_ROC_{target_name}_vs_all.png")
-        plt.close()
+        _savefig(f"roc_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}")
 
-    _plot_roc(0, class_names[0])  # VVV (index 0)
+    if SIGNAL_CLASS_INDICES and BACKGROUND_CLASS_INDICES:
+        roc_pairs = [(sig_idx, bkg_idx) for sig_idx in SIGNAL_CLASS_INDICES for bkg_idx in BACKGROUND_CLASS_INDICES]
+    else:
+        roc_pairs = [(i, j) for i in range(n_classes) for j in range(i + 1, n_classes)]
+    for sig_idx, bkg_idx in roc_pairs:
+        _plot_roc_pair(sig_idx, bkg_idx)
 
-    # ── 2) Feature importance ─────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(10, 20))
     plot_importance(clf, ax=ax, max_num_features=200)
     ax.set_title(f"{tree_name} Feature Importance", fontsize=16)
@@ -887,49 +918,42 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
             ax.set_yticklabels(mapped)
     except Exception:
         pass
-    plt.tight_layout()
-    plt.savefig(f"{tree_name}_Feature_Importance.png")
-    plt.close()
+    _savefig("importance")
 
-    # ── 3) Score distributions ────────────────────────────────────────────────
-    probs_train = clf.predict_proba(X_train_used)
-    probs_test  = clf.predict_proba(X_test_used)
-
-    def _plot_score_dist(target_idx, target_name, bkg_label):
-        p_tr = probs_train[:, target_idx]
-        p_te = probs_test[:,  target_idx]
+    def _plot_score_dist(sig_idx, bkg_idx):
+        sig_name = class_names[sig_idx]
+        bkg_name = class_names[bkg_idx]
+        score_train = probs_train[:, sig_idx] / np.clip(probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None)
+        score_test = probs_test[:, sig_idx] / np.clip(probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None)
+        mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
+        mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
         bins = np.linspace(0, 1, 31)
         plt.figure()
         plt.xlim(0, 1)
-        plt.hist(p_tr[y_train != target_idx], bins=bins,
-                 weights=w_train[y_train != target_idx],
-                 density=True, histtype="bar", alpha=0.5, label=f"Train {bkg_label}")
-        plt.hist(p_tr[y_train == target_idx], bins=bins,
-                 weights=w_train[y_train == target_idx],
-                 density=True, histtype="bar", alpha=0.5, label=f"Train {target_name}")
-        plt.hist(p_te[y_test != target_idx],  bins=bins,
-                 weights=w_test[y_test != target_idx],
+        plt.hist(score_train[mask_train & (y_train == bkg_idx)], bins=bins,
+                 weights=w_train[mask_train & (y_train == bkg_idx)],
+                 density=True, histtype="bar", alpha=0.5, label=f"Train {bkg_name}")
+        plt.hist(score_train[mask_train & (y_train == sig_idx)], bins=bins,
+                 weights=w_train[mask_train & (y_train == sig_idx)],
+                 density=True, histtype="bar", alpha=0.5, label=f"Train {sig_name}")
+        plt.hist(score_test[mask_test & (y_test == bkg_idx)], bins=bins,
+                 weights=w_test[mask_test & (y_test == bkg_idx)],
                  density=True, histtype="step", linewidth=2, color="lime",
-                 label=f"Test {bkg_label}")
-        plt.hist(p_te[y_test == target_idx],  bins=bins,
-                 weights=w_test[y_test == target_idx],
+                 label=f"Test {bkg_name}")
+        plt.hist(score_test[mask_test & (y_test == sig_idx)], bins=bins,
+                 weights=w_test[mask_test & (y_test == sig_idx)],
                  density=True, histtype="step", linewidth=2, color="red",
-                 label=f"Test {target_name}")
+                 label=f"Test {sig_name}")
         plt.xlabel("BDT Score")
         plt.yscale("log")
         plt.ylim(1e-2,)
         plt.ylabel("Density")
         plt.legend()
-        plt.savefig(f"{tree_name}_Score_Dist_{target_name}_vs_all.png")
-        plt.close()
+        _savefig(f"score_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}")
 
-    rest_label = "+".join(n for n in class_names if n != class_names[0])
-    _plot_score_dist(0, class_names[0], rest_label)
-    if n_classes > 1:
-        rest_label1 = "+".join(n for n in class_names if n != class_names[1])
-        _plot_score_dist(1, class_names[1], rest_label1)
+    for sig_idx, bkg_idx in roc_pairs:
+        _plot_score_dist(sig_idx, bkg_idx)
 
-    # ── 4) Loss curve ─────────────────────────────────────────────────────────
     try:
         evals = clf.evals_result()
         v0    = evals.get("validation_0", {})
@@ -944,12 +968,10 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
             plt.ylabel("total_loss")
             plt.legend()
             plt.grid(True, linestyle="--", alpha=0.5)
-            plt.savefig(f"{tree_name}_Total_Loss_Curve.png")
-            plt.close()
+            _savefig("loss")
     except Exception:
         pass
 
-    # ── 5) Feature correlation matrix ─────────────────────────────────────────
     X_tr_df = pd.DataFrame(_as_array(X_train_used), columns=feat_names_used)
     corr    = X_tr_df.corr(numeric_only=True).dropna(axis=0, how="all").dropna(axis=1, how="all")
     plt.figure(figsize=(20, 20))
@@ -958,11 +980,8 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
     cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
     plt.xticks(range(len(corr.columns)), corr.columns, rotation=90, fontsize=10)
     plt.yticks(range(len(corr.index)),   corr.index,   fontsize=10)
-    plt.tight_layout()
-    plt.savefig(f"{tree_name}_Feature_Correlation_Matrix.png")
-    plt.close()
+    _savefig("feature_corr")
 
-    # ── 6) Decorrelation checks ───────────────────────────────────────────────
     if not decor_idx_full:
         return
 
@@ -989,8 +1008,8 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
         margins_test  = np.log(np.clip(probs_test, _EPS, 1.0))
 
     for tag, scores, Xfull, y_true, wv in [
-        ("Train", margins_train, X_train_full, y_train, w_train),
-        ("Test",  margins_test,  X_test_full,  y_test,  w_test),
+        ("train", margins_train, X_train_full, y_train, w_train),
+        ("test",  margins_test,  X_test_full,  y_test,  w_test),
     ]:
         R = _build_corr_matrix(scores, Xfull, y_true, wv)
         plt.figure(figsize=(max(6, 1.2 * len(decor_idx_full) + 4), n_classes + 4))
@@ -1003,9 +1022,7 @@ def plot_results(clf, splits, tree_name, decorrelate_feature_names=None):
                 v = R[i, j]
                 plt.text(j, i, f"{v:+.2f}", ha="center", va="center",
                          color="white" if abs(v) > 0.5 else "black", fontsize=10)
-        plt.tight_layout()
-        plt.savefig(f"{tree_name}_Decor_Heatmap_{tag}.png")
-        plt.close()
+        _savefig(f"decor_corr_{tag}")
         for i, cls_name in enumerate(class_names):
             stats = ", ".join(
                 f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
@@ -1019,6 +1036,8 @@ for tree_name in SUBMIT_TREES:
     print(f"  Training: {tree_name}")
     print(f"{'='*60}")
 
+    output_root = _resolve_output_root(tree_name)
+    os.makedirs(output_root, exist_ok=True)
     branches   = [b["name"] for b in br_cfg[tree_name]]
     sel        = sel_cfg[tree_name]
     clip_ranges = {k: tuple(v) for k, v in sel.get("clip_ranges", {}).items()}
@@ -1026,7 +1045,7 @@ for tree_name in SUBMIT_TREES:
     thresholds  = {k: (tuple(v) if isinstance(v, list) else v)
                    for k, v in sel.get("thresholds", {}).items()}
     decorrelate = cfg.get(tree_name, {}).get("decorrelate", [])
-    model_path  = MODEL_PATTERN.format(output_root=OUTPUT_ROOT, tree_name=tree_name)
+    model_path  = MODEL_PATTERN.format(output_root=output_root, tree_name=tree_name)
 
     print("Loading data...")
     X, y, w, sample_labels = prepare_data(tree_name, branches)
@@ -1036,6 +1055,21 @@ for tree_name in SUBMIT_TREES:
     X, y, w, sample_labels = filter_X(
         X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
     )
+    filtered_df = pd.DataFrame({
+        "weight": w,
+        "class_idx": y,
+        "sample_name": sample_labels,
+    })
+    _report_sample_weights(filtered_df, "Sample totals after thresholding")
+    missing_classes = [
+        cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
+        if float(filtered_df.loc[filtered_df["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
+    ]
+    if missing_classes:
+        raise RuntimeError(
+            "Missing positive-weight training content after thresholding for classes: "
+            + ", ".join(missing_classes)
+        )
     check_weights(w, f"{tree_name}_weight_after_filter")
 
     print("Standardising features...")
@@ -1047,6 +1081,6 @@ for tree_name in SUBMIT_TREES:
                                     sample_labels=sample_labels)
 
     print("Plotting results...")
-    plot_results(clf, splits, tree_name, decorrelate_feature_names=decorrelate)
+    plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=decorrelate)
 
     print(f"  Done: {tree_name}")

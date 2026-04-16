@@ -18,11 +18,7 @@
     { "name": "ScoutingFatPFJetRecluster_pt_1" },
     { "name": "ScoutingFatPFJetRecluster_pt_2" },
     { "name": "ScoutingFatPFJetRecluster_eta_1" },
-    { "name": "ScoutingFatPFJetRecluster_eta_2" },
-    { "name": "ScoutingFatPFJetRecluster_msoftdrop_1" },
-    { "name": "ScoutingFatPFJetRecluster_msoftdrop_2" },
-    { "name": "ScoutingFatPFJetRecluster_mass_1" },
-    { "name": "ScoutingFatPFJetRecluster_mass_2" },
+    { "name": "ScoutingFatPFJetRecluster_eta_2" }
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_1" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_2" },
     { "name": "ScoutingPFJetRecluster2_pt_1" },
@@ -51,8 +47,7 @@
     { "name": "SelectedLepton_ecalIso_3" },
     { "name": "SelectedLepton_hcalIso_1" },
     { "name": "SelectedLepton_hcalIso_2" },
-    { "name": "SelectedLepton_hcalIso_3" },
-    { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max" }
+    { "name": "SelectedLepton_hcalIso_3" }
   ],
   "fat3": [
     { "name": "ScoutingFatPFJetRecluster_selected_pt_sum" },
@@ -76,13 +71,7 @@
     { "name": "ScoutingFatPFJetRecluster_pt_3" },
     { "name": "ScoutingFatPFJetRecluster_eta_1" },
     { "name": "ScoutingFatPFJetRecluster_eta_2" },
-    { "name": "ScoutingFatPFJetRecluster_eta_3" },
-    { "name": "ScoutingFatPFJetRecluster_msoftdrop_1" },
-    { "name": "ScoutingFatPFJetRecluster_msoftdrop_2" },
-    { "name": "ScoutingFatPFJetRecluster_msoftdrop_3" },
-    { "name": "ScoutingFatPFJetRecluster_mass_1" },
-    { "name": "ScoutingFatPFJetRecluster_mass_2" },
-    { "name": "ScoutingFatPFJetRecluster_mass_3" },
+    { "name": "ScoutingFatPFJetRecluster_eta_3" }
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_1" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_2" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_3" },
@@ -100,7 +89,6 @@
     { "name": "SelectedLepton_ecalIso_3" },
     { "name": "SelectedLepton_hcalIso_1" },
     { "name": "SelectedLepton_hcalIso_2" },
-    { "name": "SelectedLepton_hcalIso_3" },
-    { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max" }
+    { "name": "SelectedLepton_hcalIso_3" }
   ]
 }
