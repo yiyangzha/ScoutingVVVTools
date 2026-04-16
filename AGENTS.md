@@ -180,6 +180,7 @@ python3 selections/BDT/train.py
 BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. Each tree output directory also stores a copy of the config as `config.json` and the fixed per-sample test split definition as `test_ranges.json`. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`, and both `run.sh` and `train.py` follow the same concise run-log style as the convert and weight programs: a `Running ...` header, thread information, `Wrote ...` output records, and `Runtime error: ...` on failure.
 
 The signal-region scan script lives in `selections/signal_region/signal_region.py`. Its local `config.json` is resolved relative to `selections/signal_region/`, while the copied training `config.json` inside each BDT output directory still uses `selections/BDT/` as the anchor for paths such as `sample_config`.
+Its config keys are `lumi`, `n_signal_regions`, `bdt_root`, `n_thresholds`, `min_bkg_weight`, and `rounds`.
 
 ## Configuration Architecture
 

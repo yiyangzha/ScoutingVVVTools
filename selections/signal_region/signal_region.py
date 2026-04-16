@@ -44,22 +44,25 @@ if not os.path.isabs(_scan_cfg_path):
 
 scan_cfg = _load_json(_scan_cfg_path)
 
-LUMI           = float(scan_cfg["lumi"])
-N_BINS         = int(scan_cfg["N"])
-OUTPUT_ROOT    = scan_cfg["output_root"]
-N_THRESHOLDS   = int(scan_cfg.get("n_thresholds", 10))
-MIN_BKG_WEIGHT = float(scan_cfg.get("min_bkg_weight", 5.0))
-ROUNDS         = int(scan_cfg.get("rounds", 5))
+LUMI             = float(scan_cfg["lumi"])
+N_SIGNAL_REGIONS = int(scan_cfg.get("n_signal_regions", scan_cfg.get("N", 4)))
+BDT_ROOT         = scan_cfg.get("bdt_root", scan_cfg.get("output_root"))
+N_THRESHOLDS     = int(scan_cfg.get("n_thresholds", 10))
+MIN_BKG_WEIGHT   = float(scan_cfg.get("min_bkg_weight", 5.0))
+ROUNDS           = int(scan_cfg.get("rounds", 5))
 
-if not os.path.isabs(OUTPUT_ROOT):
-    OUTPUT_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, OUTPUT_ROOT))
+if BDT_ROOT is None:
+    raise KeyError("signal_region config requires 'bdt_root'")
+
+if not os.path.isabs(BDT_ROOT):
+    BDT_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, BDT_ROOT))
 
 
 # ── Load configs saved by train.py ────────────────────────────────────────────
-cfg       = _load_json(os.path.join(OUTPUT_ROOT, "config.json"))
-br_cfg    = _load_json(os.path.join(OUTPUT_ROOT, "branch.json"))
-sel_cfg   = _load_json(os.path.join(OUTPUT_ROOT, "selection.json"))
-test_meta = _load_json(os.path.join(OUTPUT_ROOT, "test_ranges.json"))
+cfg       = _load_json(os.path.join(BDT_ROOT, "config.json"))
+br_cfg    = _load_json(os.path.join(BDT_ROOT, "branch.json"))
+sel_cfg   = _load_json(os.path.join(BDT_ROOT, "selection.json"))
+test_meta = _load_json(os.path.join(BDT_ROOT, "test_ranges.json"))
 
 # sample_config paths in config.json are relative to _BDT_DIR (where train.py lives)
 _sample_cfg_path = cfg["sample_config"]
@@ -111,7 +114,7 @@ def load_test_data(branches):
 
     Weights are fixed here; threshold filtering later does NOT rescale them.
     """
-    log_message(f"Loading test data from: {os.path.join(OUTPUT_ROOT, 'test_ranges.json')}")
+    log_message(f"Loading test data from: {os.path.join(BDT_ROOT, 'test_ranges.json')}")
     dfs = []
 
     for sample_name, sample_meta in test_meta["samples"].items():
@@ -281,7 +284,7 @@ def _slugify(text):
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
 def _savefig(stem):
-    path = os.path.join(OUTPUT_ROOT, f"{stem}.pdf")
+    path = os.path.join(BDT_ROOT, f"{stem}.pdf")
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
@@ -436,8 +439,8 @@ def find_signal_regions(proba, y, w):
     selected_bins = []
     top_bins      = []
 
-    for k in range(N_BINS):
-        log_message(f"  Scanning bin {k + 1}/{N_BINS} ...")
+    for k in range(N_SIGNAL_REGIONS):
+        log_message(f"  Scanning bin {k + 1}/{N_SIGNAL_REGIONS}")
         accum_map = {}
         unit_high = [1.0] * D
 
@@ -743,7 +746,7 @@ def print_results(result):
 def main():
     log_message(
         f"Running signal_region.py: tree={TREE_NAME}, lumi={LUMI} fb^-1, "
-        f"N={N_BINS}, output={OUTPUT_ROOT}"
+        f"n_signal_regions={N_SIGNAL_REGIONS}, bdt_root={BDT_ROOT}"
     )
 
     sel         = sel_cfg[TREE_NAME]
@@ -764,14 +767,14 @@ def main():
     gc.collect()
 
     # Apply threshold filtering — weights unchanged by this step
-    log_message("Applying thresholds ...")
+    log_message("Applying thresholds")
     X, y, w, sample_labels = filter_X(
         X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
     )
     log_message(f"After filtering: {len(X)} events")
 
     # Apply feature standardisation (same as train.py)
-    log_message("Standardising features ...")
+    log_message("Standardising features")
     X = standardize_X(X, clip_ranges, log_tf)
 
     # Remove decorrelated features before model input (same exclusion as during training)
@@ -786,7 +789,7 @@ def main():
         X_model = X
 
     # Load trained model
-    model_base = MODEL_PATTERN.format(output_root=OUTPUT_ROOT, tree_name=TREE_NAME)
+    model_base = MODEL_PATTERN.format(output_root=BDT_ROOT, tree_name=TREE_NAME)
     if os.path.exists(model_base + ".json"):
         model_path = model_base + ".json"
         clf = xgb.XGBClassifier()
@@ -801,20 +804,20 @@ def main():
         raise FileNotFoundError(f"No model found at {model_base}(.json/.pkl)")
 
     # BDT prediction
-    log_message("Running BDT prediction ...")
+    log_message("Running BDT prediction")
     proba = clf.predict_proba(X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
 
     # Plot weighted score distributions
-    log_message("Plotting score distributions ...")
+    log_message("Plotting score distributions")
     plot_score_distributions(proba, y, w)
 
     # Scan for N non-overlapping signal regions
-    log_message(f"Scanning for {N_BINS} signal regions ...")
+    log_message(f"Scanning for {N_SIGNAL_REGIONS} signal regions")
     result = find_signal_regions(proba, y, w)
 
     # Plot 2D signal regions (first two axes, if D >= 2)
-    log_message("Plotting signal regions ...")
+    log_message("Plotting signal regions")
     plot_signal_regions_2d(result, proba, y, w)
 
     # Print text summary
