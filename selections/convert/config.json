@@ -142,7 +142,7 @@
     {
       "contains_any": ["qcd_ht1500to2000_ext1"],
       "category": "bkg",
-      "path": "IN PRODUCTION /QCD-4Jets_Bin-HT-1500to2000_ext1_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNanoUPart_v6-00000000000000000000000000000000/USER",
+      "path": "IN PRODUCTION /QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNanoUPart_v6_ext-00000000000000000000000000000000/USER",
       "sample_type": 19,
       "is_signal": false
     },
@@ -156,7 +156,7 @@
     {
       "contains_any": ["qcd_ht2000_ext1"],
       "category": "bkg",
-      "path": "IN PRODUCTION /QCD-4Jets_Bin-HT-2000_ext1_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNanoUPart_v6-00000000000000000000000000000000/USER",
+      "path": "IN PRODUCTION /QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNanoUPart_v6_ext-00000000000000000000000000000000/USER",
       "sample_type": 20,
       "is_signal": false
     },
