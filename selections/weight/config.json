@@ -1,7 +1,7 @@
 {
   "tree_name": "Events",
   "run_sample": "www",
-  "submit_samples": ["www", "wwz", "wzz", "zzz", "zh_had", "ggzh_had"],
+  "submit_samples": [],
   "pileup_branch": "Pileup_nTrueInt",
   "pileup_histogram": "pileup",
   "max_threads": 16,
