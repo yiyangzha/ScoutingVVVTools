@@ -141,6 +141,12 @@ The analysis runs in this order:
 ./run.sh 2 selections/BDT/config.json
 ```
 
+### Signal-region scan via run.sh
+```bash
+./run.sh 3
+./run.sh 3 selections/signal_region/config.json
+```
+
 ### Compile and run C++ tools manually
 ```bash
 # compile
@@ -148,6 +154,8 @@ c++ -O3 -std=c++17 $(root-config --cflags --libs) selections/convert/convert_bra
 # run one sample
 CONVERT_CONFIG_PATH=selections/convert/config.json ./convert_branch www
 ```
+
+When `convert_branch.C` runs a sample, it first sums the configured `tree_name` entries across all ROOT files resolved from that sample's `path` entries, then writes that total back to the active sample config's `raw_entries` field for the running sample before processing events.
 
 ### ROOT macro tools
 ```bash
@@ -186,7 +194,7 @@ Its config keys are `lumi`, `n_signal_regions`, `bdt_root`, `n_thresholds`, `min
 
 All tools are driven by JSON config files. Sample definitions live centrally in [src/sample.json](src/sample.json); individual tool configs reference it via the `sample_config` key.
 
-- **[src/sample.json](src/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`. For BDT training, `raw_entries` must be the total number of generated MC events before any convert-level filtering.
+- **[src/sample.json](src/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`. `convert_branch.C` updates `raw_entries` for the running sample by summing the chosen `tree_name` entries across all ROOT files resolved from that sample's configured `path` values.
 - **[selections/convert/config.json](selections/convert/config.json)** — controls convert step: output paths, thread count, file size limits, pileup weight CSV path pattern.
 - **[selections/convert/selection.json](selections/convert/selection.json)** — physics selection: event preselection string, per-collection cuts/sorts, and `tree_selection` that splits output into `fat2` (exactly 2 AK8 jets) and `fat3` (≥3 AK8 jets) trees. Selections are parsed and JIT-compiled by the C++ expression engine.
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
@@ -218,8 +226,9 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - `mode=0` compiles and runs `convert/convert_branch.C`.
 - `mode=1` compiles and runs `weight/weight.C`.
 - `mode=2` runs `BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
+- `mode=3` runs `signal_region/signal_region.py` with `SCAN_CONFIG_PATH` pointing to the chosen config file.
 
-For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, or `selections/BDT/log.txt` depending on mode. All three modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2` logs one `started` / `finished` record for the whole BDT job with an explicit exit `status=`. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
+For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, or `selections/signal_region/log.txt` depending on mode. All four modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2` and `mode=3` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 

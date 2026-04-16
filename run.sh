@@ -13,6 +13,7 @@ Modes:
   mode=0  Run convert/convert_branch.C jobs.
   mode=1  Run weight/weight.C pileup jobs.
   mode=2  Run BDT/train.py.
+  mode=3  Run signal_region/signal_region.py.
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
@@ -53,6 +54,13 @@ case "${MODE}" in
     CONFIG_ENV_VAR="BDT_CONFIG_PATH"
     MODE_LABEL="bdt_train"
     PYTHON_SCRIPT="train.py"
+    ;;
+  3)
+    WORK_DIR="${ROOT_DIR}/selections/signal_region"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="SCAN_CONFIG_PATH"
+    MODE_LABEL="signal_region"
+    PYTHON_SCRIPT="signal_region.py"
     ;;
   *)
     echo "Unknown mode: ${MODE}" >&2
@@ -131,9 +139,9 @@ cd "${WORK_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
 
-if [ "${MODE}" = "2" ]; then
+if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ]; then
   if [ "$#" -gt 0 ]; then
-    echo "mode=2 does not accept sample arguments: $*" >&2
+    echo "mode=${MODE} does not accept sample arguments: $*" >&2
     exit 1
   fi
 

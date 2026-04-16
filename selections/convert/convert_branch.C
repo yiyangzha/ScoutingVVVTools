@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -724,6 +725,52 @@ bool endsWith(const string& text, const string& suffix) {
            text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+size_t skipWhitespace(const string& text, size_t pos) {
+    while (pos < text.size() && isspace(static_cast<unsigned char>(text[pos]))) {
+        ++pos;
+    }
+    return pos;
+}
+
+size_t findMatchingJsonDelimiter(const string& text, size_t openPos, char openChar, char closeChar) {
+    if (openPos >= text.size() || text[openPos] != openChar) {
+        throw runtime_error("Invalid JSON delimiter search");
+    }
+
+    size_t pos = openPos;
+    int depth = 0;
+    bool inString = false;
+    bool escape = false;
+    while (pos < text.size()) {
+        const char ch = text[pos];
+        if (inString) {
+            if (escape) {
+                escape = false;
+            } else if (ch == '\\') {
+                escape = true;
+            } else if (ch == '"') {
+                inString = false;
+            }
+            ++pos;
+            continue;
+        }
+
+        if (ch == '"') {
+            inString = true;
+        } else if (ch == openChar) {
+            ++depth;
+        } else if (ch == closeChar) {
+            --depth;
+            if (depth == 0) {
+                return pos;
+            }
+        }
+        ++pos;
+    }
+
+    throw runtime_error("Unmatched JSON delimiter while editing sample config");
+}
+
 DataType parseDataType(const string& text) {
     if (text == "F") {
         return DataType::Float;
@@ -883,6 +930,112 @@ AppConfig loadAppConfig() {
 
     config.puWeightPathPattern = payload.getStringOr("pu_weight_path", "");
     return config;
+}
+
+Long64_t countTreeEntriesInFiles(const vector<string>& inputFiles, const string& treeName) {
+    Long64_t totalEntries = 0;
+    for (const auto& inputFileName : inputFiles) {
+        unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
+        if (!inputFile || inputFile->IsZombie()) {
+            throw runtime_error("Error opening input file " + inputFileName + " while counting raw_entries");
+        }
+
+        TTree* tree = static_cast<TTree*>(inputFile->Get(treeName.c_str()));
+        if (!tree) {
+            throw runtime_error("Tree " + treeName + " not found in " + inputFileName +
+                                " while counting raw_entries");
+        }
+        totalEntries += tree->GetEntries();
+    }
+    return totalEntries;
+}
+
+void writeSampleRawEntries(const string& sampleConfigPath,
+                           const string& sampleName,
+                           Long64_t rawEntries) {
+    ifstream fin(sampleConfigPath);
+    if (!fin) {
+        throw runtime_error("Cannot open sample config for raw_entries update: " + sampleConfigPath);
+    }
+
+    const string content((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
+    const size_t sampleKeyPos = content.find("\"sample\"");
+    if (sampleKeyPos == string::npos) {
+        throw runtime_error("Cannot find 'sample' array in sample config: " + sampleConfigPath);
+    }
+
+    const size_t colonPos = content.find(':', sampleKeyPos);
+    if (colonPos == string::npos) {
+        throw runtime_error("Malformed 'sample' entry in sample config: " + sampleConfigPath);
+    }
+
+    const size_t arrayPos = skipWhitespace(content, colonPos + 1);
+    if (arrayPos >= content.size() || content[arrayPos] != '[') {
+        throw runtime_error("Expected sample array in sample config: " + sampleConfigPath);
+    }
+
+    const size_t arrayEnd = findMatchingJsonDelimiter(content, arrayPos, '[', ']');
+    const regex namePattern("\"name\"\\s*:\\s*\"([^\"]+)\"");
+    const regex rawEntriesPattern("\"raw_entries\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)");
+    string updated = content;
+    bool foundSample = false;
+
+    size_t pos = arrayPos + 1;
+    while (pos < arrayEnd) {
+        pos = skipWhitespace(content, pos);
+        if (pos >= arrayEnd) {
+            break;
+        }
+        if (content[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (content[pos] != '{') {
+            throw runtime_error("Expected sample object in sample config: " + sampleConfigPath);
+        }
+
+        const size_t objectEnd = findMatchingJsonDelimiter(content, pos, '{', '}');
+        const string objectText = content.substr(pos, objectEnd - pos + 1);
+        smatch nameMatch;
+        if (regex_search(objectText, nameMatch, namePattern) && nameMatch.size() >= 2 &&
+            nameMatch[1].str() == sampleName) {
+            smatch rawEntriesMatch;
+            if (!regex_search(objectText, rawEntriesMatch, rawEntriesPattern) || rawEntriesMatch.size() < 2) {
+                throw runtime_error("Cannot find raw_entries for sample '" + sampleName +
+                                    "' in sample config: " + sampleConfigPath);
+            }
+
+            const size_t replacePos = pos + static_cast<size_t>(rawEntriesMatch.position(1));
+            const size_t replaceLen = rawEntriesMatch.length(1);
+            updated.replace(replacePos, replaceLen, to_string(static_cast<long long>(rawEntries)));
+            foundSample = true;
+            break;
+        }
+        pos = objectEnd + 1;
+    }
+
+    if (!foundSample) {
+        throw runtime_error("Cannot find sample '" + sampleName + "' in sample config: " + sampleConfigPath);
+    }
+
+    const fs::path targetPath(sampleConfigPath);
+    const fs::path tempPath = targetPath.string() + ".tmp";
+    ofstream fout(tempPath);
+    if (!fout) {
+        throw runtime_error("Cannot write temporary sample config file: " + tempPath.string());
+    }
+    fout << updated;
+    fout.close();
+    if (!fout) {
+        throw runtime_error("Failed writing sample config file: " + tempPath.string());
+    }
+
+    std::error_code ec;
+    fs::rename(tempPath, targetPath, ec);
+    if (ec) {
+        throw runtime_error("Failed to replace sample config file '" + targetPath.string() +
+                            "': " + ec.message());
+    }
 }
 
 OutputScalarConfig parseOutputScalar(const JsonValue& node) {
@@ -2754,6 +2907,18 @@ int main(int argc, char** argv) {
              << ", local = " << (sampleMeta.inputPaths.size() - sampleMeta.remoteSourceCount) << ")";
     }
     cout << endl;
+
+    try {
+        const Long64_t rawEntries = countTreeEntriesInFiles(inputFiles, appConfig.treeName);
+        writeSampleRawEntries(appConfig.sampleConfigPath, sampleMeta.sample, rawEntries);
+        cout << "Updated raw_entries in " << appConfig.sampleConfigPath
+             << " for sample = " << sampleMeta.sample
+             << ", tree = " << appConfig.treeName
+             << ", raw_entries = " << rawEntries << endl;
+    } catch (const exception& ex) {
+        cerr << "raw_entries update error: " << ex.what() << endl;
+        return 1;
+    }
 
     vector<PileupBin> pileupWeights;
     if (sampleMeta.isMC && !appConfig.puWeightPathPattern.empty()) {
