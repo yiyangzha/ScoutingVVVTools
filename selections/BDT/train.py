@@ -1,6 +1,7 @@
 import os
 import glob
 import json
+import shutil
 import uproot
 import pandas as pd
 import numpy as np
@@ -10,10 +11,9 @@ import pickle
 import xgboost as xgb
 import gc
 
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, roc_curve
 from xgboost import XGBClassifier, plot_importance
-from typing import Optional, Sequence, List, Union
+from typing import List
 
 plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
@@ -56,6 +56,7 @@ sample_cfg = _load_json(_sample_cfg_path)
 # ── Constants from config ──────────────────────────────────────────────────────
 RANDOM_STATE       = cfg.get("random_state", 42)
 ENTRIES_PER_SAMPLE = cfg.get("entries_per_sample", 1_000_000)
+TRAIN_FRACTION     = float(cfg.get("train_fraction", 0.7))
 DECOR_LAMBDA       = cfg.get("decor_lambda", 30)
 SUBMIT_TREES       = cfg.get("submit_trees", ["fat2"])
 INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"]))
@@ -63,6 +64,9 @@ INPUT_PATTERN      = cfg["input_pattern"]
 OUTPUT_ROOT_PATTERN = cfg.get("output_root", ".")
 MODEL_PATTERN      = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
 CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
+
+if not 0.0 < TRAIN_FRACTION < 1.0:
+    raise ValueError(f"train_fraction must be in (0, 1), got {TRAIN_FRACTION}")
 
 # ── Sample registry from sample.json ──────────────────────────────────────────
 SAMPLE_INFO = {}
@@ -196,53 +200,137 @@ def _rebalance_class_weights(df_all):
     return df_all
 
 
-def prepare_data(tree_name, branches):
-    """Load training data for one tree (fat2 or fat3).
+def _segment_length(segment):
+    return int(segment["entry_stop"]) - int(segment["entry_start"])
 
-    For each sample, target total weight is:
-        xsection * (n_entries_in_input_tree / raw_entries)
-    If only a subset of the input tree is used because of `entries_per_sample`,
-    the per-event weight is scaled so the used subset still sums to that target.
-    """
+
+def _sum_segment_lengths(segments):
+    return sum(_segment_length(segment) for segment in segments)
+
+
+def _build_segments(file_infos, global_start, global_stop, max_entries=None):
+    segments = []
+    cursor = 0
+    used_entries = 0
+
+    for info in file_infos:
+        next_cursor = cursor + int(info["entries"])
+        overlap_start = max(global_start, cursor)
+        overlap_stop = min(global_stop, next_cursor)
+        if overlap_stop > overlap_start:
+            local_start = overlap_start - cursor
+            local_stop = overlap_stop - cursor
+            if max_entries is not None:
+                remain = max_entries - used_entries
+                if remain <= 0:
+                    break
+                local_stop = min(local_stop, local_start + remain)
+            if local_stop > local_start:
+                segment = {
+                    "path": info["path"],
+                    "entry_start": int(local_start),
+                    "entry_stop": int(local_stop),
+                    "global_start": int(overlap_start),
+                    "global_stop": int(overlap_start + (local_stop - local_start)),
+                }
+                segments.append(segment)
+                used_entries += _segment_length(segment)
+                if max_entries is not None and used_entries >= max_entries:
+                    break
+        cursor = next_cursor
+
+    return segments
+
+
+def _inspect_sample_tree(sample_name, tree_name):
+    files = _input_files(sample_name)
+    if not files:
+        log_warning(f"no files for '{sample_name}', skipping")
+        return None
+
+    file_infos = []
+    total_entries = 0
+    for fpath in files:
+        with uproot.open(fpath) as uf:
+            if tree_name not in uf:
+                continue
+            tree = uf[tree_name]
+            n_entries = int(tree.num_entries)
+            file_infos.append({
+                "path": fpath,
+                "entries": n_entries,
+            })
+            total_entries += n_entries
+
+    if total_entries <= 0:
+        log_warning(f"zero entries found for '{sample_name}' in tree '{tree_name}', skipping")
+        return None
+
+    train_stop = int(total_entries * TRAIN_FRACTION)
+    return {
+        "sample_name": sample_name,
+        "file_infos": file_infos,
+        "total_entries": total_entries,
+        "train_stop": train_stop,
+        "test_start": train_stop,
+        "train_segments_full": _build_segments(file_infos, 0, train_stop),
+        "train_segments_read": _build_segments(file_infos, 0, train_stop, max_entries=ENTRIES_PER_SAMPLE),
+        "test_segments": _build_segments(file_infos, train_stop, total_entries),
+    }
+
+
+def _load_segments(tree_name, branches, segments):
+    parts = []
+    n_read = 0
+    for segment in segments:
+        with uproot.open(segment["path"]) as uf:
+            tree = uf[tree_name]
+            available = set(tree.keys())
+            missing = [branch for branch in branches if branch not in available]
+            if missing:
+                raise KeyError(
+                    f"Missing branches in {segment['path']}:{tree_name}: {', '.join(missing[:10])}"
+                    + (" ..." if len(missing) > 10 else "")
+                )
+            df_part = tree.arrays(
+                branches,
+                library="pd",
+                entry_start=int(segment["entry_start"]),
+                entry_stop=int(segment["entry_stop"]),
+            )
+            parts.append(df_part)
+            n_read += len(df_part)
+
+    if not parts:
+        return None, 0
+
+    df = pd.concat(parts, ignore_index=True)
+    del parts
+    gc.collect()
+    return df, n_read
+
+
+def build_split_plans(tree_name):
+    split_plans = {}
+    for sample_name in TRAINING_SAMPLES:
+        plan = _inspect_sample_tree(sample_name, tree_name)
+        if plan is not None:
+            split_plans[sample_name] = plan
+    if not split_plans:
+        raise RuntimeError(f"No data available for tree '{tree_name}'")
+    return split_plans
+
+
+def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
     dfs = []
     sample_target_totals = {}
 
     for sample_name in TRAINING_SAMPLES:
-        info  = SAMPLE_INFO[sample_name]
-        files = _input_files(sample_name)
-        if not files:
-            log_warning(f"no files for '{sample_name}', skipping")
+        if sample_name not in split_plans:
             continue
 
-        limit = ENTRIES_PER_SAMPLE
-        parts = []
-        n_read = 0
-        n_tree_total = 0
-        for fpath in files:
-            with uproot.open(fpath) as uf:
-                if tree_name not in uf:
-                    continue
-                tree = uf[tree_name]
-                available = set(tree.keys())
-                missing = [branch for branch in branches if branch not in available]
-                if missing:
-                    raise KeyError(
-                        f"Missing branches in {fpath}:{tree_name}: {', '.join(missing[:10])}"
-                        + (" ..." if len(missing) > 10 else "")
-                    )
-                n_entries = int(tree.num_entries)
-                n_tree_total += n_entries
-                remain = limit - n_read
-                if remain <= 0:
-                    continue
-                n_to_read = min(remain, tree.num_entries)
-                if n_to_read <= 0:
-                    continue
-                df_part = tree.arrays(branches, library="pd",
-                                      entry_start=0, entry_stop=n_to_read)
-                parts.append(df_part)
-                n_read += len(df_part)
-
+        plan = split_plans[sample_name]
+        info = SAMPLE_INFO[sample_name]
         raw_entries = int(info["raw_entries"])
         xsec = float(info["xsection"])
         if xsec > 0.0 and raw_entries <= 0:
@@ -251,20 +339,25 @@ def prepare_data(tree_name, branches):
                 "fill src/sample.json before training."
             )
 
-        if n_tree_total == 0 or n_read == 0:
-            log_warning(f"zero entries read for '{sample_name}' in tree '{tree_name}', skipping")
+        if split_name == "train":
+            full_segments = plan["train_segments_full"]
+            read_segments = plan["train_segments_read"]
+        elif split_name == "test":
+            full_segments = plan["test_segments"]
+            read_segments = plan["test_segments"]
+        else:
+            raise ValueError(f"Unknown split_name: {split_name}")
+
+        split_total_entries = _sum_segment_lengths(full_segments)
+        df, n_read = _load_segments(tree_name, branches, read_segments)
+        if split_total_entries == 0 or n_read == 0 or df is None:
+            log_warning(f"zero entries read for '{sample_name}' in split '{split_name}' of tree '{tree_name}', skipping")
             continue
 
-        df = pd.concat(parts, ignore_index=True)
-        del parts
-        gc.collect()
-
-        if xsec <= 0.0:
-            target_total = 0.0
-        elif raw_entries <= 0:
+        if xsec <= 0.0 or raw_entries <= 0:
             target_total = 0.0
         else:
-            target_total = xsec * (float(n_tree_total) / float(raw_entries))
+            target_total = xsec * (float(split_total_entries) / float(raw_entries))
         sample_target_totals[sample_name] = target_total
 
         if target_total <= 0.0:
@@ -275,36 +368,40 @@ def prepare_data(tree_name, branches):
                 )
         else:
             df["weight"] = target_total / float(n_read)
+
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
-
         dfs.append(df)
+
         log_message(
-            f"  {sample_name}: tree_entries={n_tree_total}, used_entries={n_read}, raw_entries={raw_entries}, "
+            f"  {sample_name}: split={split_name}, tree_entries={plan['total_entries']}, "
+            f"split_entries={split_total_entries}, used_entries={n_read}, raw_entries={raw_entries}, "
             f"target_total={target_total:.6g}, class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
         )
 
     if not dfs:
-        raise RuntimeError(f"No data loaded for tree '{tree_name}'")
+        raise RuntimeError(f"No data loaded for split '{split_name}' in tree '{tree_name}'")
 
     df_all = pd.concat(dfs, ignore_index=True)
     del dfs
     gc.collect()
 
     _validate_sample_weight_totals(df_all, sample_target_totals)
-    _report_sample_weights(df_all, "Sample totals before class balancing")
+    _report_sample_weights(df_all, f"Sample totals before class balancing ({split_name})")
     missing_classes = [
         cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
         if float(df_all.loc[df_all["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
     ]
     if missing_classes:
         raise RuntimeError(
-            "Missing positive-weight training content for classes: " + ", ".join(missing_classes)
+            f"Missing positive-weight content for split '{split_name}' in classes: "
+            + ", ".join(missing_classes)
         )
 
     df_all = _rebalance_class_weights(df_all)
-    _report_sample_weights(df_all, "Sample totals after class balancing")
-    df_all = df_all.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
+    _report_sample_weights(df_all, f"Sample totals after class balancing ({split_name})")
+    if shuffle:
+        df_all = df_all.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
     X = df_all[branches].copy()
     y = df_all["class_idx"].values.astype(int)
@@ -314,6 +411,46 @@ def prepare_data(tree_name, branches):
     del df_all
     gc.collect()
     return X, y, w, sample_labels
+
+
+def write_split_metadata(output_root, tree_name, split_plans):
+    metadata = {
+        "tree_name": tree_name,
+        "train_fraction": TRAIN_FRACTION,
+        "test_fraction": 1.0 - TRAIN_FRACTION,
+        "samples": {},
+    }
+
+    for sample_name, plan in split_plans.items():
+        metadata["samples"][sample_name] = {
+            "total_entries": int(plan["total_entries"]),
+            "train_entries_total": _sum_segment_lengths(plan["train_segments_full"]),
+            "train_entries_used": _sum_segment_lengths(plan["train_segments_read"]),
+            "test_entries_total": _sum_segment_lengths(plan["test_segments"]),
+            "test_global_range": [
+                int(plan["test_start"]),
+                int(plan["total_entries"]),
+            ],
+            "test_segments": [
+                {
+                    "file": segment["path"],
+                    "entry_start": int(segment["entry_start"]),
+                    "entry_stop": int(segment["entry_stop"]),
+                }
+                for segment in plan["test_segments"]
+            ],
+        }
+
+    metadata_path = os.path.join(output_root, "test_ranges.json")
+    with open(metadata_path, "w", encoding="utf-8") as fout:
+        json.dump(metadata, fout, indent=2, ensure_ascii=False)
+    log_message(f"Wrote split file: {metadata_path}")
+
+
+def write_config_copy(output_root):
+    config_copy_path = os.path.join(output_root, "config.json")
+    shutil.copy2(_cfg_path, config_copy_path)
+    log_message(f"Wrote config file: {config_copy_path}")
 
 
 # ── Event filtering ────────────────────────────────────────────────────────────
@@ -685,34 +822,19 @@ def _make_multiclass_total_loss_metric(num_class, Z_train, Z_test, w_train, w_te
 
 
 # ── Training ───────────────────────────────────────────────────────────────────
-def _make_stratify_labels(y, sample_labels):
-    y = np.asarray(y, dtype=int)
-    if sample_labels is None:
-        return y
-    sample_labels = np.asarray(sample_labels, dtype=str)
-    combo = np.array([f"{cls}:{sample}" for cls, sample in zip(y, sample_labels)], dtype=object)
-    _, counts = np.unique(combo, return_counts=True)
-    if np.all(counts >= 2):
-        return combo
-    log_info("falling back to class-only stratification because some samples are too small after filtering")
-    return y
-
-
-def train_multi_model(X, y, w, model_name, tree_name,
-                      decorrelate_feature_names=None, sample_labels=None):
+def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
+                      model_name, tree_name, decorrelate_feature_names=None):
     """Train a multiclass BDT with optional CvM decorrelation.
 
     Hyperparameters are read from config.json under the key matching tree_name.
-    Returns clf and the full (pre-split) feature splits for plotting.
+    Returns clf and the feature splits used for plotting.
     """
-    X = np.asarray(X) if not isinstance(X, pd.DataFrame) else X
-    y = np.asarray(y, dtype=int)
-    w = np.asarray(w, dtype=float)
-    stratify_labels = _make_stratify_labels(y, sample_labels)
-
-    X_train_all, X_test_all, y_train, y_test, w_train, w_test = train_test_split(
-        X, y, w, test_size=0.3, stratify=stratify_labels, random_state=RANDOM_STATE
-    )
+    X_train_all = np.asarray(X_train_all) if not isinstance(X_train_all, pd.DataFrame) else X_train_all
+    X_test_all = np.asarray(X_test_all) if not isinstance(X_test_all, pd.DataFrame) else X_test_all
+    y_train = np.asarray(y_train, dtype=int)
+    y_test = np.asarray(y_test, dtype=int)
+    w_train = np.asarray(w_train, dtype=float)
+    w_test = np.asarray(w_test, dtype=float)
 
     decor_idx = _resolve_decor_indices(X_train_all, decorrelate_feature_names)
     if decor_idx:
@@ -1054,6 +1176,24 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
             log_message(f"{tree_name} {tag} decor corr [{cls_name}] {stats}")
 
 
+def _validate_filtered_split(tree_name, split_name, y, w, sample_labels):
+    filtered_df = pd.DataFrame({
+        "weight": w,
+        "class_idx": y,
+        "sample_name": sample_labels,
+    })
+    _report_sample_weights(filtered_df, f"Sample totals after thresholding ({split_name})")
+    missing_classes = [
+        cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
+        if float(filtered_df.loc[filtered_df["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
+    ]
+    if missing_classes:
+        raise RuntimeError(
+            f"Missing positive-weight content after thresholding for split '{split_name}' in tree '{tree_name}': "
+            + ", ".join(missing_classes)
+        )
+
+
 def main():
     for tree_name in SUBMIT_TREES:
         output_root = _resolve_output_root(tree_name)
@@ -1070,39 +1210,49 @@ def main():
         log_message(
             f"Running train.py for tree = {tree_name}, output = {output_root}, classes = {NUM_CLASSES}"
         )
-        log_message(f"Loading data for tree = {tree_name}")
-        X, y, w, sample_labels = prepare_data(tree_name, branches)
-        check_weights(w, f"{tree_name}_weight_before_filter")
+        split_plans = build_split_plans(tree_name)
+        write_config_copy(output_root)
+        write_split_metadata(output_root, tree_name, split_plans)
 
-        log_message(f"Applying thresholds for tree = {tree_name}")
-        X, y, w, sample_labels = filter_X(
-            X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
+        log_message(f"Loading training split for tree = {tree_name}")
+        X_train, y_train, w_train, sample_labels_train = prepare_split_data(
+            tree_name, branches, "train", split_plans, shuffle=True
         )
-        filtered_df = pd.DataFrame({
-            "weight": w,
-            "class_idx": y,
-            "sample_name": sample_labels,
-        })
-        _report_sample_weights(filtered_df, "Sample totals after thresholding")
-        missing_classes = [
-            cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
-            if float(filtered_df.loc[filtered_df["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
-        ]
-        if missing_classes:
-            raise RuntimeError(
-                "Missing positive-weight training content after thresholding for classes: "
-                + ", ".join(missing_classes)
-            )
-        check_weights(w, f"{tree_name}_weight_after_filter")
+        check_weights(w_train, f"{tree_name}_train_weight_before_filter")
 
-        log_message(f"Standardising features for tree = {tree_name}")
-        X_std = standardize_X(X.copy(), clip_ranges, log_tf)
+        log_message(f"Loading test split for tree = {tree_name}")
+        X_test, y_test, w_test, sample_labels_test = prepare_split_data(
+            tree_name, branches, "test", split_plans, shuffle=False
+        )
+        check_weights(w_test, f"{tree_name}_test_weight_before_filter")
+
+        log_message(f"Applying thresholds for training split of tree = {tree_name}")
+        X_train, y_train, w_train, sample_labels_train = filter_X(
+            X_train, y_train, w_train, branches, thresholds, apply_to_sentinel=True,
+            sample_labels=sample_labels_train
+        )
+        _validate_filtered_split(tree_name, "train", y_train, w_train, sample_labels_train)
+        check_weights(w_train, f"{tree_name}_train_weight_after_filter")
+
+        log_message(f"Applying thresholds for test split of tree = {tree_name}")
+        X_test, y_test, w_test, sample_labels_test = filter_X(
+            X_test, y_test, w_test, branches, thresholds, apply_to_sentinel=True,
+            sample_labels=sample_labels_test
+        )
+        _validate_filtered_split(tree_name, "test", y_test, w_test, sample_labels_test)
+        check_weights(w_test, f"{tree_name}_test_weight_after_filter")
+
+        log_message(f"Standardising training split for tree = {tree_name}")
+        X_train_std = standardize_X(X_train.copy(), clip_ranges, log_tf)
+        log_message(f"Standardising test split for tree = {tree_name}")
+        X_test_std = standardize_X(X_test.copy(), clip_ranges, log_tf)
 
         log_message(f"Training model for tree = {tree_name}")
         clf, splits = train_multi_model(
-            X_std, y, w, model_path, tree_name,
-            decorrelate_feature_names=decorrelate,
-            sample_labels=sample_labels
+            X_train_std, y_train, w_train,
+            X_test_std, y_test, w_test,
+            model_path, tree_name,
+            decorrelate_feature_names=decorrelate
         )
 
         log_message(f"Plotting results for tree = {tree_name}")

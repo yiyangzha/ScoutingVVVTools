@@ -175,7 +175,7 @@ jupyter lab  # open selections/BDT/train.ipynb
 python3 selections/BDT/train.py
 ```
 
-BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`, and both `run.sh` and `train.py` follow the same concise run-log style as the convert and weight programs: a `Running ...` header, thread information, `Wrote ...` output records, and `Runtime error: ...` on failure.
+BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. Each tree output directory also stores a copy of the config as `config.json` and the fixed per-sample test split definition as `test_ranges.json`. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`, and both `run.sh` and `train.py` follow the same concise run-log style as the convert and weight programs: a `Running ...` header, thread information, `Wrote ...` output records, and `Runtime error: ...` on failure.
 
 ## Configuration Architecture
 
@@ -186,7 +186,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - **[selections/convert/selection.json](selections/convert/selection.json)** — physics selection: event preselection string, per-collection cuts/sorts, and `tree_selection` that splits output into `fat2` (exactly 2 AK8 jets) and `fat3` (≥3 AK8 jets) trees. Selections are parsed and JIT-compiled by the C++ expression engine.
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
 - **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
-- **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, and per-tree hyperparameters plus `decorrelate`.
+- **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, `train_fraction`, and per-tree hyperparameters plus `decorrelate`.
 - **[selections/BDT/branch.json](selections/BDT/branch.json)** — lists the BDT feature branches. These names are aligned to the current `convert_branch` output names and include all non-`onlyMC` `fat2`/`fat3` branches except event identifiers, pileup bookkeeping, selection counts, and truth/meta labels.
 - **[selections/BDT/selection.json](selections/BDT/selection.json)** — training-time feature preprocessing: clipping ranges, log transforms, and threshold cuts applied after reading the converted `fat2`/`fat3` trees.
 
@@ -195,11 +195,14 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - `selections/BDT/train.py` only trains on the samples explicitly listed in `class_groups`.
 - The number of classes is inferred dynamically from `class_groups`; no fixed 5-class assumption is baked into training.
 - A class is treated as `single` for plotting if every sample in that class has `is_signal=true`; otherwise it is treated as `background`.
-- Sample weights are computed once, immediately after reading each converted sample and before any BDT threshold cuts:
-  `sample_total_weight(tree) = xsection * N_tree / raw_entries`
-  where `N_tree` is the total number of entries in the converted `fat2` or `fat3` tree across all matched ROOT files.
-- If `entries_per_sample` limits how many events are actually loaded, per-event weight is scaled so the loaded subset still sums to `sample_total_weight(tree)`.
-- Class totals are then rescaled once so every class has the same total training weight.
+- For each sample, the code first counts all entries across all matched ROOT files in the chosen tree, then defines a fixed sequential split: the first `train_fraction` goes to training and the remaining tail goes to testing. The split is defined on the concatenated sample entry order across files, so `test_ranges.json` can be used later to recover the exact test subset.
+- `entries_per_sample` only caps how many events are actually loaded from the training side of that fixed split. The test side is always the full tail of the sample.
+- Training events are shuffled after loading; test events keep their original order.
+- Sample weights are computed separately for the training and test splits, immediately after reading and before any BDT threshold cuts:
+  `sample_total_weight(split) = xsection * N_split / raw_entries`
+  where `N_split` is the total number of entries in that fixed train or test split before any threshold cuts.
+- If `entries_per_sample` limits how many training events are actually loaded, per-event weight is scaled so the loaded training subset still sums to `sample_total_weight(train)`.
+- Class totals are then rescaled separately within the training split and within the test split so every class has the same total weight inside each split.
 - After those weights are assigned, later threshold cuts in `selections/BDT/selection.json` do **not** trigger any reweighting; the surviving events keep their original per-event weight. This means threshold efficiency naturally contributes to the effective sample composition seen by the trainer.
 - ROC and score-distribution plots adapt to the configured classes. When both signal-like and background-like classes exist, the code produces all signal-background class pairs; otherwise it falls back to all class pairs.
 
