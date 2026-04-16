@@ -215,5 +215,4 @@ __marimo__/
 *.txt
 *.csv
 CLAUDE.md
-train_old.py
 *.ipynb
