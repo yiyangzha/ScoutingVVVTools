@@ -1,0 +1,62 @@
+{
+  "fat2": {
+    "clip_ranges": {
+      "H_T":   [0, 13600],
+      "PT":    [0, 13600],
+      "pt8_1": [0, 13600],
+      "pt8_2": [0, 13600],
+      "pt4_1": [0, 13600],
+      "pt4_2": [0, 13600],
+      "pt4_3": [0, 13600],
+      "pt4_4": [0, 13600],
+      "ptL_1": [0, 13600],
+      "ptL_2": [0, 13600],
+      "ptL_3": [0, 13600]
+    },
+    "log_transform": [
+      "N_ak8", "N_ak4", "H_T",
+      "pt8_1", "pt8_2",
+      "mr8_1", "mr8_2",
+      "pt4_1", "pt4_2", "pt4_3", "pt4_4",
+      "mPF4_1", "mPF4_2", "mPF4_3", "mPF4_4",
+      "nConst4_1", "nConst4_2", "nConst4_3", "nConst4_4",
+      "nCh4_1", "nCh4_2", "nCh4_3", "nCh4_4",
+      "nEle4_1", "nEle4_2", "nEle4_3", "nEle4_4",
+      "PT", "sphereM",
+      "ptL_1", "ptL_2", "ptL_3",
+      "isoEcalL_1", "isoEcalL_2", "isoEcalL_3",
+      "isoHcalL_1", "isoHcalL_2", "isoHcalL_3"
+    ],
+    "thresholds": {
+      "msd8_1": [40,  150],
+      "msd8_2": [40,  150],
+      "pt8_1":  [180, null],
+      "pt8_2":  [180, null],
+      "eta8_1": [-2.4, 2.4],
+      "eta8_2": [-2.4, 2.4]
+    }
+  },
+  "fat3": {
+    "clip_ranges": {
+      "H_T":   [0, 13600],
+      "M":     [0, 13600],
+      "PT":    [0, 13600],
+      "pt8_1": [0, 13600],
+      "pt8_2": [0, 13600],
+      "pt8_3": [0, 13600],
+      "ptL_1": [0, 13600],
+      "ptL_2": [0, 13600],
+      "ptL_3": [0, 13600]
+    },
+    "log_transform": [
+      "N_ak8", "N_ak4", "H_T",
+      "pt8_1", "pt8_2", "pt8_3",
+      "mr8_1", "mr8_2", "mr8_3",
+      "sphereM", "M", "PT",
+      "ptL_1", "ptL_2", "ptL_3",
+      "isoEcalL_1", "isoEcalL_2", "isoEcalL_3",
+      "isoHcalL_1", "isoHcalL_2", "isoHcalL_3"
+    ],
+    "thresholds": {}
+  }
+}

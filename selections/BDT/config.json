@@ -1,0 +1,41 @@
+{
+  "submit_trees": ["fat2"],
+  "submit_samples": [],
+  "sample_config": "../config/sample.json",
+  "input_root": "../../dataset",
+  "input_pattern": "{input_root}/{sample_group}/{sample}.root",
+  "output_root": ".",
+  "model_pattern": "{output_root}/{tree_name}_model",
+  "entries_per_sample": 1000000,
+  "random_state": 42,
+  "decor_lambda": 30,
+  "class_groups": {
+    "VVV": ["www", "wwz", "wzz", "zzz"],
+    "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
+    "Top": ["ttbar_had", "ttbar_semilep", "tbarwplus_had", "twminus_had"],
+    "VV":  ["ww", "wz", "zz"],
+    "QCD": ["qcd_ht40to70", "qcd_ht70to100", "qcd_ht100to200", "qcd_ht200to400",
+            "qcd_ht400to600", "qcd_ht600to800", "qcd_ht800to1000",
+            "qcd_ht1000to1200", "qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
+  },
+  "fat2": {
+    "n_estimators": 1000,
+    "max_depth": 14,
+    "gamma": 1,
+    "learning_rate": 0.01,
+    "reg_lambda": 1,
+    "reg_alpha": 1,
+    "min_child_weight": 3,
+    "decorrelate": ["msd8_1"]
+  },
+  "fat3": {
+    "n_estimators": 1000,
+    "max_depth": 8,
+    "gamma": 5,
+    "learning_rate": 0.01,
+    "reg_lambda": 10,
+    "reg_alpha": 10,
+    "min_child_weight": 3,
+    "decorrelate": ["msd8_1"]
+  }
+}
