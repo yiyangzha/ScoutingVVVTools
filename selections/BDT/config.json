@@ -1,6 +1,6 @@
 {
   "submit_trees": ["fat2"],
-  "sample_config": "../config/sample.json",
+  "sample_config": "../../src/sample.json",
   "input_root": "../../dataset",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
   "output_root": "./{tree_name}",

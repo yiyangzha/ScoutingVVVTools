@@ -25,7 +25,7 @@
 #include <TStyle.h>
 #include <TTree.h>
 
-#include "../src/simple_json.h"
+#include "../../src/simple_json.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -40,7 +40,7 @@ namespace {
 const char* kConfigPath = "./config.json";
 const char* kConfigEnvVar = "WEIGHT_CONFIG_PATH";
 const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
-const char* kDefaultSampleConfigPath = "../config/sample.json";
+const char* kDefaultSampleConfigPath = "../../src/sample.json";
 
 struct SampleRuleConfig {
     string name;

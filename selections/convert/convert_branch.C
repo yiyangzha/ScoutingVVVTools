@@ -28,7 +28,7 @@
 #include <TROOT.h>
 #include <TTree.h>
 
-#include "../src/simple_json.h"
+#include "../../src/simple_json.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -49,7 +49,7 @@ const char* kAppConfigPath = "./config.json";
 const char* kBranchConfigPath = "./branch.json";
 const char* kSelectionConfigPath = "./selection.json";
 const char* kAppConfigEnvVar = "CONVERT_CONFIG_PATH";
-const char* kDefaultSampleConfigPath = "../config/sample.json";
+const char* kDefaultSampleConfigPath = "../../src/sample.json";
 
 enum class DataType {
     Float,

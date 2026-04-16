@@ -7,5 +7,5 @@
   "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
   "output_root": "../../dataset",
   "output_pattern": "{output_root}/{sample_group}/{sample}.root",
-  "sample_config": "../config/sample.json"
+  "sample_config": "../../src/sample.json"
 }

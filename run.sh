@@ -32,7 +32,7 @@ shift
 
 case "${MODE}" in
   0)
-    WORK_DIR="${ROOT_DIR}/convert"
+    WORK_DIR="${ROOT_DIR}/selections/convert"
     SOURCE_FILE="convert_branch.C"
     BIN_NAME="convert_branch"
     DEFAULT_CONFIG="${WORK_DIR}/config.json"
@@ -40,7 +40,7 @@ case "${MODE}" in
     MODE_LABEL="convert_branch"
     ;;
   1)
-    WORK_DIR="${ROOT_DIR}/weight"
+    WORK_DIR="${ROOT_DIR}/selections/weight"
     SOURCE_FILE="weight.C"
     BIN_NAME="weight"
     DEFAULT_CONFIG="${WORK_DIR}/config.json"
@@ -48,7 +48,7 @@ case "${MODE}" in
     MODE_LABEL="pileup"
     ;;
   2)
-    WORK_DIR="${ROOT_DIR}/BDT"
+    WORK_DIR="${ROOT_DIR}/selections/BDT"
     DEFAULT_CONFIG="${WORK_DIR}/config.json"
     CONFIG_ENV_VAR="BDT_CONFIG_PATH"
     MODE_LABEL="bdt_train"
@@ -204,7 +204,7 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-sample_config = payload.get("sample_config", "../config/sample.json")
+sample_config = payload.get("sample_config", "../../src/sample.json")
 if not isinstance(sample_config, str) or not sample_config:
     raise SystemExit("sample_config must be a non-empty string")
 

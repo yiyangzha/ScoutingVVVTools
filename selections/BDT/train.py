@@ -234,7 +234,7 @@ def prepare_data(tree_name, branches):
         if xsec > 0.0 and raw_entries <= 0:
             raise RuntimeError(
                 f"Sample '{sample_name}' has raw_entries={raw_entries}; "
-                "fill selections/config/sample.json before training."
+                "fill src/sample.json before training."
             )
 
         if n_tree_total == 0 or n_read == 0:

@@ -12,5 +12,5 @@
   },
   "output_root": "./pileup",
   "output_pattern": "{output_root}/pileup_{sample}.csv",
-  "sample_config": "../config/sample.json"
+  "sample_config": "../../src/sample.json"
 }

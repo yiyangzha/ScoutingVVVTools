@@ -120,25 +120,25 @@ The analysis runs in this order:
 ### Convert branches (build training trees)
 ```bash
 # Run all MC samples defined in selections/convert/config.json
-cd selections && ./run.sh 0
+./run.sh 0
 
 # Run specific samples
-cd selections && ./run.sh 0 convert/config.json www qcd_ht2000
+./run.sh 0 selections/convert/config.json www qcd_ht2000
 
 # Run with a custom config
-cd selections && ./run.sh 0 /path/to/custom_config.json
+./run.sh 0 /path/to/custom_config.json
 ```
 
 ### Pileup reweighting
 ```bash
-cd selections && ./run.sh 1
-cd selections && ./run.sh 1 weight/config.json www
+./run.sh 1
+./run.sh 1 selections/weight/config.json www
 ```
 
 ### BDT training via run.sh
 ```bash
-cd selections && ./run.sh 2
-cd selections && ./run.sh 2 BDT/config.json
+./run.sh 2
+./run.sh 2 selections/BDT/config.json
 ```
 
 ### Compile and run C++ tools manually
@@ -179,9 +179,9 @@ BDT outputs are written under the per-tree `output_root` configured in `selectio
 
 ## Configuration Architecture
 
-All tools are driven by JSON config files. Sample definitions live centrally in [selections/config/sample.json](selections/config/sample.json); individual tool configs reference it via the `sample_config` key.
+All tools are driven by JSON config files. Sample definitions live centrally in [src/sample.json](src/sample.json); individual tool configs reference it via the `sample_config` key.
 
-- **[selections/config/sample.json](selections/config/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`. For BDT training, `raw_entries` must be the total number of generated MC events before any convert-level filtering.
+- **[src/sample.json](src/sample.json)** — master sample registry. Each entry has `name`, `path` (DAS path, string or list), `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`. For BDT training, `raw_entries` must be the total number of generated MC events before any convert-level filtering.
 - **[selections/convert/config.json](selections/convert/config.json)** — controls convert step: output paths, thread count, file size limits, pileup weight CSV path pattern.
 - **[selections/convert/selection.json](selections/convert/selection.json)** — physics selection: event preselection string, per-collection cuts/sorts, and `tree_selection` that splits output into `fat2` (exactly 2 AK8 jets) and `fat3` (≥3 AK8 jets) trees. Selections are parsed and JIT-compiled by the C++ expression engine.
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
@@ -205,7 +205,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 
 ## `run.sh` Behavior
 
-[selections/run.sh](selections/run.sh) supports three modes:
+[run.sh](run.sh) supports three modes:
 
 - `mode=0` compiles and runs `convert/convert_branch.C`.
 - `mode=1` compiles and runs `weight/weight.C`.
