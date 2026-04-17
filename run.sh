@@ -15,6 +15,7 @@ Modes:
   mode=2  Run BDT/train.py.
   mode=3  Run signal_region/signal_region.py.
   mode=4  Run plotting/data_mc.py.
+  mode=5  Run background_estimation/qcd_est.py.
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
@@ -69,6 +70,13 @@ case "${MODE}" in
     CONFIG_ENV_VAR="PLOT_CONFIG_PATH"
     MODE_LABEL="data_mc"
     PYTHON_SCRIPT="data_mc.py"
+    ;;
+  5)
+    WORK_DIR="${ROOT_DIR}/background_estimation"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="QCD_EST_CONFIG_PATH"
+    MODE_LABEL="qcd_est"
+    PYTHON_SCRIPT="qcd_est.py"
     ;;
   *)
     echo "Unknown mode: ${MODE}" >&2
@@ -147,7 +155,7 @@ cd "${WORK_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
 
-if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ] || [ "${MODE}" = "4" ]; then
+if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ] || [ "${MODE}" = "4" ] || [ "${MODE}" = "5" ]; then
   if [ "$#" -gt 0 ]; then
     echo "mode=${MODE} does not accept sample arguments: $*" >&2
     exit 1

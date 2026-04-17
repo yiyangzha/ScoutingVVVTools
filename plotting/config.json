@@ -1,5 +1,5 @@
 {
-  "submit_trees": ["fat2", "fat3"],
+  "submit_trees": ["fat2"],
   "sample_config": "../src/sample.json",
   "convert_branch_config": "../selections/convert/branch.json",
   "bdt_root": "../selections/BDT/{tree_name}",

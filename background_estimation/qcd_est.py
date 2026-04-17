@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""QCD ABCD estimation on MC using signal-region definitions from signal_region.py."""
+"""Estimate QCD with an ABCD method on the MC test split."""
 
 from __future__ import annotations
 
@@ -20,25 +20,29 @@ import uproot
 import xgboost as xgb
 
 
+# -------------------- Style --------------------
 plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["mathtext.rm"] = "serif"
 plt.style.use(hep.style.CMS)
 
 
+# -------------------- Paths --------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
 _SELECTIONS_DIR = os.path.join(_ROOT_DIR, "selections")
 _BDT_DIR = os.path.join(_SELECTIONS_DIR, "BDT")
 
 
+# -------------------- Logging --------------------
 def log_message(message: str) -> None:
     print(message, flush=True)
 
 
 def log_warning(message: str) -> None:
-    log_message(f"Warning: {message}")
+    log_message(f"[WARN] {message}")
 
 
+# -------------------- Helpers --------------------
 def _load_json(path: str):
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -54,6 +58,7 @@ def _slugify(text: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
 
+# -------------------- Config loading --------------------
 _cfg_path = os.environ.get("QCD_EST_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.json"))
 _cfg_path = _resolve(_cfg_path, _SCRIPT_DIR)
 qcd_cfg = _load_json(_cfg_path)
@@ -65,6 +70,7 @@ ROOT_FILE_NAME = qcd_cfg.get("root_file_name", "qcd_abcd_yields.root")
 SIGNAL_REGION_CSV_PATH = _resolve(qcd_cfg["signal_region_csv"], _SCRIPT_DIR)
 
 
+# -------------------- BDT config copies --------------------
 cfg = _load_json(os.path.join(BDT_ROOT, "config.json"))
 br_cfg = _load_json(os.path.join(BDT_ROOT, "branch.json"))
 sel_cfg = _load_json(os.path.join(BDT_ROOT, "selection.json"))
@@ -91,6 +97,7 @@ if QCD_CLASS_NAME is None:
     raise RuntimeError("BDT class_groups must contain a QCD class")
 
 
+# -------------------- Sample registry --------------------
 SAMPLE_INFO = {}
 for rule in sample_cfg["sample"]:
     SAMPLE_INFO[rule["name"]] = {
@@ -111,6 +118,7 @@ for class_idx, (class_name, members) in enumerate(CLASS_GROUPS.items()):
 QCD_SAMPLES = set(CLASS_GROUPS[QCD_CLASS_NAME])
 
 
+# -------------------- Threshold filtering --------------------
 def _mask_from_cond(col: pd.Series, cond) -> pd.Series:
     idx = col.index
     if cond is None:
@@ -205,9 +213,10 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
+# -------------------- Test data loading --------------------
 def load_test_data(branches: list[str]) -> pd.DataFrame:
     """Load the full test split with the same weight definition as signal_region.py."""
-    log_message(f"Loading test data from: {os.path.join(BDT_ROOT, 'test_ranges.json')}")
+    log_message(f"Loading MC test samples: n={len(test_meta['samples'])}")
     dfs = []
 
     for sample_name, sample_meta in test_meta["samples"].items():
@@ -268,7 +277,7 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
             target_total = 0.0
             df["weight"] = 0.0
             log_warning(
-                f"  {sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
+                f"{sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
             )
         else:
             target_total = LUMI * xsec * total_entries / raw_entries
@@ -279,20 +288,22 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
         df["group_name"] = SAMPLE_TO_GROUP[sample_name]
         dfs.append(df)
         log_message(
-            f"  {sample_name}: n_loaded={n_loaded}, total_entries={total_entries}, "
-            f"raw_entries={raw_entries}, xsec={xsec:.6g}, target_total={target_total:.6g}, "
-            f"class={SAMPLE_TO_GROUP[sample_name]}"
+            f"  {sample_name}: class={SAMPLE_TO_GROUP[sample_name]}, "
+            f"total_entries={total_entries}, loaded={n_loaded}, "
+            f"weight_sum={float(df['weight'].sum()):.6g}"
         )
 
     if not dfs:
         raise RuntimeError("No MC test data loaded")
 
     df_all = pd.concat(dfs, ignore_index=True)
+    log_message(f"Loaded MC test events: {len(df_all)}")
     del dfs
     gc.collect()
     return df_all
 
 
+# -------------------- Model loading --------------------
 def _load_model():
     model_base = MODEL_PATTERN.format(output_root=BDT_ROOT, tree_name=TREE_NAME)
     if os.path.exists(model_base + ".json"):
@@ -310,6 +321,7 @@ def _load_model():
     raise FileNotFoundError(f"No model found at {model_base}(.json/.pkl)")
 
 
+# -------------------- Region helpers --------------------
 def _resolve_mass_thresholds(thresholds: dict) -> Tuple[dict, dict]:
     mass_thresholds = {}
     other_thresholds = {}
@@ -381,6 +393,7 @@ def _region_mask(scores: np.ndarray, region_row: pd.Series) -> np.ndarray:
     return mask
 
 
+# -------------------- Plotting helpers --------------------
 def _hist_with_var(values: np.ndarray, weights: np.ndarray, edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     vals, _ = np.histogram(values, bins=edges, weights=weights)
     vars_, _ = np.histogram(values, bins=edges, weights=weights ** 2)
@@ -662,6 +675,7 @@ def main() -> None:
         f"Running qcd_est.py: tree={TREE_NAME}, lumi={LUMI} fb^-1, "
         f"bdt_root={BDT_ROOT}, signal_region_csv={SIGNAL_REGION_CSV_PATH}, output_dir={OUTPUT_DIR}"
     )
+    log_message("Loading BDT config copies")
 
     model_branches = [item["name"] for item in br_cfg[TREE_NAME]]
     selection = sel_cfg[TREE_NAME]
@@ -674,14 +688,17 @@ def main() -> None:
     mass_thresholds, bdt_thresholds = _resolve_mass_thresholds(thresholds)
     decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
 
+    log_message("Loading signal region file")
     load_branches = sorted(set(model_branches) | set(thresholds.keys()))
     signal_regions = _load_signal_regions()
     region_labels = [f"SR{int(idx)}" for idx in signal_regions["bin_index"].tolist()]
     edges = np.arange(len(region_labels) + 1, dtype=float)
     log_message(
         f"Resolved inputs: model_branches={len(model_branches)}, "
-        f"load_branches={len(load_branches)}, signal_regions={len(region_labels)}"
+        f"load_branches={len(load_branches)}, signal_regions={len(region_labels)}, "
+        f"non_mass_thresholds={len(bdt_thresholds)}, mass_thresholds={len(mass_thresholds)}"
     )
+    log_message(f"Output directory: {OUTPUT_DIR}")
 
     df_all = load_test_data(load_branches)
     X_raw = df_all[load_branches].copy()
@@ -727,6 +744,7 @@ def main() -> None:
     proba = clf.predict_proba(X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
 
+    log_message("Building ABCD regions")
     region_score_masks = []
     union_score_mask = np.zeros(len(X_raw), dtype=bool)
     membership = np.zeros(len(X_raw), dtype=int)
@@ -785,6 +803,7 @@ def main() -> None:
         f"{pred_qcd_union_sigma:.6g}, scale={qcd_scale:.6g} ± {qcd_scale_sigma:.6g}"
     )
 
+    log_message(f"Filling signal-region yields: n={len(region_labels)}")
     sample_names = sorted({sample for sample in sample_labels})
     sample_yields = {sample: np.zeros(len(region_labels), dtype=float) for sample in sample_names}
     sample_vars = {sample: np.zeros(len(region_labels), dtype=float) for sample in sample_names}
@@ -852,6 +871,7 @@ def main() -> None:
             abcd_group_vars[group_name][reg_idx] = float(np.sum(vals ** 2))
 
     root_path = os.path.join(OUTPUT_DIR, ROOT_FILE_NAME)
+    log_message("Writing summary ROOT file")
     write_root_output(
         root_path,
         edges,
@@ -869,6 +889,7 @@ def main() -> None:
         true_total_vars,
     )
 
+    log_message("Plotting ABCD summary")
     plot_abcd_region_counts(
         ["A union", "B", "C", "D"],
         abcd_group_vals,

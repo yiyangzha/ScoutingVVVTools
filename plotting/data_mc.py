@@ -187,7 +187,7 @@ def _load_tree(files, tree_name, branches):
     return pd.concat(parts, ignore_index=True)
 
 
-# -------------------- Threshold + clip filtering --------------------
+# -------------------- Threshold and clip filtering --------------------
 def _mask_from_cond(col, cond):
     idx = col.index
     if cond is None:
@@ -340,7 +340,7 @@ def _process_tree(tree_name):
     class_groups     = bdt_cfg["class_groups"]
     class_names      = list(class_groups.keys())
 
-    # Resolve input_root relative to the BDT script dir (train.py convention).
+    # Resolve input_root relative to the BDT script directory used by train.py.
     bdt_root_dir   = _bdt_root_for_tree(tree_name)
     bdt_script_dir = os.path.dirname(bdt_root_dir)
     input_root     = _resolve(bdt_cfg["input_root"], bdt_script_dir)
@@ -365,7 +365,7 @@ def _process_tree(tree_name):
     os.makedirs(out_dir, exist_ok=True)
     log_message(f"Output directory: {out_dir}")
 
-    # ---- Load MC per class ----
+    # Load the MC events for each class.
     log_message(f"Loading MC samples for {len(class_names)} classes")
     class_dfs = {}
     for cls_name, samples in class_groups.items():
@@ -397,7 +397,7 @@ def _process_tree(tree_name):
         else:
             log_message(f"  [WARN] class '{cls_name}' has no usable events")
 
-    # ---- Load data ----
+    # Load the data events.
     log_message(f"Loading data samples: n={len(DATA_SAMPLES)}")
     data_dfs = []
     for sname in DATA_SAMPLES:
@@ -417,7 +417,7 @@ def _process_tree(tree_name):
     else:
         log_message(f"Loaded data events: {len(data_df)}")
 
-    # ---- Apply threshold then clip (weights already fixed) ----
+    # Apply thresholds and then clip ranges; the weights stay fixed.
     def _prepare(df):
         if df is None or len(df) == 0:
             return df
@@ -441,7 +441,7 @@ def _process_tree(tree_name):
         else:
             log_message(f"  data after filtering: events={len(data_df)}")
 
-    # ---- Plot per branch ----
+    # Plot each requested branch.
     log_message(f"Plotting branches: total={len(branches_to_plot)}")
     palette = plt.rcParams["axes.prop_cycle"].by_key().get(
         "color", ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
@@ -498,7 +498,7 @@ def _process_tree(tree_name):
             sharex=True,
         )
 
-        # MC stack, low yield first
+        # Draw the stacked MC histograms from low to high total yield.
         order = np.argsort([mc_yields[c] for c in class_names])
         bottom = np.zeros(bins)
         for idx in order:
@@ -512,7 +512,7 @@ def _process_tree(tree_name):
             bottom += h
         ax.margins(x=0)
 
-        # MC uncertainty band
+        # Draw the total MC uncertainty band.
         mc_sigma = np.sqrt(np.maximum(mc_total_w2, 0.0))
         lower = np.clip(mc_total_v - mc_sigma, 1e-12, None)
         upper = np.clip(mc_total_v + mc_sigma, 1e-12, None)
@@ -521,7 +521,7 @@ def _process_tree(tree_name):
             facecolor="none", edgecolor="gray", hatch="///", linewidth=0,
         )
 
-        # Data points
+        # Draw the data points.
         data_sigma = np.sqrt(np.maximum(data_w2, 0.0))
         y_plot = np.where(data_v > 0, data_v, np.nan)
         ax.errorbar(
@@ -530,7 +530,7 @@ def _process_tree(tree_name):
             elinewidth=1.5, capsize=0, label="Data",
         )
 
-        # Axes
+        # Configure the axes.
         if logx:
             ax.set_xscale("log")
             axr.set_xscale("log")
@@ -562,7 +562,7 @@ def _process_tree(tree_name):
             labels.append(labels.pop(i))
         ax.legend(handles, labels, loc="best", fontsize=17, frameon=False, ncol=2)
 
-        # Ratio panel: Data / MC
+        # Draw the Data/MC ratio panel.
         ratio, r_err = _ratio_data_over_mc(data_v, data_w2, mc_total_v, mc_total_w2)
         axr.errorbar(
             bin_centers, ratio, yerr=r_err,

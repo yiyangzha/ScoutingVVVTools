@@ -19,7 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
-// User config
+// Configuration
 static const size_t MAX_FILES_PER_SAMPLE = 1000;
 
 static const int    NBINS = 50000;
@@ -195,7 +195,7 @@ static bool process_one_sample(const SampleInfo& sample, SampleResult& out) {
 
   std::cout << "  [STEP] collect files..." << std::endl;
   size_t MAX_FILES_PER_SAMPLE_tmp = MAX_FILES_PER_SAMPLE;
-  // Use 10% of TTbar files.
+  // Use 10% of the TTbar files.
   if (sample.label == "TTbar") {
     MAX_FILES_PER_SAMPLE_tmp = std::max<size_t>(1, MAX_FILES_PER_SAMPLE_tmp / 10);
     std::cout << "         (using " << MAX_FILES_PER_SAMPLE_tmp << " files for TTbar sample)" << std::endl;

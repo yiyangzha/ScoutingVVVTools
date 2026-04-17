@@ -21,7 +21,7 @@
 
 using namespace std;
 
-// Valid types: "vh", "vvv", "www", "wwz", "2024*"
+// Valid types: "vh", "vvv", "www", "wwz", and "2024*".
 static const string TYPE = "2024F";
 static const int N_DATA_FILES = 200;
 
@@ -252,7 +252,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
         chain.Add(inputFiles[i].c_str());
     }
 
-    // ---- Only enable needed branches ----
+    // Enable only the branches used below.
     chain.SetBranchStatus("*", 0);
 
     chain.SetBranchStatus("nScoutingFatPFJetRecluster", 1);
@@ -271,7 +271,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
         chain.SetBranchStatus("DST_PFScouting_ZeroBias", 1);
     }
 
-    // ---- Branch variables ----
+    // Branch buffers.
     Int_t nFat = 0;
     Int_t nAK4 = 0;
     Bool_t DST_PFScouting_JetHT = false;
@@ -301,7 +301,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
         chain.SetBranchAddress("DST_PFScouting_ZeroBias", &DST_PFScouting_ZeroBias);
     }
 
-    // ---- Histograms ----
+    // Histograms.
     const int nbin_eff = 40;
     const double x1_min = 0.0, x1_max = 2500.0;
     const double x2_min = 0.0, x2_max = 4000.0;
@@ -342,7 +342,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
         const int nFatUse = std::max(0, std::min((int)nFat, MAX_FAT));
         const int nAK4Use = std::max(0, std::min((int)nAK4, MAX_AK4));
 
-        // ---- 2024 data mode: first require ZeroBias != 0 ----
+        // In 2024 data mode, require ZeroBias before anything else.
         if (isData2024) {
             if (!DST_PFScouting_ZeroBias) continue;
         }
@@ -352,7 +352,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
             nAK4Use, ak4_pt, ak4_eta, ak4_phi
         );
 
-        // ---- Efficiency histograms ----
+        // Fill the efficiency histograms.
         {
             double x = clampToHistRange(vars.sumFatPt, h_den_sumFat);
             h_den_sumFat->Fill(x);
@@ -377,7 +377,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
             }
         }
 
-        // ---- Distribution selections ----
+        // Fill the distribution histograms.
         if (nFat == 2) {
             bool fat2_pass = allFatJetsPassPtEta(2, fat_pt, fat_eta, 180.0, 2.4);
             bool ak4_pass = (vars.nNonOverlapAK4 >= 2);
@@ -401,12 +401,12 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
     }
     cout << endl;
 
-    // ---- Build efficiency histograms from numerator / denominator ----
+    // Build the efficiency histograms from the numerator and denominator.
     TH1D* h_eff_sumFat = buildEfficiencyHistogram(h_num_sumFat, h_den_sumFat, "h_eff_sumFat");
     TH1D* h_eff_sumFatPlusAK4 = buildEfficiencyHistogram(h_num_sumFatPlusAK4, h_den_sumFatPlusAK4, "h_eff_sumFatPlusAK4");
     TH1D* h_eff_AK4HT = buildEfficiencyHistogram(h_num_AK4HT, h_den_AK4HT, "h_eff_AK4HT");
 
-    // ---- Save ROOT file ----
+    // Save the ROOT output.
     string outRoot = outDir + "/jetht_efficiency_and_distributions_" + type;
     if (isData2024 && nDataFiles > 0) {
         outRoot += "_" + to_string(nDataFiles) + "files";
@@ -435,7 +435,7 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
 
     fout.Close();
 
-    // ---- Save PDFs ----
+    // Save the PDF plots.
     drawEfficiencyHistogram(
         h_eff_sumFat,
         outDir + "/eff_AK8_HT_" + type + ".pdf",

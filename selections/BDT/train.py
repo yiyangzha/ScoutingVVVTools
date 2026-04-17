@@ -33,7 +33,7 @@ def log_warning(message):
 def log_info(message):
     log_message(f"Info: {message}")
 
-# ── Config loading ─────────────────────────────────────────────────────────────
+# -------------------- Config loading --------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _load_json(path):
@@ -53,7 +53,7 @@ if not os.path.isabs(_sample_cfg_path):
     _sample_cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _sample_cfg_path))
 sample_cfg = _load_json(_sample_cfg_path)
 
-# ── Constants from config ──────────────────────────────────────────────────────
+# -------------------- Constants --------------------
 RANDOM_STATE       = cfg.get("random_state", 42)
 ENTRIES_PER_SAMPLE = cfg.get("entries_per_sample", 1_000_000)
 TRAIN_FRACTION     = float(cfg.get("train_fraction", 0.7))
@@ -68,7 +68,7 @@ CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
 if not 0.0 < TRAIN_FRACTION < 1.0:
     raise ValueError(f"train_fraction must be in (0, 1), got {TRAIN_FRACTION}")
 
-# ── Sample registry from sample.json ──────────────────────────────────────────
+# -------------------- Sample registry --------------------
 SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
@@ -79,9 +79,9 @@ for _rule in sample_cfg["sample"]:
         "sample_ID":   _rule["sample_ID"],
     }
 
-# ── Class groupings from config ────────────────────────────────────────────────
+# -------------------- Class groups --------------------
 CLASS_GROUPS  = cfg["class_groups"]            # {"VVV": [...], "VH": [...], ...}
-CLASS_NAMES   = list(CLASS_GROUPS.keys())      # ordered class name list
+CLASS_NAMES   = list(CLASS_GROUPS.keys())      # Ordered class names.
 NUM_CLASSES   = len(CLASS_NAMES)
 
 CLASS_TYPES = {}
@@ -101,18 +101,18 @@ for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
     for _s in _members:
         SAMPLE_TO_CLASS[_s] = _idx
 
-# Resolve training sample list
+# Resolve the training sample list.
 TRAINING_SAMPLES = [r["name"] for r in sample_cfg["sample"] if r["name"] in SAMPLE_TO_CLASS]
 
 
-# ── File discovery ─────────────────────────────────────────────────────────────
+# -------------------- File discovery --------------------
 def _sample_group(sample_name):
     return "signal" if SAMPLE_INFO[sample_name]["is_signal"] else "bkg"
 
 def _input_files(sample_name):
     sg   = _sample_group(sample_name)
     base = INPUT_PATTERN.format(input_root=INPUT_ROOT, sample_group=sg, sample=sample_name)
-    stem = base[:-5]  # strip .root
+    stem = base[:-5]  # Drop the ".root" suffix.
     return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
 
 
@@ -131,7 +131,7 @@ def _figure_path(output_root, stem):
     return os.path.join(output_root, f"{stem}.pdf")
 
 
-# ── Data loading ───────────────────────────────────────────────────────────────
+# -------------------- Data loading --------------------
 def _report_sample_weights(df_all, stage_label):
     log_message(f"{stage_label}:")
     for cls_idx, cls_name in enumerate(CLASS_NAMES):
@@ -465,7 +465,7 @@ def write_selection_copy(output_root):
     log_message(f"Wrote selection file: {selection_copy_path}")
 
 
-# ── Event filtering ────────────────────────────────────────────────────────────
+# -------------------- Event filtering --------------------
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
              sample_labels=None):
@@ -539,13 +539,13 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
     return X_out, y_out, w_out, np.asarray(sample_labels)[mask.values].copy()
 
 
-# ── Feature standardisation ────────────────────────────────────────────────────
+# -------------------- Feature standardization --------------------
 def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd.DataFrame:
     """Clip values and apply log transform in-place; sentinel values (< -990) are untouched."""
     log_set = set(log_transform)
     for col in X.columns:
         arr  = X[col].values.copy()
-        mask = arr < -990   # sentinel
+        mask = arr < -990   # Sentinel placeholder values.
         valid = ~mask
         if not valid.any():
             continue
@@ -567,7 +567,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
-# ── CvM flatness loss helpers ──────────────────────────────────────────────────
+# -------------------- CvM helpers --------------------
 def _weighted_ecdf_positions(y: np.ndarray, w: np.ndarray) -> np.ndarray:
     y = np.asarray(y, dtype=float).ravel()
     w = np.asarray(w, dtype=float).ravel()
@@ -642,7 +642,7 @@ def _cvm_flatness_neg_grad_wrt_y(y, groups, w, power=2.0):
     return neg_grad
 
 
-# ── Diagnostics ───────────────────────────────────────────────────────────────
+# -------------------- Diagnostics --------------------
 def check_weights(w, name="w"):
     w = np.asarray(w, dtype=float).ravel()
     finite = np.isfinite(w)
@@ -660,7 +660,7 @@ def check_weights(w, name="w"):
     )
 
 
-# ── Decorrelation helpers ──────────────────────────────────────────────────────
+# -------------------- Decorrelation helpers --------------------
 def _resolve_decor_indices(X, decorrelate_feature_names):
     if not decorrelate_feature_names:
         return []
@@ -684,7 +684,7 @@ def _resolve_decor_indices(X, decorrelate_feature_names):
     return sorted(set(idx))
 
 
-# ── Custom multiclass objective with CvM decorrelation ────────────────────────
+# -------------------- Custom objective --------------------
 def _make_multiclass_objective_with_decor(num_class, Z_train, w_train, lam):
     Z_train = np.asarray(Z_train, dtype=float)
     w_train = np.asarray(w_train, dtype=float).ravel()
@@ -841,7 +841,7 @@ def _make_multiclass_total_loss_metric(num_class, Z_train, Z_test, w_train, w_te
     return feval
 
 
-# ── Training ───────────────────────────────────────────────────────────────────
+# -------------------- Training --------------------
 def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                       model_name, tree_name, decorrelate_feature_names=None):
     """Train a multiclass BDT with optional CvM decorrelation.
@@ -880,7 +880,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
 
     log_message(f"Training arrays: X_train={X_train.shape}, Z_train={Z_train.shape}")
 
-    # Hyperparameters from config
+    # Read hyperparameters from the config.
     hp = cfg.get(tree_name, {})
     n_threads = max(1, min(16, os.cpu_count() or 1))
     common_kwargs = dict(
@@ -935,7 +935,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     return clf, (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
 
-# ── Plotting ───────────────────────────────────────────────────────────────────
+# -------------------- Plotting --------------------
 def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=None):
     """ROC curves, feature importance, score distributions, loss curve, decorrelation checks."""
     X_train_full, X_test_full, y_train, y_test, w_train, w_test = splits

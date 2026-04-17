@@ -14,14 +14,14 @@ plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
 plt.style.use(hep.style.CMS)
 
-# _SCRIPT_DIR is selections/signal_region/.
-# Trained BDT config copies still store paths relative to selections/BDT/, where train.py lives.
+# _SCRIPT_DIR points to selections/signal_region/.
+# The copied BDT configs still store paths relative to selections/BDT/, where train.py runs.
 _SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
 _SELECTIONS_DIR = os.path.dirname(_SCRIPT_DIR)
 _BDT_DIR        = os.path.join(_SELECTIONS_DIR, "BDT")
 
 
-# ── Logging ────────────────────────────────────────────────────────────────────
+# -------------------- Logging --------------------
 def log_message(message):
     print(message, flush=True)
 
@@ -36,7 +36,7 @@ def _load_json(path):
         return json.load(fh)
 
 
-# ── Load config.json ─────────────────────────────────────────────────────────────
+# -------------------- Config loading --------------------
 _scan_cfg_path = os.environ.get("SCAN_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.json"))
 if not os.path.isabs(_scan_cfg_path):
     _scan_cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _scan_cfg_path))
@@ -60,13 +60,13 @@ if not os.path.isabs(OUTPUT_DIR):
     OUTPUT_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, OUTPUT_DIR))
 
 
-# ── Load configs saved by train.py ────────────────────────────────────────────
+# -------------------- BDT config copies --------------------
 cfg       = _load_json(os.path.join(BDT_ROOT, "config.json"))
 br_cfg    = _load_json(os.path.join(BDT_ROOT, "branch.json"))
 sel_cfg   = _load_json(os.path.join(BDT_ROOT, "selection.json"))
 test_meta = _load_json(os.path.join(BDT_ROOT, "test_ranges.json"))
 
-# sample_config paths in config.json are relative to _BDT_DIR (where train.py lives)
+# sample_config paths in config.json are relative to _BDT_DIR, where train.py runs.
 _sample_cfg_path = cfg["sample_config"]
 if not os.path.isabs(_sample_cfg_path):
     _sample_cfg_path = os.path.normpath(os.path.join(_BDT_DIR, _sample_cfg_path))
@@ -76,7 +76,7 @@ TREE_NAME     = test_meta["tree_name"]
 MODEL_PATTERN = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
 
 
-# ── Sample registry ────────────────────────────────────────────────────────────
+# -------------------- Sample registry --------------------
 SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
@@ -106,7 +106,7 @@ for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
         SAMPLE_TO_CLASS[_s] = _idx
 
 
-# ── Data loading ───────────────────────────────────────────────────────────────
+# -------------------- Test data loading --------------------
 def load_test_data(branches):
     """Load test events from test_ranges.json with physics-normalised weights.
 
@@ -168,8 +168,8 @@ def load_test_data(branches):
                 f"  {sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
             )
         else:
-            # Normalise sample total weight to lumi * xsec * total_tree_entries / raw_entries.
-            # This represents the expected event count after tree-level selection at the given lumi.
+            # Normalize the sample total weight to lumi * xsec * total_tree_entries / raw_entries.
+            # This is the expected yield after the tree-level selection at the target lumi.
             target_total  = LUMI * xsec * total_entries / raw_entries
             df["weight"]  = target_total / n_loaded
 
@@ -192,7 +192,7 @@ def load_test_data(branches):
     return df_all
 
 
-# ── Feature standardisation (identical to train.py) ───────────────────────────
+# -------------------- Feature standardization --------------------
 def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd.DataFrame:
     log_set = set(log_transform)
     for col in X.columns:
@@ -216,7 +216,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
-# ── Threshold filtering (identical to train.py) ───────────────────────────────
+# -------------------- Threshold filtering --------------------
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
              sample_labels=None):
@@ -290,7 +290,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
     return X_out, y_out, w_out, np.asarray(sample_labels)[mask.values].copy()
 
 
-# ── Plotting helpers ───────────────────────────────────────────────────────────
+# -------------------- Plotting helpers --------------------
 def _slugify(text):
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
@@ -402,7 +402,7 @@ def plot_signal_regions_2d(result, proba, y, w):
     _savefig("sr_regions_2d")
 
 
-# ── Signal region scan ────────────────────────────────────────────────────────
+# -------------------- Signal-region scan --------------------
 def find_signal_regions(proba, y, w):
     """Find N non-overlapping signal regions maximising Z = sqrt(2[(S+B)ln(1+S/B) - S]).
 
@@ -445,7 +445,7 @@ def find_signal_regions(proba, y, w):
         f = (S + B) * np.log(1.0 + S / B) - S
         return float(np.sqrt(2.0 * max(0.0, f)))
 
-    # 1D tail scan (for efficiency references only)
+    # One-dimensional tail scan for reference efficiencies only.
     p_exp = 0.005
     thr_1d = np.clip(np.linspace(0.0, 1.0, max(2, N_THRESHOLDS)) ** p_exp, 0.0, 1.0)
     T = len(thr_1d)
@@ -504,7 +504,7 @@ def find_signal_regions(proba, y, w):
         ]
 
         for r in range(ROUNDS):
-            # Build per-axis grids for this refinement round
+            # Build the per-axis grids for this refinement round.
             base_lists = []
             val2idx    = []
             highs_idx  = []
@@ -578,7 +578,7 @@ def find_signal_regions(proba, y, w):
                         "lows": tuple(lows_vals), "highs": tuple(highs_vals),
                     }
 
-            # Pick top-3 thresholds per axis for next-round refinement
+            # Keep the top three thresholds per axis for the next round.
             accum_sorted = sorted(accum_map.values(), key=lambda d: d["Z"], reverse=True)
             pick_per_dim = [[] for _ in range(D)]
             seen_per_dim = [set() for _ in range(D)]
@@ -605,7 +605,7 @@ def find_signal_regions(proba, y, w):
                 )
             cand_vals = new_cands
 
-        # Select best valid bin from accumulated candidates
+        # Select the best valid bin from the accumulated candidates.
         accum_sorted = sorted(accum_map.values(), key=lambda d: d["Z"], reverse=True)
         chosen = None
         for item in accum_sorted:
@@ -623,7 +623,7 @@ def find_signal_regions(proba, y, w):
         thr_low_vec  = list(map(float, chosen["lows"]))
         thr_high_vec = list(map(float, chosen["highs"]))
 
-        # Exact event-level statistics for the chosen bin
+        # Compute exact event-level statistics for the chosen bin.
         def _mask_dim(dim_, lo_, hi_):
             s_ = score_axes[dim_]
             return (s_ >= lo_) & (s_ < hi_) if hi_ < 1.0 - 1e-12 else s_ >= lo_
@@ -644,7 +644,7 @@ def find_signal_regions(proba, y, w):
 
         selected_bins.append((thr_low_vec[:], thr_high_vec[:]))
 
-        # Per-class breakdown (each class treated as "signal vs all others in bin")
+        # Break down the chosen bin by class, treating each class as signal in turn.
         W_bin  = S_bin + B_bin
         w2_bin = sS_bin ** 2 + sB_bin ** 2
 
@@ -711,7 +711,7 @@ def find_signal_regions(proba, y, w):
             f"S={S_bin:.4g}±{sS_bin:.4g}, B={B_bin:.4g}±{sB_bin:.4g}"
         )
 
-    # Combined significance: Z_comb = sqrt(sum Z_i^2)
+    # Combine the per-bin significances as Z_comb = sqrt(sum Z_i^2).
     if top_bins:
         S_comb  = float(sum(b["S"]       for b in top_bins))
         B_comb  = float(sum(b["B"]       for b in top_bins))
@@ -738,7 +738,7 @@ def find_signal_regions(proba, y, w):
     }
 
 
-# ── Result printing ────────────────────────────────────────────────────────────
+# -------------------- Result printing --------------------
 def print_results(result):
     top_bins = result["top_bins"]
 
@@ -796,7 +796,7 @@ def print_results(result):
     )
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# -------------------- Main --------------------
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     log_message(
@@ -812,7 +812,7 @@ def main():
                    for k, v in sel.get("thresholds", {}).items()}
     decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
 
-    # Load test data; physics weights are assigned here and do not change afterwards
+    # Load the test data once; the physics weights stay fixed afterwards.
     df_all = load_test_data(branches)
     X             = df_all[branches].copy()
     y             = df_all["class_idx"].values.astype(int)
@@ -821,18 +821,18 @@ def main():
     del df_all
     gc.collect()
 
-    # Apply threshold filtering — weights unchanged by this step
+    # Apply threshold filtering without changing the fixed weights.
     log_message("Applying thresholds")
     X, y, w, sample_labels = filter_X(
         X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
     )
     log_message(f"After filtering: {len(X)} events")
 
-    # Apply feature standardisation (same as train.py)
+    # Apply the same feature standardization used in train.py.
     log_message("Standardising features")
     X = standardize_X(X, clip_ranges, log_tf)
 
-    # Remove decorrelated features before model input (same exclusion as during training)
+    # Drop the decorrelated features before model inference, exactly as in training.
     all_feature_names = list(X.columns)
     if decorrelate:
         name_to_idx = {c: i for i, c in enumerate(all_feature_names)}
@@ -843,7 +843,7 @@ def main():
     else:
         X_model = X
 
-    # Load trained model
+    # Load the trained model.
     model_base = MODEL_PATTERN.format(output_root=BDT_ROOT, tree_name=TREE_NAME)
     if os.path.exists(model_base + ".json"):
         model_path = model_base + ".json"
@@ -858,24 +858,24 @@ def main():
     else:
         raise FileNotFoundError(f"No model found at {model_base}(.json/.pkl)")
 
-    # BDT prediction
+    # Run the BDT prediction.
     log_message("Running BDT prediction")
     proba = clf.predict_proba(X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
 
-    # Plot weighted score distributions
+    # Plot the weighted score distributions.
     log_message("Plotting score distributions")
     plot_score_distributions(proba, y, w)
 
-    # Scan for N non-overlapping signal regions
+    # Scan for N non-overlapping signal regions.
     log_message(f"Scanning for {N_SIGNAL_REGIONS} signal regions")
     result = find_signal_regions(proba, y, w)
 
-    # Plot 2D signal regions (first two axes, if D >= 2)
+    # Plot the first two scan axes when D >= 2.
     log_message("Plotting signal regions")
     plot_signal_regions_2d(result, proba, y, w)
 
-    # Print text summary
+    # Print the text summary.
     print_results(result)
     write_signal_region_csv(result)
 

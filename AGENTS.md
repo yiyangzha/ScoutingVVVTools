@@ -114,7 +114,7 @@ The analysis runs in this order:
 3. **Convert** — apply physics selections, build BDT training trees (`selections/convert/`)
 4. **B-veto** — derive AK4 b-jet veto working points (`selections/b_veto/`)
 5. **BDT training** — train `fat2`/`fat3` classifiers (`selections/BDT/`)
-6. **Background estimation** — QCD ABCD method and data/MC comparisons (`background_estimation/`)
+6. **Background estimation** — QCD ABCD validation on the MC test split (`background_estimation/`)
 7. **Data/MC plotting** — compare distributions of `fat2`/`fat3` variables in data vs MC (`plotting/`)
 8. **Systematics** — trigger efficiency studies (`systematics/`)
 
@@ -251,15 +251,16 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 
 ## `run.sh` Behavior
 
-[run.sh](run.sh) supports five modes:
+[run.sh](run.sh) supports six modes:
 
 - `mode=0` compiles and runs `selections/convert/convert_branch.C`.
 - `mode=1` compiles and runs `selections/weight/weight.C`.
 - `mode=2` runs `selections/BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
 - `mode=3` runs `selections/signal_region/signal_region.py` with `SCAN_CONFIG_PATH` pointing to the chosen config file.
 - `mode=4` runs `plotting/data_mc.py` with `PLOT_CONFIG_PATH` pointing to the chosen config file.
+- `mode=5` runs `background_estimation/qcd_est.py` with `QCD_EST_CONFIG_PATH` pointing to the chosen config file.
 
-For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, `selections/signal_region/log.txt`, or `plotting/log.txt` depending on mode. All five modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2`, `mode=3`, and `mode=4` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. Inside `selections/BDT/train.py`, `selections/signal_region/signal_region.py`, and `plotting/data_mc.py`, the script output follows the same concise `Running ...`, `Wrote ...`, and `Runtime error: ...` style. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
+For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, `selections/signal_region/log.txt`, `plotting/log.txt`, or `background_estimation/log.txt` depending on mode. All six modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2`, `mode=3`, `mode=4`, and `mode=5` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. Inside `selections/BDT/train.py`, `selections/signal_region/signal_region.py`, `plotting/data_mc.py`, and `background_estimation/qcd_est.py`, the script output follows the same concise stage-by-stage `Running ...`, `Wrote ...`, and `Runtime error: ...` style. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 
