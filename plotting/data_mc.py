@@ -54,7 +54,6 @@ branch_overrides_cfg = _load_json(os.path.join(_SCRIPT_DIR, "branch.json"))
 
 SUBMIT_TREES     = plot_cfg.get("submit_trees", ["fat2", "fat3"])
 DATA_SAMPLES     = list(plot_cfg.get("data_samples", []))
-SKIP_BRANCHES    = set(plot_cfg.get("skip_branches", []))
 DEFAULT_BINS     = int(plot_cfg.get("default_bins", 10))
 OUTPUT_ROOT_PATT = plot_cfg.get("output_root", "./pre-selection/{tree_name}")
 BDT_ROOT_PATT    = plot_cfg["bdt_root"]
@@ -84,6 +83,20 @@ LUMI_TOTAL = _compute_lumi_total()
 
 
 # -------------------- Branch discovery --------------------
+def _tree_plot_cfg(tree_name):
+    if not isinstance(branch_overrides_cfg, dict):
+        return {}
+    tree_cfg = branch_overrides_cfg.get(tree_name, {})
+    return tree_cfg if isinstance(tree_cfg, dict) else {}
+
+
+def _skip_branches_for_tree(tree_name):
+    skip = _tree_plot_cfg(tree_name).get("skip_branches", [])
+    if not isinstance(skip, list):
+        raise TypeError(f"plotting/branch.json:{tree_name}.skip_branches must be a list")
+    return set(skip)
+
+
 def _tree_output_entry(tree_name):
     for tree in convert_branch_cfg["output"]["trees"]:
         if tree["name"] == tree_name:
@@ -94,6 +107,7 @@ def _tree_output_entry(tree_name):
 def _plot_branches_for_tree(tree_name):
     """Return branch names to plot (onlyMC=false, not skipped, slots expanded)."""
     tree    = _tree_output_entry(tree_name)
+    skip    = _skip_branches_for_tree(tree_name)
     scalars = tree.get("scalars", {})
     entries = list(scalars.get("regular", [])) + list(scalars.get("extrema", []))
     out, seen = [], set()
@@ -105,12 +119,12 @@ def _plot_branches_for_tree(tree_name):
         if slots:
             for i in range(int(slots)):
                 n = f"{name}_{i + 1}"
-                if n in SKIP_BRANCHES or n in seen:
+                if n in skip or n in seen:
                     continue
                 seen.add(n)
                 out.append(n)
         else:
-            if name in SKIP_BRANCHES or name in seen:
+            if name in skip or name in seen:
                 continue
             seen.add(name)
             out.append(name)
@@ -241,8 +255,13 @@ def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded):
 
 # -------------------- Binning --------------------
 def _branch_override(tree_name, branch):
-    tree_ov = branch_overrides_cfg.get(tree_name, {}) if isinstance(branch_overrides_cfg, dict) else {}
-    return (tree_ov.get(branch) or {}) if isinstance(tree_ov, dict) else {}
+    tree_ov = _tree_plot_cfg(tree_name)
+    branches = tree_ov.get("branches", {})
+    if isinstance(branches, dict) and branch in branches:
+        override = branches.get(branch, {})
+        return override if isinstance(override, dict) else {}
+    override = tree_ov.get(branch, {})
+    return override if isinstance(override, dict) else {}
 
 
 def _auto_range(arrs, logx):
@@ -315,8 +334,9 @@ def _ratio_data_over_mc(data_vals, data_vars, mc_vals, mc_vars):
 
 # -------------------- Per-tree processing --------------------
 def _process_tree(tree_name):
-    log_message(f"Running data_mc.py for tree = {tree_name}")
+    log_message(f"Running data_mc.py: tree={tree_name}")
 
+    log_message("Loading BDT config copies")
     bdt_cfg, bdt_sel = _bdt_configs_for_tree(tree_name)
     class_groups     = bdt_cfg["class_groups"]
     class_names      = list(class_groups.keys())
@@ -337,13 +357,20 @@ def _process_tree(tree_name):
     need_load        = sorted(set(branches_to_plot)
                               | set(thresholds.keys())
                               | set(clip_ranges.keys()))
+    log_message(
+        f"Resolved plotting config: branches={len(branches_to_plot)}, "
+        f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}"
+    )
 
     out_dir = _resolve(OUTPUT_ROOT_PATT.format(tree_name=tree_name), _SCRIPT_DIR)
     os.makedirs(out_dir, exist_ok=True)
+    log_message(f"Output directory: {out_dir}")
 
     # ---- Load MC per class ----
+    log_message(f"Loading MC samples for {len(class_names)} classes")
     class_dfs = {}
     for cls_name, samples in class_groups.items():
+        log_message(f"  Loading class '{cls_name}' with {len(samples)} samples")
         dfs = []
         for sname in samples:
             if sname not in SAMPLE_INFO:
@@ -367,8 +394,12 @@ def _process_tree(tree_name):
             )
         if dfs:
             class_dfs[cls_name] = pd.concat(dfs, ignore_index=True)
+            log_message(f"  Loaded class '{cls_name}': events={len(class_dfs[cls_name])}")
+        else:
+            log_message(f"  [WARN] class '{cls_name}' has no usable events")
 
     # ---- Load data ----
+    log_message(f"Loading data samples: n={len(DATA_SAMPLES)}")
     data_dfs = []
     for sname in DATA_SAMPLES:
         files = _input_files(sname, input_root, input_pattern)
@@ -382,6 +413,10 @@ def _process_tree(tree_name):
         data_dfs.append(df)
         log_message(f"  data {sname}: loaded={len(df)}")
     data_df = pd.concat(data_dfs, ignore_index=True) if data_dfs else None
+    if data_df is None:
+        log_message("Loaded data events: 0")
+    else:
+        log_message(f"Loaded data events: {len(data_df)}")
 
     # ---- Apply threshold then clip (weights already fixed) ----
     def _prepare(df):
@@ -391,22 +426,31 @@ def _process_tree(tree_name):
         df = _apply_clip(df, clip_ranges)
         return df
 
+    log_message("Applying thresholds and clip ranges")
     for cls in list(class_dfs.keys()):
         class_dfs[cls] = _prepare(class_dfs[cls])
         if class_dfs[cls] is None or len(class_dfs[cls]) == 0:
             class_dfs.pop(cls)
+            log_message(f"  [WARN] class '{cls}' became empty after filtering")
+        else:
+            log_message(f"  class '{cls}' after filtering: events={len(class_dfs[cls])}")
     if data_df is not None:
         data_df = _prepare(data_df)
         if data_df is None or len(data_df) == 0:
             data_df = None
+            log_message("  data after filtering: 0 events")
+        else:
+            log_message(f"  data after filtering: events={len(data_df)}")
 
     # ---- Plot per branch ----
+    log_message(f"Plotting branches: total={len(branches_to_plot)}")
     palette = plt.rcParams["axes.prop_cycle"].by_key().get(
         "color", ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
     )
     color_map = {c: palette[i % len(palette)] for i, c in enumerate(class_names)}
 
-    for branch in branches_to_plot:
+    for idx, branch in enumerate(branches_to_plot, start=1):
+        log_message(f"Plotting branch {idx}/{len(branches_to_plot)}: {branch}")
         arrs = []
         for cls in class_names:
             if cls in class_dfs and branch in class_dfs[cls].columns:
@@ -550,9 +594,14 @@ def _process_tree(tree_name):
         fig.savefig(out_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
         log_message(f"Wrote plot file: {out_path}")
+    log_message(f"Finished data_mc.py for tree={tree_name}")
 
 
 def main():
+    log_message(
+        f"Running data_mc.py: trees={','.join(SUBMIT_TREES)}, "
+        f"bdt_root={BDT_ROOT_PATT}, output_root={OUTPUT_ROOT_PATT}"
+    )
     for tree_name in SUBMIT_TREES:
         _process_tree(tree_name)
 

@@ -5,6 +5,5 @@
   "bdt_root": "../selections/BDT/{tree_name}",
   "output_root": "./pre-selection/{tree_name}",
   "data_samples": [],
-  "skip_branches": ["sample_ID", "is_MC", "is_signal"],
   "default_bins": 10
 }

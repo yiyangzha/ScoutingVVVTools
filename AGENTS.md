@@ -17,6 +17,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 - State assumptions; ask only when blocked.
 - Briefly narrate multi-step tool usage.
 - Finish the full plan once started.
+- If anything in the user's request is unclear, surprising, contradictory, or looks possibly wrong, stop and ask for clarification before modifying the code. Only proceed once the user has confirmed.
 
 ## 1. Non-Destructive File Handling
 
@@ -93,15 +94,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
+
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Overview
 
 This is a CMS physics analysis toolkit for a VVV (triple vector boson) scouting search using Run 3 data. The workflow processes CMS NanoAOD-style ROOT files from DAS, applies selections, trains BDT models, and estimates backgrounds.
 
 **Dependencies:** ROOT (with `root-config`), C++17, Python 3, OpenMP (optional), XRootD for remote files.
-
-## Repository Maintenance
-
-- Whenever you modify code or add a new repository-wide requirement, update this `AGENTS.md` to keep the project description and workflow notes in sync.
 
 ## Pipeline Overview
 
@@ -113,7 +115,15 @@ The analysis runs in this order:
 4. **B-veto** — derive AK4 b-jet veto working points (`selections/b_veto/`)
 5. **BDT training** — train `fat2`/`fat3` classifiers (`selections/BDT/`)
 6. **Background estimation** — QCD ABCD method and data/MC comparisons (`background_estimation/`)
-7. **Systematics** — trigger efficiency studies (`systematics/`)
+7. **Data/MC plotting** — compare distributions of `fat2`/`fat3` variables in data vs MC (`plotting/`)
+8. **Systematics** — trigger efficiency studies (`systematics/`)
+
+## Convert_branch.C output layout (consumed downstream)
+
+`convert_branch.C` writes per-sample ROOT files laid out as
+`{output_root}/{sample_group}/{sample}.root`, where `sample_group ∈ {signal, bkg, data}` is derived from each sample's `is_MC`/`is_signal` flags. When a single output file exceeds `max_output_file_size_gb`, the writer rolls over into split files named `{sample}_1.root`, `{sample}_2.root`, …, alongside (or instead of) the base `{sample}.root`. Every ROOT file contains the `fat2` and `fat3` trees described by `selections/convert/branch.json`.
+
+Downstream scripts — `selections/BDT/train.py`, `selections/BDT/signal_region/signal_region.py`, and `plotting/data_mc.py` — all consume these files via their config's `input_root` + `input_pattern` (`{input_root}/{sample_group}/{sample}.root`). They discover every file for a given sample by globbing the base pattern **and** the `{sample}_*.root` split variant, then concatenate their trees in sorted order.
 
 ## Key Commands
 
@@ -141,12 +151,6 @@ The analysis runs in this order:
 ./run.sh 2 selections/BDT/config.json
 ```
 
-### Signal-region scan via run.sh
-```bash
-./run.sh 3
-./run.sh 3 selections/signal_region/config.json
-```
-
 ### Compile and run C++ tools manually
 ```bash
 # compile
@@ -157,38 +161,36 @@ CONVERT_CONFIG_PATH=selections/convert/config.json ./convert_branch www
 
 When `convert_branch.C` runs a sample, it first sums the configured `tree_name` entries across all ROOT files resolved from that sample's `path` entries, then writes that total back to the active sample config's `raw_entries` field for the running sample before processing events.
 
-### ROOT macro tools
-```bash
-root -l -q 'systematics/efficiency.C("2024F", 200)'
-root -l -q 'systematics/efficiency.C("vvv", 0)'
-root -l -q 'selections/b_veto/b_veto.C'
-```
-
-### Python tools
-```bash
-python3 background_estimation/qcd_est.py \
-  --base-dir /path/to/dataset \
-  --model /path/to/model.json \
-  --out-dir qcd_est
-
-python3 background_estimation/data_mc.py group_hists_out.root
-
-python3 selections/b_veto/ttbar_score.py
-
-python3 selections/signal_region/signal_region.py
-```
-
 ### BDT training
+
+BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. Each tree output directory also stores copies of `config.json`, `branch.json`, `selection.json`, and the fixed per-sample test split definition `test_ranges.json`.
+
+### Signal region optimisation
 ```bash
-jupyter lab  # open selections/BDT/train.ipynb
-# or run as script:
-python3 selections/BDT/train.py
+# Edit selections/BDT/signal_region/scan.json, then:
+python3 selections/BDT/signal_region/signal_region.py
+# Or with a custom scan config:
+SCAN_CONFIG_PATH=/path/to/scan.json python3 selections/BDT/signal_region/signal_region.py
 ```
 
-BDT outputs are written under the per-tree `output_root` configured in `selections/BDT/config.json` (for example `selections/BDT/fat2/`). Models are saved there together with concise PDF summaries such as `importance.pdf`, `loss.pdf`, `feature_corr.pdf`, `decor_corr_train.pdf`, and pairwise `roc_*` / `score_*` plots. Each tree output directory also stores a copy of the config as `config.json` and the fixed per-sample test split definition as `test_ranges.json`. When launched through `run.sh 2`, stdout/stderr are redirected to `selections/BDT/log.txt`, and both `run.sh` and `train.py` follow the same concise run-log style as the convert and weight programs: a `Running ...` header, thread information, `Wrote ...` output records, and `Runtime error: ...` on failure.
+`signal_region.py` reads all parameters from `selections/BDT/signal_region/scan.json`. It loads the saved model, branch, and selection configs from the `output_root` directory written by `train.py`, reloads the exact test split defined in `test_ranges.json`, applies physics-normalised weights (`lumi × σ × N_tree / N_raw`), and scans for N non-overlapping signal regions in the `NUM_CLASSES − 1` dimensional BDT score space that maximise `Z = sqrt(2[(S+B)ln(1+S/B) - S])`. Plots are saved as `sr_score_*.pdf` and `sr_regions_2d.pdf` in `output_root`.
 
-The signal-region scan script lives in `selections/signal_region/signal_region.py`. Its local `config.json` is resolved relative to `selections/signal_region/`, while the copied training `config.json` inside each BDT output directory still uses `selections/BDT/` as the anchor for paths such as `sample_config`.
-Its config keys are `lumi`, `n_signal_regions`, `bdt_root`, `n_thresholds`, `min_bkg_weight`, and `rounds`.
+### Data vs MC plotting
+```bash
+python3 plotting/data_mc.py
+# Or with a custom plotting config:
+PLOT_CONFIG_PATH=/path/to/config.json python3 plotting/data_mc.py
+```
+
+`plotting/data_mc.py` reads [plotting/config.json](plotting/config.json) and [plotting/branch.json](plotting/branch.json), then for every tree in `submit_trees`:
+- Loads the BDT-tree copies of `config.json` (to get `class_groups`, `input_root`, `input_pattern`) and `selection.json` (for `clip_ranges`, `thresholds`, `log_transform`) from the directory resolved by `bdt_root` with `{tree_name}` substituted. `input_root` is resolved relative to the BDT script directory (the parent of `bdt_root`), matching `train.py`'s convention.
+- Discovers plottable variables from `selections/convert/branch.json`'s output entries for the tree (only `onlyMC: false`, expanding `slots` into `{name}_1 … {name}_N`, minus that tree's `skip_branches` from `plotting/branch.json`).
+- For each MC sample listed in any `class_groups` entry, it globs the convert_branch ROOT files (`{sample}.root` + `{sample}_*.root`), sums the tree entries across those files, loads every event, and assigns a constant per-event weight so the sum equals `lumi_total × xsection × tree_entries_total / raw_entries`. `lumi_total` is the sum of `lumi` fields in `src/sample.json` for every sample name in `data_samples` (every listed data sample **must** already exist in `src/sample.json` with `is_MC: false`, otherwise data_mc.py errors out). The per-event weight is frozen before any cuts and is not recomputed later.
+- For each data sample in `data_samples`, loads every event with `weight = 1` per event.
+- Applies threshold cuts, then clip ranges, both from the BDT tree's `selection.json`. `log_transform` is **not** applied — it only influences the default `logx` flag for plotting.
+- Histograms each branch with the resolved binning: default `default_bins` bins, auto range from the union of MC + data, `logy` always on by default, `logx` on if the branch appears in `log_transform`. `logx` uses log-spaced bins and drops non-positive values; sentinel values (`< -990`) are excluded per-branch from that branch's histogram but the event stays in the sample for other branches. Per-branch overrides from `plotting/branch.json` (`bins`, `x_range`, `y_range`, `logx`, `logy`) take precedence.
+- Emits stage-by-stage progress messages in the same concise style as `signal_region.py`, including config resolution, sample loading, filtering, per-branch plotting progress, `Wrote ...`, and `Runtime error: ...`.
+- Saves one PDF per branch to `{output_root}/{tree_name}_{branch}.pdf` with a top panel (stacked MC + Data points + hatched MC uncertainty band) and a bottom Data/MC ratio panel.
 
 ## Configuration Architecture
 
@@ -200,8 +202,9 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
 - **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
 - **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, `train_fraction`, and per-tree hyperparameters plus `decorrelate`.
-- **[selections/BDT/branch.json](selections/BDT/branch.json)** — lists the BDT feature branches. These names are aligned to the current `convert_branch` output names and include all non-`onlyMC` `fat2`/`fat3` branches except event identifiers, pileup bookkeeping, selection counts, and truth/meta labels.
-- **[selections/BDT/selection.json](selections/BDT/selection.json)** — training-time feature preprocessing: clipping ranges, log transforms, and threshold cuts applied after reading the converted `fat2`/`fat3` trees.
+- **[selections/BDT/signal_region/scan.json](selections/BDT/signal_region/scan.json)** — controls signal_region.py: `lumi` (fb⁻¹), `N` (number of signal regions), `output_root` (tree output directory to read from, relative to `signal_region/`), `n_thresholds` (scan grid points per axis), `min_bkg_weight` (minimum background weight per bin), `rounds` (iterative refinement rounds).
+- **[plotting/config.json](plotting/config.json)** — controls data_mc.py: `submit_trees`, `sample_config`, `convert_branch_config`, `bdt_root` (per-tree path pattern, points at the BDT tree output dir that already contains the copied `config.json` / `selection.json`), `output_root` (per-tree output dir pattern), `data_samples` (list of data sample names whose entries must exist in `src/sample.json`), and `default_bins` (default histogram bin count).
+- **[plotting/branch.json](plotting/branch.json)** — plotting config split by tree (`fat2` / `fat3`). Each tree can define `skip_branches` and a `branches` map. Inside `branches`, each branch override can set `bins`, `x_range`, `y_range`, `logx`, `logy`; unset fields fall back to defaults. The file is intended to hold a few explicit examples that can be copied when adding new plot formatting rules later.
 
 ## BDT Training Details
 
@@ -217,18 +220,34 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - If `entries_per_sample` limits how many training events are actually loaded, per-event weight is scaled so the loaded training subset still sums to `sample_total_weight(train)`.
 - Class totals are then rescaled separately within the training split and within the test split so every class has the same total weight inside each split.
 - After those weights are assigned, later threshold cuts in `selections/BDT/selection.json` do **not** trigger any reweighting; the surviving events keep their original per-event weight. This means threshold efficiency naturally contributes to the effective sample composition seen by the trainer.
+- Threshold/sentinel filtering in `filter_X` is applied **only** to branches that appear as keys in `selection.json`'s `thresholds` block. For each such branch, events with sentinel values (`< -990`) are dropped and the threshold condition is enforced. Branches that are *not* listed in `thresholds` are never inspected, so an event with a sentinel value in (for example) a lepton branch is still kept as long as the `thresholds` block doesn't target that lepton branch.
 - ROC and score-distribution plots adapt to the configured classes. When both signal-like and background-like classes exist, the code produces all signal-background class pairs; otherwise it falls back to all class pairs.
+- After training, `train.py` copies `config.json`, `branch.json`, and `selection.json` into the tree output directory so that `signal_region.py` can run self-contained from that directory.
+
+## Signal Region Scan Details (`signal_region.py`)
+
+- Reads all parameters from `scan.json` (configurable via `SCAN_CONFIG_PATH` env var).
+- Loads test events from `test_ranges.json` (exact same split as used in training).
+- Physics weights: `total_weight_per_sample = lumi × xsection × total_tree_entries / raw_entries`, where `total_tree_entries` is all entries across all ROOT files for that sample in the chosen tree (train + test combined). No class rebalancing is applied.
+- Preprocessing (clip, log transform, threshold filter) is identical to train.py's test-split logic.
+- Decorrelated features (e.g., `msd8_1`) are excluded from the model input, same as during training.
+- Scan dimensions: `D = NUM_CLASSES − 1`; axes are `p(class_0)` through `p(class_{D-1})` (the last class is excluded since probabilities sum to 1).
+- Significance formula: `Z = sqrt(2 * [(S+B)*ln(1+S/B) - S])` (profile-likelihood). Error propagated via partial derivatives.
+- Iterative refinement: for each of the N bins, runs `rounds` refinement iterations narrowing to top-3 candidates per axis, then picks the highest-Z non-overlapping bin satisfying `min_bkg_weight`.
+- Combined significance: `Z_comb = √(Σ Z_i²)`.
+- Signal class: any class where all member samples have `is_signal=true`. Background: all other classes.
 
 ## `run.sh` Behavior
 
-[run.sh](run.sh) supports three modes:
+[run.sh](run.sh) supports five modes:
 
-- `mode=0` compiles and runs `convert/convert_branch.C`.
-- `mode=1` compiles and runs `weight/weight.C`.
-- `mode=2` runs `BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
-- `mode=3` runs `signal_region/signal_region.py` with `SCAN_CONFIG_PATH` pointing to the chosen config file.
+- `mode=0` compiles and runs `selections/convert/convert_branch.C`.
+- `mode=1` compiles and runs `selections/weight/weight.C`.
+- `mode=2` runs `selections/BDT/train.py` with `BDT_CONFIG_PATH` pointing to the chosen config file.
+- `mode=3` runs `selections/signal_region/signal_region.py` with `SCAN_CONFIG_PATH` pointing to the chosen config file.
+- `mode=4` runs `plotting/data_mc.py` with `PLOT_CONFIG_PATH` pointing to the chosen config file.
 
-For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, or `selections/signal_region/log.txt` depending on mode. All four modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2` and `mode=3` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
+For `mode=0` and `mode=1`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, `selections/signal_region/log.txt`, or `plotting/log.txt` depending on mode. All five modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2`, `mode=3`, and `mode=4` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. Inside `selections/BDT/train.py`, `selections/signal_region/signal_region.py`, and `plotting/data_mc.py`, the script output follows the same concise `Running ...`, `Wrote ...`, and `Runtime error: ...` style. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 

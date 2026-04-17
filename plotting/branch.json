@@ -1,6 +1,24 @@
 {
   "fat2": {
+    "skip_branches": [
+      "sample_ID",
+      "is_MC",
+      "is_signal"
+    ],
+    "branches": {
+      "ScoutingFatPFJetRecluster_mass": {
+        "bins": 50,
+        "x_range": [0, 5000]
+      }
+    }
   },
   "fat3": {
+    "skip_branches": [
+      "sample_ID",
+      "is_MC",
+      "is_signal"
+    ],
+    "branches": {
+    }
   }
 }
