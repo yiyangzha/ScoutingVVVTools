@@ -214,5 +214,6 @@ __marimo__/
 *.png
 *.txt
 *.csv
-CLAUDE.md
 *.ipynb
+CLAUDE.md
+*old*

@@ -469,8 +469,17 @@ def write_selection_copy(output_root):
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
              sample_labels=None):
-    """Apply per-branch threshold cuts; sentinel values (< -990) handled separately."""
-    if thresholds is None:
+    """Apply per-branch threshold cuts.
+
+    Only branches that appear as keys in ``thresholds`` are inspected: for each
+    such branch, events with sentinel values (< -990) are dropped (when
+    ``apply_to_sentinel`` is True) and the threshold condition is enforced.
+    Branches not listed in ``thresholds`` are left untouched, so an event with
+    a sentinel value in (for example) a lepton branch is still kept as long as
+    no threshold targets that branch. The ``branch`` argument is retained for
+    backward compatibility and is not used to drive filtering.
+    """
+    if not thresholds:
         if sample_labels is None:
             return X.copy(), y.copy(), w.copy()
         return X.copy(), y.copy(), w.copy(), np.asarray(sample_labels).copy()
@@ -508,11 +517,10 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
             raise ValueError(f"Unsupported dict condition keys: {cond}")
         raise TypeError(f"Unsupported condition type: {type(cond)}")
 
-    for b in branch:
+    for b, cond in thresholds.items():
         if b not in X.columns:
             raise KeyError(f"Column {b!r} not found in X")
         col      = X[b]
-        cond     = thresholds.get(b, None)
         sentinel = col < -990
 
         if apply_to_sentinel:
