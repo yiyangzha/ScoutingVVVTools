@@ -52,7 +52,7 @@ Modes:
   Output: one PDF per plotted branch under the configured `output_root`, plus `plotting/log.txt`.
 - `mode=5`: run `background_estimation/qcd_est.py`.
   Input: `background_estimation/config.json`, one trained BDT directory from `mode=2`, and the `signal_region.csv` written by `mode=3`.
-  Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`.
+  Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`. The ROOT file stores `yield`, `stat_error`, `scale_error`, and `covariance_total` for each saved category.
 
 Sample arguments:
 

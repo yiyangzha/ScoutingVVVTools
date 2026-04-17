@@ -634,37 +634,77 @@ def write_root_output(
     group_yields: Dict[str, np.ndarray],
     group_vars: Dict[str, np.ndarray],
     pred_qcd_vals: np.ndarray,
-    pred_qcd_vars: np.ndarray,
+    pred_qcd_stat_vars: np.ndarray,
+    pred_qcd_scale_vars: np.ndarray,
+    pred_qcd_cov: np.ndarray,
     true_qcd_vals: np.ndarray,
     true_qcd_vars: np.ndarray,
     pred_total_vals: np.ndarray,
-    pred_total_vars: np.ndarray,
+    pred_total_stat_vars: np.ndarray,
+    pred_total_scale_vars: np.ndarray,
+    pred_total_cov: np.ndarray,
     true_total_vals: np.ndarray,
     true_total_vars: np.ndarray,
 ) -> None:
+    def _write_bundle(
+        root_file,
+        prefix: str,
+        values: np.ndarray,
+        stat_vars: np.ndarray,
+        scale_vars: np.ndarray | None = None,
+        covariance_total: np.ndarray | None = None,
+    ) -> None:
+        vals = np.asarray(values, dtype=float)
+        stat_vars = np.asarray(stat_vars, dtype=float)
+        if scale_vars is None:
+            scale_vars = np.zeros_like(stat_vars)
+        else:
+            scale_vars = np.asarray(scale_vars, dtype=float)
+        if covariance_total is None:
+            covariance_total = np.diag(np.maximum(stat_vars + scale_vars, 0.0))
+        else:
+            covariance_total = np.asarray(covariance_total, dtype=float)
+
+        root_file[f"{prefix}/yield"] = (vals, edges)
+        root_file[f"{prefix}/stat_error"] = (np.sqrt(np.maximum(stat_vars, 0.0)), edges)
+        root_file[f"{prefix}/scale_error"] = (np.sqrt(np.maximum(scale_vars, 0.0)), edges)
+        root_file[f"{prefix}/covariance_total"] = (covariance_total, edges, edges)
+
     with uproot.recreate(root_path) as root_file:
         for sample_name in sorted(sample_yields):
-            root_file[f"samples/{sample_name}/yield"] = (sample_yields[sample_name], edges)
-            root_file[f"samples/{sample_name}/stat_error"] = (
-                np.sqrt(np.maximum(sample_vars[sample_name], 0.0)),
-                edges,
+            _write_bundle(
+                root_file,
+                f"samples/{sample_name}",
+                sample_yields[sample_name],
+                sample_vars[sample_name],
             )
 
         for group_name in CLASS_NAMES:
-            root_file[f"groups/{_slugify(group_name)}/yield"] = (group_yields[group_name], edges)
-            root_file[f"groups/{_slugify(group_name)}/stat_error"] = (
-                np.sqrt(np.maximum(group_vars[group_name], 0.0)),
-                edges,
+            _write_bundle(
+                root_file,
+                f"groups/{_slugify(group_name)}",
+                group_yields[group_name],
+                group_vars[group_name],
             )
 
-        root_file["qcd_predict/yield"] = (pred_qcd_vals, edges)
-        root_file["qcd_predict/stat_error"] = (np.sqrt(np.maximum(pred_qcd_vars, 0.0)), edges)
-        root_file["qcd_true/yield"] = (true_qcd_vals, edges)
-        root_file["qcd_true/stat_error"] = (np.sqrt(np.maximum(true_qcd_vars, 0.0)), edges)
-        root_file["total_predict/yield"] = (pred_total_vals, edges)
-        root_file["total_predict/stat_error"] = (np.sqrt(np.maximum(pred_total_vars, 0.0)), edges)
-        root_file["total_true/yield"] = (true_total_vals, edges)
-        root_file["total_true/stat_error"] = (np.sqrt(np.maximum(true_total_vars, 0.0)), edges)
+        _write_bundle(
+            root_file,
+            "qcd_predict",
+            pred_qcd_vals,
+            pred_qcd_stat_vars,
+            pred_qcd_scale_vars,
+            pred_qcd_cov,
+        )
+        _write_bundle(root_file, "qcd_true", true_qcd_vals, true_qcd_vars)
+        _write_bundle(
+            root_file,
+            "total_predict",
+            pred_total_vals,
+            pred_total_stat_vars,
+            pred_total_scale_vars,
+            pred_total_cov,
+        )
+        _write_bundle(root_file, "total_true", true_total_vals, true_total_vars)
 
     log_message(f"Wrote ROOT file: {root_path}")
 
@@ -841,9 +881,13 @@ def main() -> None:
         )
 
     pred_qcd_vals = pred_qcd_union * qcd_fraction_vals
-    pred_qcd_var_fraction = (pred_qcd_union ** 2) * qcd_fraction_vars
-    pred_qcd_var_scale = (true_qcd_vals ** 2) * qcd_scale_var
-    pred_qcd_vars = pred_qcd_var_fraction + pred_qcd_var_scale
+    pred_qcd_stat_vars = (pred_qcd_union ** 2) * qcd_fraction_vars
+    pred_qcd_scale_vars = (true_qcd_vals ** 2) * qcd_scale_var
+    pred_qcd_cov = np.diag(pred_qcd_stat_vars) + np.outer(
+        np.sqrt(np.maximum(pred_qcd_scale_vars, 0.0)),
+        np.sqrt(np.maximum(pred_qcd_scale_vars, 0.0)),
+    )
+    pred_qcd_vars = np.diag(pred_qcd_cov).astype(float)
 
     pred_group_yields = {group: group_yields[group].copy() for group in CLASS_NAMES}
     pred_group_vars = {group: group_vars[group].copy() for group in CLASS_NAMES}
@@ -859,6 +903,14 @@ def main() -> None:
         true_total_vars += group_vars[group_name]
         pred_total_vals += pred_group_yields[group_name]
         pred_total_vars += pred_group_vars[group_name]
+
+    pred_total_stat_vars = true_total_vars - group_vars[QCD_CLASS_NAME] + pred_qcd_stat_vars
+    pred_total_scale_vars = pred_qcd_scale_vars.copy()
+    pred_total_cov = np.diag(pred_total_stat_vars) + np.outer(
+        np.sqrt(np.maximum(pred_total_scale_vars, 0.0)),
+        np.sqrt(np.maximum(pred_total_scale_vars, 0.0)),
+    )
+    pred_total_vars = np.diag(pred_total_cov).astype(float)
 
     abcd_group_vals = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
     abcd_group_vars = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
@@ -880,11 +932,15 @@ def main() -> None:
         group_yields,
         group_vars,
         pred_qcd_vals,
-        pred_qcd_vars,
+        pred_qcd_stat_vars,
+        pred_qcd_scale_vars,
+        pred_qcd_cov,
         true_qcd_vals,
         true_qcd_vars,
         pred_total_vals,
-        pred_total_vars,
+        pred_total_stat_vars,
+        pred_total_scale_vars,
+        pred_total_cov,
         true_total_vals,
         true_total_vars,
     )
