@@ -1,7 +1,7 @@
 {
   "lumi": 171.0,
   "bdt_root": "../selections/BDT/fat2",
-  "signal_region_config": "../selections/signal_region/config.json",
+  "signal_region_csv": "../selections/signal_region/output/fat2/signal_region.csv",
   "output_dir": "./output/fat2",
   "root_file_name": "qcd_abcd_yields.root"
 }

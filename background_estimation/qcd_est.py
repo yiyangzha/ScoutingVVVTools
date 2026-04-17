@@ -29,7 +29,6 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
 _SELECTIONS_DIR = os.path.join(_ROOT_DIR, "selections")
 _BDT_DIR = os.path.join(_SELECTIONS_DIR, "BDT")
-_SIGNAL_REGION_DIR = os.path.join(_SELECTIONS_DIR, "signal_region")
 
 
 def log_message(message: str) -> None:
@@ -63,29 +62,7 @@ LUMI = float(qcd_cfg["lumi"])
 BDT_ROOT = _resolve(qcd_cfg["bdt_root"], _SCRIPT_DIR)
 OUTPUT_DIR = _resolve(qcd_cfg.get("output_dir", "./output"), _SCRIPT_DIR)
 ROOT_FILE_NAME = qcd_cfg.get("root_file_name", "qcd_abcd_yields.root")
-SIGNAL_REGION_CONFIG_PATH = _resolve(
-    qcd_cfg.get("signal_region_config", "../selections/signal_region/config.json"),
-    _SCRIPT_DIR,
-)
-SIGNAL_REGION_CSV_OVERRIDE = qcd_cfg.get("signal_region_csv")
-
-signal_region_cfg = _load_json(SIGNAL_REGION_CONFIG_PATH)
-signal_region_bdt_root = _resolve(signal_region_cfg["bdt_root"], _SIGNAL_REGION_DIR)
-signal_region_output_dir = _resolve(
-    signal_region_cfg.get("output_dir", signal_region_cfg["bdt_root"]),
-    _SIGNAL_REGION_DIR,
-)
-
-if os.path.normpath(signal_region_bdt_root) != os.path.normpath(BDT_ROOT):
-    raise RuntimeError(
-        "background_estimation/config.json bdt_root does not match "
-        "selections/signal_region/config.json bdt_root"
-    )
-
-if SIGNAL_REGION_CSV_OVERRIDE:
-    SIGNAL_REGION_CSV_PATH = _resolve(SIGNAL_REGION_CSV_OVERRIDE, _SCRIPT_DIR)
-else:
-    SIGNAL_REGION_CSV_PATH = os.path.join(signal_region_output_dir, "signal_region.csv")
+SIGNAL_REGION_CSV_PATH = _resolve(qcd_cfg["signal_region_csv"], _SCRIPT_DIR)
 
 
 cfg = _load_json(os.path.join(BDT_ROOT, "config.json"))
@@ -799,7 +776,8 @@ def main() -> None:
     )
     pred_qcd_union_sigma = math.sqrt(max(pred_qcd_union_var, 0.0))
     qcd_scale = pred_qcd_union / qcd_a_total
-    qcd_scale_sigma = pred_qcd_union_sigma / qcd_a_total
+    qcd_scale_var = pred_qcd_union_var / (qcd_a_total ** 2)
+    qcd_scale_sigma = math.sqrt(max(qcd_scale_var, 0.0))
 
     log_message(
         f"ABCD QCD totals: A_union={qcd_a_total:.6g}, B={qcd_b_total:.6g}, "
@@ -831,8 +809,22 @@ def main() -> None:
         true_qcd_vals[idx] = float(np.sum(qcd_vals))
         true_qcd_vars[idx] = float(np.sum(qcd_vals ** 2))
 
-    pred_qcd_vals = true_qcd_vals * qcd_scale
-    pred_qcd_vars = (qcd_scale ** 2) * true_qcd_vars + (true_qcd_vals ** 2) * (qcd_scale_sigma ** 2)
+    qcd_fraction_vals = true_qcd_vals / qcd_a_total
+    qcd_fraction_vars = np.zeros(len(region_labels), dtype=float)
+    for idx in range(len(region_labels)):
+        region_val = true_qcd_vals[idx]
+        region_var = true_qcd_vars[idx]
+        rest_val = qcd_a_total - region_val
+        rest_var = max(0.0, qcd_a_var - region_var)
+        qcd_fraction_vars[idx] = (
+            ((rest_val / (qcd_a_total ** 2)) ** 2) * region_var
+            + ((region_val / (qcd_a_total ** 2)) ** 2) * rest_var
+        )
+
+    pred_qcd_vals = pred_qcd_union * qcd_fraction_vals
+    pred_qcd_var_fraction = (pred_qcd_union ** 2) * qcd_fraction_vars
+    pred_qcd_var_scale = (true_qcd_vals ** 2) * qcd_scale_var
+    pred_qcd_vars = pred_qcd_var_fraction + pred_qcd_var_scale
 
     pred_group_yields = {group: group_yields[group].copy() for group in CLASS_NAMES}
     pred_group_vars = {group: group_vars[group].copy() for group in CLASS_NAMES}
