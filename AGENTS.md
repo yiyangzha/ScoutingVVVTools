@@ -175,6 +175,15 @@ SCAN_CONFIG_PATH=/path/to/config.json python3 selections/signal_region/signal_re
 
 `signal_region.py` reads all parameters from [selections/signal_region/config.json](selections/signal_region/config.json). It loads the saved model, branch, and selection configs from the `bdt_root` directory written by `train.py`, reloads the exact test split defined in `test_ranges.json`, applies physics-normalised weights (`lumi × σ × N_tree / N_raw`), and scans for N non-overlapping signal regions in the `NUM_CLASSES − 1` dimensional BDT score space that maximise `Z = sqrt(2[(S+B)ln(1+S/B) - S])`. Plots are saved as `sr_score_*.pdf` and `sr_regions_2d.pdf` in the configured `output_dir` (defaulting to `bdt_root` for backward compatibility), and the selected high-dimensional region definitions are written to `signal_region.csv` in the same directory.
 
+### QCD ABCD estimation
+```bash
+python3 background_estimation/qcd_est.py
+# Or with a custom config:
+QCD_EST_CONFIG_PATH=/path/to/config.json python3 background_estimation/qcd_est.py
+```
+
+`background_estimation/qcd_est.py` reads [background_estimation/config.json](background_estimation/config.json), then reuses the trained `bdt_root` output in the same way as `signal_region.py`: it loads the saved `config.json`, `model`, `branch.json`, `selection.json`, and `test_ranges.json`, reads the full test split with the same per-event weight definition, removes only the non-mass thresholds before BDT inference, applies the same clip/log preprocessing, and uses the `signal_region.csv` produced by `signal_region.py` as the set of A-region score bins. It defines `A` as the union of those score bins with mass-pass, `B` as outside that union with mass-pass, `C` as inside that union with mass-fail, and `D` as outside that union with mass-fail, where mass-pass requires all `ScoutingFatPFJetRecluster_msoftdrop_*` thresholds to pass and mass-fail requires all of them to fail. A single QCD ABCD scale from the union-level `B/C/D` totals is then applied to all individual signal regions. Outputs are written under `output_dir`, including summary PDFs and a ROOT file of per-signal-region yields/stat errors for each MC sample plus the ABCD-predicted QCD yield/stat error.
+
 ### Data vs MC plotting
 ```bash
 python3 plotting/data_mc.py
@@ -203,6 +212,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
 - **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, `train_fraction`, and per-tree hyperparameters plus `decorrelate`.
 - **[selections/signal_region/config.json](selections/signal_region/config.json)** — controls signal_region.py: `lumi` (fb⁻¹), `N` / `n_signal_regions` (number of signal regions), `bdt_root` (trained tree output directory to read from, relative to `signal_region/`), `output_dir` (directory for saved PDFs and `signal_region.csv`, relative to `signal_region/`, defaulting to `bdt_root`), `n_thresholds` (scan grid points per axis), `min_bkg_weight` (minimum background weight per bin), and `rounds` (iterative refinement rounds).
+- **[background_estimation/config.json](background_estimation/config.json)** — controls qcd_est.py: `lumi` (fb⁻¹), `bdt_root` (trained tree output directory to read from), `signal_region_config` (path to `selections/signal_region/config.json`, used to locate the matching `signal_region.csv`), optional `signal_region_csv` override, `output_dir` (directory for PDFs and ROOT outputs), and `root_file_name` (summary ROOT filename).
 - **[plotting/config.json](plotting/config.json)** — controls data_mc.py: `submit_trees`, `sample_config`, `convert_branch_config`, `bdt_root` (per-tree path pattern, points at the BDT tree output dir that already contains the copied `config.json` / `selection.json`), `output_root` (per-tree output dir pattern), `data_samples` (list of data sample names whose entries must exist in `src/sample.json`), and `default_bins` (default histogram bin count).
 - **[plotting/branch.json](plotting/branch.json)** — plotting config split by tree (`fat2` / `fat3`). Each tree can define `skip_branches` and a `branches` map. Inside `branches`, each branch override can set `bins`, `x_range`, `y_range`, `logx`, `logy`; unset fields fall back to defaults. The file is intended to hold a few explicit examples that can be copied when adding new plot formatting rules later.
 

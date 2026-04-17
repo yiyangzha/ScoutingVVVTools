@@ -21,7 +21,6 @@ import uproot
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_EPS = 1e-12
 
 # -------------------- Style --------------------
 plt.rcParams["mathtext.fontset"] = "cm"
