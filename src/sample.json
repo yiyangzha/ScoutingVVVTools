@@ -62,7 +62,7 @@
     },
     {
       "name": "wplush",
-      "path": "/INPRODUCTION-WplusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
+      "path": "/WplusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
       "sample_ID": 6,
       "is_MC": true,
       "is_signal": true,
