@@ -167,13 +167,13 @@ BDT outputs are written under the per-tree `output_root` configured in `selectio
 
 ### Signal region optimisation
 ```bash
-# Edit selections/BDT/signal_region/scan.json, then:
-python3 selections/BDT/signal_region/signal_region.py
+# Edit selections/signal_region/config.json, then:
+python3 selections/signal_region/signal_region.py
 # Or with a custom scan config:
-SCAN_CONFIG_PATH=/path/to/scan.json python3 selections/BDT/signal_region/signal_region.py
+SCAN_CONFIG_PATH=/path/to/config.json python3 selections/signal_region/signal_region.py
 ```
 
-`signal_region.py` reads all parameters from `selections/BDT/signal_region/scan.json`. It loads the saved model, branch, and selection configs from the `output_root` directory written by `train.py`, reloads the exact test split defined in `test_ranges.json`, applies physics-normalised weights (`lumi × σ × N_tree / N_raw`), and scans for N non-overlapping signal regions in the `NUM_CLASSES − 1` dimensional BDT score space that maximise `Z = sqrt(2[(S+B)ln(1+S/B) - S])`. Plots are saved as `sr_score_*.pdf` and `sr_regions_2d.pdf` in `output_root`.
+`signal_region.py` reads all parameters from [selections/signal_region/config.json](selections/signal_region/config.json). It loads the saved model, branch, and selection configs from the `bdt_root` directory written by `train.py`, reloads the exact test split defined in `test_ranges.json`, applies physics-normalised weights (`lumi × σ × N_tree / N_raw`), and scans for N non-overlapping signal regions in the `NUM_CLASSES − 1` dimensional BDT score space that maximise `Z = sqrt(2[(S+B)ln(1+S/B) - S])`. Plots are saved as `sr_score_*.pdf` and `sr_regions_2d.pdf` in the configured `output_dir` (defaulting to `bdt_root` for backward compatibility), and the selected high-dimensional region definitions are written to `signal_region.csv` in the same directory.
 
 ### Data vs MC plotting
 ```bash
@@ -202,7 +202,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - **[selections/convert/branch.json](selections/convert/branch.json)** — declares all input NanoAOD branches to read (scalars and collections with p4 definitions) and output branches to write.
 - **[selections/weight/config.json](selections/weight/config.json)** — pileup reweighting settings: data pileup histogram files (nominal/low/high for systematics).
 - **[selections/BDT/config.json](selections/BDT/config.json)** — controls BDT training inputs and outputs: `submit_trees`, `class_groups`, `output_root`, `model_pattern`, `entries_per_sample`, `train_fraction`, and per-tree hyperparameters plus `decorrelate`.
-- **[selections/BDT/signal_region/scan.json](selections/BDT/signal_region/scan.json)** — controls signal_region.py: `lumi` (fb⁻¹), `N` (number of signal regions), `output_root` (tree output directory to read from, relative to `signal_region/`), `n_thresholds` (scan grid points per axis), `min_bkg_weight` (minimum background weight per bin), `rounds` (iterative refinement rounds).
+- **[selections/signal_region/config.json](selections/signal_region/config.json)** — controls signal_region.py: `lumi` (fb⁻¹), `N` / `n_signal_regions` (number of signal regions), `bdt_root` (trained tree output directory to read from, relative to `signal_region/`), `output_dir` (directory for saved PDFs and `signal_region.csv`, relative to `signal_region/`, defaulting to `bdt_root`), `n_thresholds` (scan grid points per axis), `min_bkg_weight` (minimum background weight per bin), and `rounds` (iterative refinement rounds).
 - **[plotting/config.json](plotting/config.json)** — controls data_mc.py: `submit_trees`, `sample_config`, `convert_branch_config`, `bdt_root` (per-tree path pattern, points at the BDT tree output dir that already contains the copied `config.json` / `selection.json`), `output_root` (per-tree output dir pattern), `data_samples` (list of data sample names whose entries must exist in `src/sample.json`), and `default_bins` (default histogram bin count).
 - **[plotting/branch.json](plotting/branch.json)** — plotting config split by tree (`fat2` / `fat3`). Each tree can define `skip_branches` and a `branches` map. Inside `branches`, each branch override can set `bins`, `x_range`, `y_range`, `logx`, `logy`; unset fields fall back to defaults. The file is intended to hold a few explicit examples that can be copied when adding new plot formatting rules later.
 
@@ -230,12 +230,14 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - Loads test events from `test_ranges.json` (exact same split as used in training).
 - Physics weights: `total_weight_per_sample = lumi × xsection × total_tree_entries / raw_entries`, where `total_tree_entries` is all entries across all ROOT files for that sample in the chosen tree (train + test combined). No class rebalancing is applied.
 - Preprocessing (clip, log transform, threshold filter) is identical to train.py's test-split logic.
+- Threshold/sentinel filtering matches `train.py`: only branches that appear in `selection.json`'s `thresholds` block are inspected, and only those branches can drop events for sentinel values (`< -990`) or failed threshold conditions.
 - Decorrelated features (e.g., `msd8_1`) are excluded from the model input, same as during training.
 - Scan dimensions: `D = NUM_CLASSES − 1`; axes are `p(class_0)` through `p(class_{D-1})` (the last class is excluded since probabilities sum to 1).
 - Significance formula: `Z = sqrt(2 * [(S+B)*ln(1+S/B) - S])` (profile-likelihood). Error propagated via partial derivatives.
 - Iterative refinement: for each of the N bins, runs `rounds` refinement iterations narrowing to top-3 candidates per axis, then picks the highest-Z non-overlapping bin satisfying `min_bkg_weight`.
 - Combined significance: `Z_comb = √(Σ Z_i²)`.
 - Signal class: any class where all member samples have `is_signal=true`. Background: all other classes.
+- Output files: `sr_score_*.pdf`, `sr_regions_2d.pdf`, and `signal_region.csv` all go to `output_dir`. The CSV stores one row per selected signal region and expands the high-dimensional bin definition into per-axis `{axis_name}_low` / `{axis_name}_high` columns.
 
 ## `run.sh` Behavior
 

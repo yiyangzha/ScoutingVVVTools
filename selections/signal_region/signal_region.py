@@ -46,6 +46,7 @@ scan_cfg = _load_json(_scan_cfg_path)
 LUMI             = float(scan_cfg["lumi"])
 N_SIGNAL_REGIONS = int(scan_cfg.get("n_signal_regions", scan_cfg.get("N", 4)))
 BDT_ROOT         = scan_cfg.get("bdt_root", scan_cfg.get("output_root"))
+OUTPUT_DIR       = scan_cfg.get("output_dir", BDT_ROOT)
 N_THRESHOLDS     = int(scan_cfg.get("n_thresholds", 10))
 MIN_BKG_WEIGHT   = float(scan_cfg.get("min_bkg_weight", 5.0))
 ROUNDS           = int(scan_cfg.get("rounds", 5))
@@ -55,6 +56,8 @@ if BDT_ROOT is None:
 
 if not os.path.isabs(BDT_ROOT):
     BDT_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, BDT_ROOT))
+if not os.path.isabs(OUTPUT_DIR):
+    OUTPUT_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, OUTPUT_DIR))
 
 
 # ── Load configs saved by train.py ────────────────────────────────────────────
@@ -217,7 +220,17 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
              sample_labels=None):
-    if thresholds is None:
+    """Apply per-branch threshold cuts.
+
+    Only branches that appear as keys in ``thresholds`` are inspected: for each
+    such branch, events with sentinel values (< -990) are dropped (when
+    ``apply_to_sentinel`` is True) and the threshold condition is enforced.
+    Branches not listed in ``thresholds`` are left untouched, so an event with
+    a sentinel value in some other branch is still kept. The ``branch``
+    argument is retained for backward compatibility and is not used to drive
+    filtering.
+    """
+    if not thresholds:
         if sample_labels is None:
             return X.copy(), y.copy(), w.copy()
         return X.copy(), y.copy(), w.copy(), np.asarray(sample_labels).copy()
@@ -256,11 +269,10 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
             raise ValueError(f"Unsupported dict condition keys: {cond}")
         raise TypeError(f"Unsupported condition type: {type(cond)}")
 
-    for b in branch:
+    for b, cond in thresholds.items():
         if b not in X.columns:
             raise KeyError(f"Column {b!r} not found in X")
         col      = X[b]
-        cond     = thresholds.get(b, None)
         sentinel = col < -990
         if apply_to_sentinel:
             mask &= ~sentinel
@@ -283,11 +295,54 @@ def _slugify(text):
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
 def _savefig(stem):
-    path = os.path.join(BDT_ROOT, f"{stem}.pdf")
+    path = os.path.join(OUTPUT_DIR, f"{stem}.pdf")
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
     log_message(f"Wrote plot file: {path}")
+
+
+def write_signal_region_csv(result):
+    axis_names = [CLASS_NAMES[d] for d in range(max(1, NUM_CLASSES - 1))]
+    if result["top_bins"]:
+        axis_names = list(result["top_bins"][0]["axis_names"])
+
+    base_columns = [
+        "bin_index",
+        "significance",
+        "significance_error",
+        "S",
+        "S_err",
+        "S_entries",
+        "B",
+        "B_err",
+        "B_entries",
+    ]
+    axis_columns = []
+    for axis_name in axis_names:
+        axis_columns.extend([f"{axis_name}_low", f"{axis_name}_high"])
+
+    rows = []
+    for b in result["top_bins"]:
+        row = {
+            "bin_index": b["bin_index"],
+            "significance": b["significance"],
+            "significance_error": b["significance_error"],
+            "S": b["S"],
+            "S_err": b["S_err"],
+            "S_entries": b["S_entries"],
+            "B": b["B"],
+            "B_err": b["B_err"],
+            "B_entries": b["B_entries"],
+        }
+        for dim, axis_name in enumerate(b["axis_names"]):
+            row[f"{axis_name}_low"] = float(b["thr_low"][dim])
+            row[f"{axis_name}_high"] = float(b["thr_high"][dim])
+        rows.append(row)
+
+    csv_path = os.path.join(OUTPUT_DIR, "signal_region.csv")
+    pd.DataFrame(rows, columns=base_columns + axis_columns).to_csv(csv_path, index=False)
+    log_message(f"Wrote signal region file: {csv_path}")
 
 
 def plot_score_distributions(proba, y, w):
@@ -743,9 +798,10 @@ def print_results(result):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     log_message(
         f"Running signal_region.py: tree={TREE_NAME}, lumi={LUMI} fb^-1, "
-        f"n_signal_regions={N_SIGNAL_REGIONS}, bdt_root={BDT_ROOT}"
+        f"n_signal_regions={N_SIGNAL_REGIONS}, bdt_root={BDT_ROOT}, output_dir={OUTPUT_DIR}"
     )
 
     sel         = sel_cfg[TREE_NAME]
@@ -821,6 +877,7 @@ def main():
 
     # Print text summary
     print_results(result)
+    write_signal_region_csv(result)
 
     log_message(f"Finished signal_region.py for tree={TREE_NAME}")
 
