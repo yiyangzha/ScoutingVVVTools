@@ -47,12 +47,12 @@ struct SampleInfo {
 static const std::vector<SampleInfo> SAMPLES = {
   {
     "TTbar",
-    "/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNanoUPart_v2-00000000000000000000000000000000/USER",
+    "/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNanoUPart_v5-00000000000000000000000000000000/USER",
     false
   },
   {
     "WWW",
-    "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNanoUPart_v2-00000000000000000000000000000000/USER",
+    "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
     true
   }
 };

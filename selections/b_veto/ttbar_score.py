@@ -30,7 +30,7 @@ EVENT_COUNT_CSV_FILE = os.path.join(OUT_DIR, "top3_pass_count_efficiencies.csv")
 SAMPLE_LABELS = ["WWW", "TTbar"]
 # Alternative light-efficiency targets kept for quick scans.
 # TARGET_LIGHT_EFFS = [0.8, 0.5, 0.4, 0.3, 0.2, 0.1, 0.01, 0.001]
-TARGET_LIGHT_EFFS = [0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1] + [0.01, 0.001]
+TARGET_LIGHT_EFFS = [0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.14, 0.13, 0.12, 0.11, 0.1] + [0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01, 0.001]
 
 _default_colors = plt.rcParams["axes.prop_cycle"].by_key().get(
     "color", ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
