@@ -113,7 +113,7 @@ def load_test_data(branches):
     For each sample:
       raw_w            = product of event_reweight_branches (per event)
       total_weight     = lumi * xsec * total_tree_entries / raw_entries
-      per_event_weight = raw_w * total_weight / N_test_loaded
+      per_event_weight = raw_w * total_weight / sum(raw_w_loaded)
 
     The reweight branches come from the BDT config copy in ``bdt_root`` and are
     read on raw values (before any clip/log/threshold). Weights are fixed here;
