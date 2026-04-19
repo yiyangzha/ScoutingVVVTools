@@ -56,8 +56,7 @@
       "ScoutingFatPFJetRecluster_pt_3": [0, 13600],
       "SelectedLepton_pt_1": [0, 13600],
       "SelectedLepton_pt_2": [0, 13600],
-      "SelectedLepton_pt_3": [0, 13600],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max": [null, 0.1]
+      "SelectedLepton_pt_3": [0, 13600]
     },
     "log_transform": [
       "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -86,8 +85,7 @@
       "ScoutingFatPFJetRecluster_pt_3": [180, null],
       "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
       "ScoutingFatPFJetRecluster_eta_2": [-2.4, 2.4],
-      "ScoutingFatPFJetRecluster_eta_3": [-2.4, 2.4],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max": [null, 0.1]
+      "ScoutingFatPFJetRecluster_eta_3": [-2.4, 2.4]
     }
   }
 }
