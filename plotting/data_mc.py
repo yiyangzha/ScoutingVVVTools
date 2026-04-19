@@ -237,10 +237,35 @@ def _apply_clip(df, clip_ranges):
 
 
 # -------------------- Weight assignment --------------------
-def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded):
-    """Assign constant per-event weight so the sum of weights equals
-    lumi_total * xsection * tree_entries_total / raw_entries.
-    Computed before any filtering; unchanged afterwards."""
+def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded, reweight_branches=None):
+    """Assign per-event weight for an MC sample.
+
+    Per event:
+        raw_w  = product of reweight_branches (1.0 if empty)
+        target_total = lumi_total * xsection * tree_entries_total / raw_entries
+        weight = raw_w * target_total / sum(raw_w_loaded)
+
+    So the sample's total weight sums to ``target_total`` regardless of raw_w's
+    magnitude; raw_w only shapes the per-event distribution inside the sample.
+
+    Reweight branches are read on raw values (before clip/log/threshold) and
+    dropped from ``df`` once raw_w is computed. Computed before any filtering;
+    the weights are unchanged afterwards.
+    """
+    reweight_branches = list(reweight_branches or [])
+    if reweight_branches:
+        missing = [rb for rb in reweight_branches if rb not in df.columns]
+        if missing:
+            raise KeyError(
+                f"Sample '{sample_name}' missing reweight branches: {', '.join(missing)}"
+            )
+        raw_w = np.ones(n_loaded, dtype=float)
+        for rb in reweight_branches:
+            raw_w *= df[rb].to_numpy(dtype=float, copy=False)
+        df = df.drop(columns=reweight_branches)
+    else:
+        raw_w = np.ones(n_loaded, dtype=float)
+
     info        = SAMPLE_INFO[sample_name]
     xsec        = float(info.get("xsection", 0.0))
     raw_entries = float(info.get("raw_entries", 0.0))
@@ -248,7 +273,12 @@ def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded):
         df["weight"] = 0.0
         return df
     target_total = LUMI_TOTAL * xsec * float(tree_entries_total) / raw_entries
-    df["weight"] = target_total / float(n_loaded)
+    raw_w_sum = float(raw_w.sum())
+    if raw_w_sum <= 0.0:
+        raise RuntimeError(
+            f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
+        )
+    df["weight"] = raw_w * (target_total / raw_w_sum)
     return df
 
 
@@ -356,9 +386,13 @@ def _process_tree(tree_name):
     need_load        = sorted(set(branches_to_plot)
                               | set(thresholds.keys())
                               | set(clip_ranges.keys()))
+    reweight_cfg      = plot_cfg.get("event_reweight_branches", {})
+    reweight_branches = list(reweight_cfg.get(tree_name, []))
+    mc_need_load     = sorted(set(need_load) | set(reweight_branches))
     log_message(
         f"Resolved plotting config: branches={len(branches_to_plot)}, "
-        f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}"
+        f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}, "
+        f"reweight_branches={len(reweight_branches)}"
     )
 
     out_dir = _resolve(OUTPUT_ROOT_PATT.format(tree_name=tree_name), _SCRIPT_DIR)
@@ -382,10 +416,10 @@ def _process_tree(tree_name):
             if n_total <= 0:
                 log_message(f"  [WARN] empty tree '{tree_name}' for '{sname}', skipping")
                 continue
-            df = _load_tree(files, tree_name, need_load)
+            df = _load_tree(files, tree_name, mc_need_load)
             if df is None or len(df) == 0:
                 continue
-            df = _assign_mc_weight(df, sname, n_total, len(df))
+            df = _assign_mc_weight(df, sname, n_total, len(df), reweight_branches)
             dfs.append(df)
             log_message(
                 f"  {sname}: class={cls_name}, tree_entries={n_total}, "

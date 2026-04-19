@@ -5,5 +5,9 @@
   "bdt_root": "../selections/BDT/{tree_name}",
   "output_root": "./pre-selection/{tree_name}",
   "data_samples": [],
-  "default_bins": 10
+  "default_bins": 10,
+  "event_reweight_branches": {
+    "fat2": ["weight_pu"],
+    "fat3": ["weight_pu"]
+  }
 }

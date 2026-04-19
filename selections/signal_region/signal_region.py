@@ -111,13 +111,22 @@ def load_test_data(branches):
     """Load test events from test_ranges.json with physics-normalised weights.
 
     For each sample:
-      total_weight = lumi * xsec * total_tree_entries / raw_entries
-      per_event_weight = total_weight / N_test_loaded
+      raw_w            = product of event_reweight_branches (per event)
+      total_weight     = lumi * xsec * total_tree_entries / raw_entries
+      per_event_weight = raw_w * total_weight / N_test_loaded
 
-    Weights are fixed here; threshold filtering later does NOT rescale them.
+    The reweight branches come from the BDT config copy in ``bdt_root`` and are
+    read on raw values (before any clip/log/threshold). Weights are fixed here;
+    threshold filtering later does NOT rescale them.
     """
     log_message(f"Loading test data from: {os.path.join(BDT_ROOT, 'test_ranges.json')}")
     dfs = []
+
+    reweight_branches = list(cfg.get(TREE_NAME, {}).get("event_reweight_branches", []))
+    load_branches = list(branches)
+    for rb in reweight_branches:
+        if rb not in load_branches:
+            load_branches.append(rb)
 
     for sample_name, sample_meta in test_meta["samples"].items():
         info = SAMPLE_INFO.get(sample_name)
@@ -143,8 +152,16 @@ def load_test_data(branches):
                     if TREE_NAME not in uf:
                         log_warning(f"Tree '{TREE_NAME}' not in {fpath}, skipping")
                         continue
-                    df_part = uf[TREE_NAME].arrays(
-                        branches,
+                    tree = uf[TREE_NAME]
+                    available = set(tree.keys())
+                    missing = [b for b in load_branches if b not in available]
+                    if missing:
+                        raise KeyError(
+                            f"Missing branches in {fpath}:{TREE_NAME}: "
+                            f"{', '.join(missing[:10])}" + (" ..." if len(missing) > 10 else "")
+                        )
+                    df_part = tree.arrays(
+                        load_branches,
                         library="pd",
                         entry_start=int(seg["entry_start"]),
                         entry_stop=int(seg["entry_stop"]),
@@ -161,6 +178,14 @@ def load_test_data(branches):
         df      = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
 
+        if reweight_branches:
+            raw_w = np.ones(n_loaded, dtype=float)
+            for rb in reweight_branches:
+                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
+            df = df.drop(columns=reweight_branches)
+        else:
+            raw_w = np.ones(n_loaded, dtype=float)
+
         if xsec <= 0.0 or raw_entries <= 0:
             target_total = 0.0
             df["weight"] = 0.0
@@ -168,10 +193,15 @@ def load_test_data(branches):
                 f"  {sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
             )
         else:
-            # Normalize the sample total weight to lumi * xsec * total_tree_entries / raw_entries.
-            # This is the expected yield after the tree-level selection at the target lumi.
+            # Normalize the sample total weight to lumi * xsec * total_tree_entries / raw_entries,
+            # then shape per-event weights by raw_w so sum(weight) stays at target_total.
             target_total  = LUMI * xsec * total_entries / raw_entries
-            df["weight"]  = target_total / n_loaded
+            raw_w_sum = float(raw_w.sum())
+            if raw_w_sum <= 0.0:
+                raise RuntimeError(
+                    f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
+                )
+            df["weight"] = raw_w * (target_total / raw_w_sum)
 
         df["class_idx"]   = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name

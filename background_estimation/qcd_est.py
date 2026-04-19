@@ -219,6 +219,12 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
     log_message(f"Loading MC test samples: n={len(test_meta['samples'])}")
     dfs = []
 
+    reweight_branches = list(cfg.get(TREE_NAME, {}).get("event_reweight_branches", []))
+    load_branches = list(branches)
+    for rb in reweight_branches:
+        if rb not in load_branches:
+            load_branches.append(rb)
+
     for sample_name, sample_meta in test_meta["samples"].items():
         info = SAMPLE_INFO.get(sample_name)
         if info is None:
@@ -248,7 +254,7 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
                         continue
                     tree = uf[TREE_NAME]
                     available = set(tree.keys())
-                    missing = [branch for branch in branches if branch not in available]
+                    missing = [branch for branch in load_branches if branch not in available]
                     if missing:
                         raise KeyError(
                             f"Missing branches in {fpath}:{TREE_NAME}: "
@@ -256,7 +262,7 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
                         )
                     parts.append(
                         tree.arrays(
-                            branches,
+                            load_branches,
                             library="pd",
                             entry_start=int(seg["entry_start"]),
                             entry_stop=int(seg["entry_stop"]),
@@ -273,6 +279,14 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
         df = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
 
+        if reweight_branches:
+            raw_w = np.ones(n_loaded, dtype=float)
+            for rb in reweight_branches:
+                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
+            df = df.drop(columns=reweight_branches)
+        else:
+            raw_w = np.ones(n_loaded, dtype=float)
+
         if xsec <= 0.0 or raw_entries <= 0:
             target_total = 0.0
             df["weight"] = 0.0
@@ -281,7 +295,12 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
             )
         else:
             target_total = LUMI * xsec * total_entries / raw_entries
-            df["weight"] = target_total / n_loaded
+            raw_w_sum = float(raw_w.sum())
+            if raw_w_sum <= 0.0:
+                raise RuntimeError(
+                    f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
+                )
+            df["weight"] = raw_w * (target_total / raw_w_sum)
 
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name

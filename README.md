@@ -67,10 +67,10 @@ Sample arguments:
 - `selections/convert/config.json`: convert-step paths, threading, file-size splitting, and pileup CSV pattern.
 - `selections/convert/selection.json`: event selection and tree split (`fat2` / `fat3`).
 - `selections/convert/branch.json`: input branches to read and output branches to write.
-- `selections/BDT/config.json`: BDT inputs, class groups, training settings, and output directories.
+- `selections/BDT/config.json`: BDT inputs, class groups, training settings, output directories, and per-tree `event_reweight_branches` (per-event raw-weight branches multiplied before sample normalisation; default `["weight_pu"]`).
 - `selections/signal_region/config.json`: signal-region scan settings and `output_dir`.
 - `background_estimation/config.json`: `qcd_est.py` settings, including `bdt_root`, `signal_region_csv`, `output_dir`, and `root_file_name`.
-- `plotting/config.json`: `data_mc.py` settings, including `bdt_root`, `output_root`, and `data_samples`.
+- `plotting/config.json`: `data_mc.py` settings, including `bdt_root`, `output_root`, `data_samples`, and per-tree `event_reweight_branches` (applied to MC events only; data weights stay 1.0).
 - `plotting/branch.json`: per-tree plot overrides such as `skip_branches`, `bins`, `x_range`, `y_range`, `logx`, and `logy`.
 
 ## Step-by-step file flow

@@ -325,6 +325,12 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
     dfs = []
     sample_target_totals = {}
 
+    reweight_branches = list(cfg.get(tree_name, {}).get("event_reweight_branches", []))
+    load_branches = list(branches)
+    for rb in reweight_branches:
+        if rb not in load_branches:
+            load_branches.append(rb)
+
     for sample_name in TRAINING_SAMPLES:
         if sample_name not in split_plans:
             continue
@@ -349,25 +355,45 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
             raise ValueError(f"Unknown split_name: {split_name}")
 
         split_total_entries = _sum_segment_lengths(full_segments)
-        df, n_read = _load_segments(tree_name, branches, read_segments)
+        df, n_read = _load_segments(tree_name, load_branches, read_segments)
         if split_total_entries == 0 or n_read == 0 or df is None:
             log_warning(f"zero entries read for '{sample_name}' in split '{split_name}' of tree '{tree_name}', skipping")
             continue
 
+        # Raw per-event weight: product of the configured reweight branches.
+        # Computed on raw values before any clip/log/threshold so ratios between
+        # events within the sample follow raw_w. The sample is then renormalised
+        # so sum(weight) equals target_total, independent of raw_w's magnitude.
+        if reweight_branches:
+            raw_w = np.ones(n_read, dtype=float)
+            for rb in reweight_branches:
+                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
+            df = df.drop(columns=reweight_branches)
+        else:
+            raw_w = np.ones(n_read, dtype=float)
+
+        total_tree_entries = int(plan["total_entries"])
         if xsec <= 0.0 or raw_entries <= 0:
             target_total = 0.0
         else:
-            target_total = xsec * (float(split_total_entries) / float(raw_entries))
-        sample_target_totals[sample_name] = target_total
+            target_total = xsec * (float(total_tree_entries) / float(raw_entries))
 
         if target_total <= 0.0:
             df["weight"] = 0.0
+            sample_target_totals[sample_name] = 0.0
             if xsec <= 0.0:
                 log_warning(
                     f"sample '{sample_name}' has non-positive xsection={xsec:.6g}; assigning zero weight"
                 )
         else:
-            df["weight"] = target_total / float(n_read)
+            raw_w_sum = float(raw_w.sum())
+            if raw_w_sum <= 0.0:
+                raise RuntimeError(
+                    f"Sample '{sample_name}' has non-positive raw weight sum "
+                    f"{raw_w_sum:.6g} in split '{split_name}' of tree '{tree_name}'"
+                )
+            df["weight"] = raw_w * (target_total / raw_w_sum)
+            sample_target_totals[sample_name] = target_total
 
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name

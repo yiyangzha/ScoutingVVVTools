@@ -26,7 +26,8 @@
     "reg_lambda": 1,
     "reg_alpha": 1,
     "min_child_weight": 3,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"]
+    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
+    "event_reweight_branches": ["weight_pu"]
   },
   "fat3": {
     "n_estimators": 1000,
@@ -36,6 +37,7 @@
     "reg_lambda": 10,
     "reg_alpha": 10,
     "min_child_weight": 3,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"]
+    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
+    "event_reweight_branches": ["weight_pu"]
   }
 }
