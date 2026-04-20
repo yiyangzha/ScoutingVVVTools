@@ -4,7 +4,7 @@
   "submit_samples": ["ttbar_semilep"],
   "pileup_branch": "Pileup_nTrueInt",
   "pileup_histogram": "pileup",
-  "max_threads": 1,
+  "max_threads": 18,
   "pileup_data_files": {
     "nominal": "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-69200ub.root",
     "low": "./pileup/dataPileupHistogram-2024CDEFGHI_Golden-66000ub.root",
