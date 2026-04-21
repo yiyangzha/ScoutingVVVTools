@@ -1217,7 +1217,11 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         )
 
         def _calibrate_decor_scale(extra_params):
-            pilot_rounds = min(max(8, num_boost_round // 25), 32)
+            # Calibrate on an early native-softprob pilot so the fixed scale matches
+            # the regime where decorrelation first starts to compete with
+            # classification, not a much later pure-classification solution whose
+            # raw decor loss is self-inconsistently large.
+            pilot_rounds = min(max(4, num_boost_round // 200), 8)
             pilot = xgb.train(
                 params={**train_params, **extra_params},
                 dtrain=dtrain,
@@ -1228,25 +1232,66 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             pilot_logits = _reshape_multiclass_margin(
                 pilot.predict(dtrain, output_margin=True), NUM_CLASSES, len(y_train)
             )
-            _, _, _, cls_loss_ref = _multiclass_classification_terms(y_train, pilot_logits, w_train, NUM_CLASSES)
-            decor_loss_ref, _, _ = _decorrelation_loss_components(
+            _, grad_cls_ref, hess_cls_ref, cls_loss_ref = _multiclass_classification_terms(
+                y_train, pilot_logits, w_train, NUM_CLASSES
+            )
+            decor_loss_ref, grad_dec_ref, hess_dec_ref = _decorrelation_loss_components(
                 pilot_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
             )
             fallback_scale = max(float(np.sum(w_train)), 1.0)
-            if not np.isfinite(decor_loss_ref) or decor_loss_ref <= _EPS:
+            grad_cls_norm = float(np.linalg.norm(grad_cls_ref))
+            grad_dec_norm = float(np.linalg.norm(grad_dec_ref))
+            hess_cls_norm = float(np.linalg.norm(hess_cls_ref))
+            hess_dec_norm = float(np.linalg.norm(hess_dec_ref))
+            if (
+                not np.isfinite(grad_dec_norm) or grad_dec_norm <= _EPS
+                or not np.isfinite(hess_dec_norm) or hess_dec_norm <= _EPS
+            ):
                 log_warning(
-                    "Pilot decorrelation loss is non-positive; falling back to train_weight_sum "
+                    "Pilot decorrelation grad/hess norm is non-positive; falling back to train_weight_sum "
                     f"scale={fallback_scale:.6g}"
                 )
-                return fallback_scale, pilot_rounds, cls_loss_ref, decor_loss_ref
-            return max(float(cls_loss_ref / decor_loss_ref), 1.0), pilot_rounds, cls_loss_ref, decor_loss_ref
+                return (
+                    fallback_scale,
+                    pilot_rounds,
+                    cls_loss_ref,
+                    decor_loss_ref,
+                    grad_cls_norm,
+                    grad_dec_norm,
+                    hess_cls_norm,
+                    hess_dec_norm,
+                )
+            grad_scale = grad_cls_norm / max(grad_dec_norm, _EPS)
+            hess_scale = hess_cls_norm / max(hess_dec_norm, _EPS)
+            scale = max(float(np.sqrt(max(grad_scale, _EPS) * max(hess_scale, _EPS))), 1.0)
+            return (
+                scale,
+                pilot_rounds,
+                cls_loss_ref,
+                decor_loss_ref,
+                grad_cls_norm,
+                grad_dec_norm,
+                hess_cls_norm,
+                hess_dec_norm,
+            )
 
         def _train_with_params(extra_params):
-            decor_scale, pilot_rounds, cls_loss_ref, decor_loss_ref = _calibrate_decor_scale(extra_params)
+            (
+                decor_scale,
+                pilot_rounds,
+                cls_loss_ref,
+                decor_loss_ref,
+                grad_cls_norm,
+                grad_dec_norm,
+                hess_cls_norm,
+                hess_dec_norm,
+            ) = _calibrate_decor_scale(extra_params)
             log_message(
                 f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}, "
                 f"pilot_rounds={pilot_rounds}, pilot_classification_loss={cls_loss_ref:.6g}, "
-                f"pilot_decorrelation_loss_unit_scale={decor_loss_ref:.6g}"
+                f"pilot_decorrelation_loss_unit_scale={decor_loss_ref:.6g}, "
+                f"pilot_grad_norms=({grad_cls_norm:.6g},{grad_dec_norm:.6g}), "
+                f"pilot_hess_norms=({hess_cls_norm:.6g},{hess_dec_norm:.6g})"
             )
             recorder = _TotalLossMetricRecorder(
                 [
