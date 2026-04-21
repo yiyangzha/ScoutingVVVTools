@@ -68,7 +68,7 @@
       "is_signal": true,
       "xsection": 58.5,
       "lumi": -1,
-      "raw_entries": -1
+      "raw_entries": 3395977
     },
     {
       "name": "wminush",
@@ -78,7 +78,7 @@
       "is_signal": true,
       "xsection": 37.4,
       "lumi": -1,
-      "raw_entries": -1
+      "raw_entries": 3294412
     },
     {
       "name": "qcd_ht40to70",
@@ -208,7 +208,7 @@
     },
     {
       "name": "ttbar_semilep",
-      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v3/260416_050014",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v3/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8",
       "sample_ID": 22,
       "is_MC": true,
       "is_signal": false,
