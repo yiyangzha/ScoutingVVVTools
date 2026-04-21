@@ -748,7 +748,11 @@ def main() -> None:
     decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
 
     log_message("Loading signal region file")
-    load_branches = sorted(set(model_branches) | set(thresholds.keys()))
+    # Load every branch needed downstream: BDT features (model_branches), all
+    # threshold branches (for filter_X and the mass pass/fail masks), and every
+    # decorrelate branch (in case decorrelation references a branch not in
+    # branch.json). BDT inference still uses only model_branches.
+    load_branches = sorted(set(model_branches) | set(thresholds.keys()) | set(decorrelate))
     signal_regions = _load_signal_regions()
     region_labels = [f"SR{int(idx)}" for idx in signal_regions["bin_index"].tolist()]
     edges = np.arange(len(region_labels) + 1, dtype=float)

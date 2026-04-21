@@ -842,9 +842,21 @@ def main():
                    for k, v in sel.get("thresholds", {}).items()}
     decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
 
+    # Threshold and decorrelate branches that are NOT declared in branch.json
+    # still need to be read from the ROOT files so filter_X can cut on them and
+    # the decorrelation step can reference them. They are removed from X before
+    # model inference so the BDT input feature set stays strictly defined by
+    # branch.json (mirrors train.py).
+    extra_cols = []
+    for c in list(thresholds.keys()) + list(decorrelate):
+        if c not in branches and c not in extra_cols:
+            extra_cols.append(c)
+    load_cols = branches + extra_cols
+    drop_after_filter = [c for c in extra_cols if c not in decorrelate]
+
     # Load the test data once; the physics weights stay fixed afterwards.
-    df_all = load_test_data(branches)
-    X             = df_all[branches].copy()
+    df_all = load_test_data(load_cols)
+    X             = df_all[load_cols].copy()
     y             = df_all["class_idx"].values.astype(int)
     w             = df_all["weight"].values.astype(float)
     sample_labels = df_all["sample_name"].values
@@ -854,13 +866,16 @@ def main():
     # Apply threshold filtering without changing the fixed weights.
     log_message("Applying thresholds")
     X, y, w, sample_labels = filter_X(
-        X, y, w, branches, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
+        X, y, w, load_cols, thresholds, apply_to_sentinel=True, sample_labels=sample_labels
     )
     log_message(f"After filtering: {len(X)} events")
 
     # Apply the same feature standardization used in train.py.
     log_message("Standardising features")
     X = standardize_X(X, clip_ranges, log_tf)
+
+    if drop_after_filter:
+        X = X.drop(columns=drop_after_filter, errors="ignore")
 
     # Drop the decorrelated features before model inference, exactly as in training.
     all_feature_names = list(X.columns)

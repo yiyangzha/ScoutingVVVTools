@@ -1253,6 +1253,18 @@ def main():
         decorrelate = cfg.get(tree_name, {}).get("decorrelate", [])
         model_path = MODEL_PATTERN.format(output_root=output_root, tree_name=tree_name)
 
+        # Threshold and decorrelate branches that are NOT declared in branch.json
+        # still need to be read from the ROOT files so filter_X can cut on them
+        # and the decorrelation machinery can reference them. They are removed
+        # from X before training so the BDT input feature set stays strictly
+        # defined by branch.json.
+        extra_cols = []
+        for c in list(thresholds.keys()) + list(decorrelate):
+            if c not in branches and c not in extra_cols:
+                extra_cols.append(c)
+        load_cols = branches + extra_cols
+        drop_after_filter = [c for c in extra_cols if c not in decorrelate]
+
         log_message(
             f"Running train.py for tree = {tree_name}, output = {output_root}, classes = {NUM_CLASSES}"
         )
@@ -1264,19 +1276,19 @@ def main():
 
         log_message(f"Loading training split for tree = {tree_name}")
         X_train, y_train, w_train, sample_labels_train = prepare_split_data(
-            tree_name, branches, "train", split_plans, shuffle=True
+            tree_name, load_cols, "train", split_plans, shuffle=True
         )
         check_weights(w_train, f"{tree_name}_train_weight_before_filter")
 
         log_message(f"Loading test split for tree = {tree_name}")
         X_test, y_test, w_test, sample_labels_test = prepare_split_data(
-            tree_name, branches, "test", split_plans, shuffle=False
+            tree_name, load_cols, "test", split_plans, shuffle=False
         )
         check_weights(w_test, f"{tree_name}_test_weight_before_filter")
 
         log_message(f"Applying thresholds for training split of tree = {tree_name}")
         X_train, y_train, w_train, sample_labels_train = filter_X(
-            X_train, y_train, w_train, branches, thresholds, apply_to_sentinel=True,
+            X_train, y_train, w_train, load_cols, thresholds, apply_to_sentinel=True,
             sample_labels=sample_labels_train
         )
         _validate_filtered_split(tree_name, "train", y_train, w_train, sample_labels_train)
@@ -1284,11 +1296,15 @@ def main():
 
         log_message(f"Applying thresholds for test split of tree = {tree_name}")
         X_test, y_test, w_test, sample_labels_test = filter_X(
-            X_test, y_test, w_test, branches, thresholds, apply_to_sentinel=True,
+            X_test, y_test, w_test, load_cols, thresholds, apply_to_sentinel=True,
             sample_labels=sample_labels_test
         )
         _validate_filtered_split(tree_name, "test", y_test, w_test, sample_labels_test)
         check_weights(w_test, f"{tree_name}_test_weight_after_filter")
+
+        if drop_after_filter:
+            X_train = X_train.drop(columns=drop_after_filter, errors="ignore")
+            X_test = X_test.drop(columns=drop_after_filter, errors="ignore")
 
         log_message(f"Standardising training split for tree = {tree_name}")
         X_train_std = standardize_X(X_train.copy(), clip_ranges, log_tf)
