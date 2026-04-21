@@ -43,16 +43,16 @@ Modes:
   Output: pileup CSV files under the configured `output_root`, plus `selections/weight/log.txt`.
 - `mode=2`: run `selections/BDT/train.py`.
   Input: `selections/BDT/config.json`, the converted ROOT files from `mode=0`, and `src/sample.json`.
-  Output: one trained BDT directory per tree under `output_root`, containing the model, plots, copied `config.json` / `branch.json` / `selection.json`, and `test_ranges.json`, plus `selections/BDT/log.txt`.
+  Output: one trained BDT directory per tree under `output_root`, containing the model, plots, copied `config.json` / `branch.json` / `selection.json`, `test_ranges.json`, and the saved test-set prediction references `test_reference_signal_region.npz` / `test_reference_qcd_est.npz`, plus `selections/BDT/log.txt`.
 - `mode=3`: run `selections/signal_region/signal_region.py`.
   Input: `selections/signal_region/config.json` and one trained BDT directory from `mode=2`.
-  Output: `sr_score_*.pdf`, `sr_regions_2d.pdf`, and `signal_region.csv` inside the configured `output_dir`, plus `selections/signal_region/log.txt`.
+  Output: `sr_score_*.pdf`, `sr_regions_2d.pdf`, and `signal_region.csv` inside the configured `output_dir`, plus `selections/signal_region/log.txt`. Before scanning, the script reloads the saved model, reproduces the test-split prediction used in training, and aborts if it does not match `test_reference_signal_region.npz` within the stored tolerances.
 - `mode=4`: run `plotting/data_mc.py`.
   Input: `plotting/config.json`, `plotting/branch.json`, the converted ROOT files from `mode=0`, and one trained BDT directory from `mode=2`.
   Output: one PDF per plotted branch under the configured `output_root`, plus `plotting/log.txt`.
 - `mode=5`: run `background_estimation/qcd_est.py`.
   Input: `background_estimation/config.json`, one trained BDT directory from `mode=2`, and the `signal_region.csv` written by `mode=3`.
-  Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`. The ROOT file stores `yield`, `stat_error`, `scale_error`, and `covariance_total` for each saved category.
+  Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`. The ROOT file stores `yield`, `stat_error`, `scale_error`, and `covariance_total` for each saved category. Before building the ABCD regions, the script reloads the saved model, reproduces the test-split prediction used for the `qcd_est.py` preprocessing chain, and aborts if it does not match `test_reference_qcd_est.npz` within the stored tolerances.
 
 Sample arguments:
 
@@ -77,7 +77,7 @@ Sample arguments:
 
 - `mode=1` writes the pileup CSVs used by `mode=0` for MC samples.
 - `mode=0` writes the converted `fat2` and `fat3` ROOT trees used by `mode=2` and `mode=4`.
-- `mode=2` writes the model and copied configs used by `mode=3`, `mode=4`, and `mode=5`.
+- `mode=2` writes the model, copied configs, and saved test-set prediction references used by `mode=3`, `mode=4`, and `mode=5`.
 - `mode=3` writes `signal_region.csv`, which defines the A-region score bins for `mode=5`.
 - `mode=5` writes the ABCD validation ROOT file and PDFs for the chosen tree.
 - `mode=4` writes one data/MC comparison PDF per branch.

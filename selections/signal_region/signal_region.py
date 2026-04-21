@@ -74,6 +74,7 @@ sample_cfg = _load_json(_sample_cfg_path)
 
 TREE_NAME     = test_meta["tree_name"]
 MODEL_PATTERN = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
+TEST_REFERENCE_SIGNAL_REGION = os.path.join(BDT_ROOT, "test_reference_signal_region.npz")
 
 
 # -------------------- Sample registry --------------------
@@ -270,6 +271,61 @@ def _predict_model_proba(model, X):
         margins = model.predict(dmat, output_margin=True)
         return _softmax_rows(_reshape_multiclass_margin(margins, NUM_CLASSES))
     return model.predict_proba(X)
+
+
+def _compare_prediction_reference(path, feature_names, sample_labels, class_idx, weights, proba):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Prediction reference not found: {path}. Re-run train.py before signal_region.py."
+        )
+
+    ref = np.load(path, allow_pickle=False)
+    ref_features = ref["feature_names"].astype(str).tolist()
+    cur_features = list(feature_names)
+    if cur_features != ref_features:
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region model features: "
+            f"current={cur_features}, reference={ref_features}"
+        )
+
+    ref_samples = ref["sample_name"].astype(str)
+    cur_samples = np.asarray(sample_labels, dtype=str)
+    if not np.array_equal(cur_samples, ref_samples):
+        raise RuntimeError("Prediction reference mismatch for signal_region sample order/content")
+
+    ref_class_idx = ref["class_idx"].astype(int)
+    cur_class_idx = np.asarray(class_idx, dtype=int)
+    if not np.array_equal(cur_class_idx, ref_class_idx):
+        raise RuntimeError("Prediction reference mismatch for signal_region class labels")
+
+    ref_weights = ref["weight"].astype(float)
+    cur_weights = np.asarray(weights, dtype=float)
+    weight_rtol = float(ref["weight_rtol"])
+    weight_atol = float(ref["weight_atol"])
+    if not np.allclose(cur_weights, ref_weights, rtol=weight_rtol, atol=weight_atol):
+        diff = float(np.max(np.abs(cur_weights - ref_weights)))
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region weights: "
+            f"max_abs_diff={diff:.6g}, rtol={weight_rtol}, atol={weight_atol}"
+        )
+
+    ref_proba = ref["proba"].astype(float)
+    cur_proba = np.asarray(proba, dtype=float)
+    proba_rtol = float(ref["proba_rtol"])
+    proba_atol = float(ref["proba_atol"])
+    if cur_proba.shape != ref_proba.shape:
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region probabilities shape: "
+            f"current={cur_proba.shape}, reference={ref_proba.shape}"
+        )
+    if not np.allclose(cur_proba, ref_proba, rtol=proba_rtol, atol=proba_atol):
+        diff = float(np.max(np.abs(cur_proba - ref_proba)))
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region probabilities: "
+            f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
+        )
+
+    log_message(f"Validated prediction reference: {path}")
 
 
 # -------------------- Threshold filtering --------------------
@@ -933,6 +989,15 @@ def main():
     log_message("Running BDT prediction")
     proba = _predict_model_proba(clf, X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
+    log_message("Validating test-set prediction reference")
+    _compare_prediction_reference(
+        TEST_REFERENCE_SIGNAL_REGION,
+        X_model.columns if hasattr(X_model, "columns") else [f"f{i}" for i in range(X_model.shape[1])],
+        sample_labels,
+        y,
+        w,
+        proba,
+    )
 
     # Plot the weighted score distributions.
     log_message("Plotting score distributions")

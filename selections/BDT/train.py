@@ -143,6 +143,10 @@ def _figure_path(output_root, stem):
     return os.path.join(output_root, f"{stem}.pdf")
 
 
+def _reference_path(output_root, stem):
+    return os.path.join(output_root, f"{stem}.npz")
+
+
 # -------------------- Data loading --------------------
 def _report_sample_weights(df_all, stage_label):
     log_message(f"{stage_label}:")
@@ -1580,6 +1584,61 @@ def _validate_filtered_split(tree_name, split_name, y, w, sample_labels):
         )
 
 
+def _split_mass_thresholds(thresholds):
+    mass_thresholds = {}
+    other_thresholds = {}
+    for name, cond in thresholds.items():
+        if str(name).startswith("ScoutingFatPFJetRecluster_msoftdrop_"):
+            mass_thresholds[name] = cond
+        else:
+            other_thresholds[name] = cond
+    return mass_thresholds, other_thresholds
+
+
+def _drop_decorrelated_features(X, decorrelate_feature_names):
+    if not decorrelate_feature_names:
+        return X.copy()
+    X_out = X.copy()
+    drop_cols = [name for name in decorrelate_feature_names if name in X_out.columns]
+    if drop_cols:
+        X_out = X_out.drop(columns=drop_cols)
+    return X_out
+
+
+def _write_prediction_reference(
+    output_root,
+    stem,
+    tree_name,
+    pipeline_name,
+    feature_names,
+    sample_labels,
+    class_idx,
+    weights,
+    proba,
+    *,
+    weight_rtol=1e-10,
+    weight_atol=1e-12,
+    proba_rtol=1e-6,
+    proba_atol=1e-9,
+):
+    path = _reference_path(output_root, stem)
+    np.savez_compressed(
+        path,
+        tree_name=np.asarray(str(tree_name)),
+        pipeline_name=np.asarray(str(pipeline_name)),
+        feature_names=np.asarray(list(feature_names), dtype=str),
+        sample_name=np.asarray(sample_labels, dtype=str),
+        class_idx=np.asarray(class_idx, dtype=np.int32),
+        weight=np.asarray(weights, dtype=np.float64),
+        proba=np.asarray(proba, dtype=np.float64),
+        weight_rtol=np.asarray(float(weight_rtol)),
+        weight_atol=np.asarray(float(weight_atol)),
+        proba_rtol=np.asarray(float(proba_rtol)),
+        proba_atol=np.asarray(float(proba_atol)),
+    )
+    log_message(f"Wrote reference file: {path}")
+
+
 def main():
     for tree_name in SUBMIT_TREES:
         output_root = _resolve_output_root(tree_name)
@@ -1625,6 +1684,10 @@ def main():
             tree_name, load_cols, "test", split_plans, shuffle=False
         )
         check_weights(w_test, f"{tree_name}_test_weight_before_filter")
+        X_test_unfiltered = X_test.copy()
+        y_test_unfiltered = y_test.copy()
+        w_test_unfiltered = w_test.copy()
+        sample_labels_test_unfiltered = np.asarray(sample_labels_test).copy()
 
         log_message(f"Applying thresholds for training split of tree = {tree_name}")
         X_train, y_train, w_train, sample_labels_train = filter_X(
@@ -1657,6 +1720,49 @@ def main():
             X_test_std, y_test, w_test,
             model_path, tree_name,
             decorrelate_feature_names=decorrelate
+        )
+
+        X_test_signal_model = _drop_decorrelated_features(X_test_std, decorrelate)
+        proba_signal_test = _predict_proba(clf, X_test_signal_model)
+        _write_prediction_reference(
+            output_root,
+            "test_reference_signal_region",
+            tree_name,
+            "signal_region",
+            X_test_signal_model.columns,
+            sample_labels_test,
+            y_test,
+            w_test,
+            proba_signal_test,
+        )
+
+        mass_thresholds, bdt_thresholds = _split_mass_thresholds(thresholds)
+        log_message(
+            f"Preparing qcd_est reference for tree = {tree_name}: "
+            f"non_mass_thresholds={len(bdt_thresholds)}, mass_thresholds={len(mass_thresholds)}"
+        )
+        X_test_qcd_raw, y_test_qcd, w_test_qcd, sample_labels_test_qcd = filter_X(
+            X_test_unfiltered,
+            y_test_unfiltered,
+            w_test_unfiltered,
+            load_cols,
+            bdt_thresholds,
+            apply_to_sentinel=True,
+            sample_labels=sample_labels_test_unfiltered,
+        )
+        X_test_qcd_model = standardize_X(X_test_qcd_raw[branches].copy(), clip_ranges, log_tf)
+        X_test_qcd_model = _drop_decorrelated_features(X_test_qcd_model, decorrelate)
+        proba_qcd_test = _predict_proba(clf, X_test_qcd_model)
+        _write_prediction_reference(
+            output_root,
+            "test_reference_qcd_est",
+            tree_name,
+            "qcd_est",
+            X_test_qcd_model.columns,
+            sample_labels_test_qcd,
+            y_test_qcd,
+            w_test_qcd,
+            proba_qcd_test,
         )
 
         log_message(f"Plotting results for tree = {tree_name}")
