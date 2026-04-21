@@ -68,7 +68,6 @@ INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"
 INPUT_PATTERN      = cfg["input_pattern"]
 OUTPUT_ROOT_PATTERN = cfg.get("output_root", ".")
 MODEL_PATTERN      = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
-CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
 
 if not 0.0 < TRAIN_FRACTION < 1.0:
     raise ValueError(f"train_fraction must be in (0, 1), got {TRAIN_FRACTION}")
@@ -205,13 +204,16 @@ def _validate_class_weight_totals(df_all):
 
 def _rebalance_class_weights(df_all):
     df_all = df_all.copy()
+    target_total_per_class = float(len(df_all)) / float(NUM_CLASSES) if len(df_all) > 0 else 0.0
     for cls_idx, cls_name in enumerate(CLASS_NAMES):
         mask = df_all["class_idx"] == cls_idx
         w_sum = float(df_all.loc[mask, "weight"].sum())
         if w_sum > 0.0:
-            scale = CLASS_TARGET_WEIGHT / w_sum
+            scale = target_total_per_class / w_sum
             df_all.loc[mask, "weight"] *= scale
-            log_message(f"  {cls_name}: total_w={w_sum:.4g}, scale={scale:.4g}")
+            log_message(
+                f"  {cls_name}: total_w={w_sum:.4g}, target_total={target_total_per_class:.4g}, scale={scale:.4g}"
+            )
     _validate_class_weight_totals(df_all)
     return df_all
 
@@ -395,7 +397,7 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
             target_total = xsec * (float(total_tree_entries) / float(raw_entries))
 
         if target_total <= 0.0:
-            df["weight"] = 0.0
+            df["weight_physics"] = 0.0
             sample_target_totals[sample_name] = 0.0
             if xsec <= 0.0:
                 log_warning(
@@ -408,11 +410,14 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
                     f"Sample '{sample_name}' has non-positive raw weight sum "
                     f"{raw_w_sum:.6g} in split '{split_name}' of tree '{tree_name}'"
                 )
-            df["weight"] = raw_w * (target_total / raw_w_sum)
+            df["weight_physics"] = raw_w * (target_total / raw_w_sum)
             sample_target_totals[sample_name] = target_total
+        if "weight_physics" not in df.columns:
+            df["weight_physics"] = 0.0
 
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
+        df["weight"] = df["weight_physics"]
         dfs.append(df)
 
         log_message(
@@ -448,11 +453,12 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
     X = df_all[branches].copy()
     y = df_all["class_idx"].values.astype(int)
     w = df_all["weight"].values
+    w_physics = df_all["weight_physics"].values
     sample_labels = df_all["sample_name"].astype(str).values
 
     del df_all
     gc.collect()
-    return X, y, w, sample_labels
+    return X, y, w, sample_labels, w_physics
 
 
 def write_split_metadata(output_root, tree_name, split_plans):
@@ -864,20 +870,15 @@ def _multiclass_classification_terms(labels, logits, weights, num_class):
     logits = _reshape_multiclass_margin(logits, num_class, labels.size)
     probs = _softmax_rows(logits)
 
-    class_w_sum = np.bincount(labels, weights=weights, minlength=num_class).astype(float)
-    class_w_sum[class_w_sum <= _EPS] = _EPS
-    scale = float(labels.size) / float(num_class) if labels.size > 0 else 1.0
-    w_eff = (weights / class_w_sum[labels]) * scale
-
     grad = probs.copy()
     grad[np.arange(labels.size), labels] -= 1.0
-    grad *= w_eff[:, None]
-    hess = np.maximum(2.0 * probs * (1.0 - probs) * w_eff[:, None], 1e-6)
-    loss = float(np.sum(w_eff * (-np.log(probs[np.arange(labels.size), labels] + _EPS))))
+    grad *= weights[:, None]
+    hess = np.maximum(2.0 * probs * (1.0 - probs) * weights[:, None], 1e-6)
+    loss = float(np.sum(weights * (-np.log(probs[np.arange(labels.size), labels] + _EPS))))
     return probs, grad, hess, loss
 
 
-def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class):
+def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class, decor_scale=1.0):
     labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
     logits = _reshape_multiclass_margin(logits, num_class, labels.size)
@@ -927,33 +928,38 @@ def _decorrelation_loss_components(logits, labels, weights, decor_state, num_cla
         else:
             raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
 
-        loss += float(cls_loss)
-        grad[:, cls_idx] = cls_grad
-        hess[:, cls_idx] = cls_hess
+        loss += float(decor_scale * cls_loss)
+        grad[:, cls_idx] = decor_scale * cls_grad
+        hess[:, cls_idx] = decor_scale * cls_hess
 
     return float(loss), grad, hess
 
 
-def _loss_components(logits, labels, weights, decor_state, num_class, lam):
+def _loss_components(logits, labels, weights, decor_state, num_class, lam, decor_scale):
+    labels = np.asarray(labels, dtype=int).ravel()
     _, _, _, cls_loss = _multiclass_classification_terms(labels, logits, weights, num_class)
-    decor_loss, _, _ = _decorrelation_loss_components(logits, labels, weights, decor_state, num_class)
+    decor_loss_raw, _, _ = _decorrelation_loss_components(
+        logits, labels, weights, decor_state, num_class, decor_scale
+    )
+    decor_loss = float(lam * decor_loss_raw)
     return {
         "classification": float(cls_loss),
-        "decorrelation": float(lam * decor_loss),
-        "total": float(cls_loss + lam * decor_loss),
+        "decorrelation": decor_loss,
+        "total": float(cls_loss + decor_loss),
     }
 
 
-def _make_multiclass_objective(num_class, decor_state, w_train, lam):
-    w_train = np.asarray(w_train, dtype=float).ravel()
-
+def _make_multiclass_objective(num_class, decor_state, lam, decor_scale):
     def obj(predt, dtrain):
         labels = dtrain.get_label().astype(int)
+        weights = dtrain.get_weight()
+        if weights.size == 0:
+            weights = np.ones(labels.size, dtype=float)
         logits = _reshape_multiclass_margin(predt, num_class, labels.size)
-        _, grad_cls, hess_cls, _ = _multiclass_classification_terms(labels, logits, w_train, num_class)
+        _, grad_cls, hess_cls, _ = _multiclass_classification_terms(labels, logits, weights, num_class)
         if lam > 0.0 and decor_state.get("mode", "none") != "none":
             _, grad_dec, hess_dec = _decorrelation_loss_components(
-                logits, labels, w_train, decor_state, num_class
+                logits, labels, weights, decor_state, num_class, decor_scale
             )
             grad = grad_cls + lam * grad_dec
             hess = hess_cls + lam * hess_dec
@@ -966,10 +972,11 @@ def _make_multiclass_objective(num_class, decor_state, w_train, lam):
 
 
 class _TotalLossMetricRecorder:
-    def __init__(self, datasets, num_class, lam):
+    def __init__(self, datasets, num_class, lam, decor_scale):
         self.datasets = list(datasets)
         self.num_class = int(num_class)
         self.lam = float(lam)
+        self.decor_scale = float(decor_scale)
         self._call_idx = 0
         self.history = {
             tag: {"classification": [], "decorrelation": [], "total": []}
@@ -980,10 +987,48 @@ class _TotalLossMetricRecorder:
         tag, labels, weights, decor_state = self.datasets[self._call_idx % len(self.datasets)]
         self._call_idx += 1
         logits = _reshape_multiclass_margin(predt, self.num_class, len(labels))
-        comp = _loss_components(logits, labels, weights, decor_state, self.num_class, self.lam)
+        comp = _loss_components(
+            logits, labels, weights, decor_state, self.num_class, self.lam, self.decor_scale
+        )
         for key in ("classification", "decorrelation", "total"):
             self.history[tag][key].append(comp[key])
         return "total_loss", comp["total"]
+
+
+def _loss_value_at(loss_history, split_name, metric_key, epoch):
+    values = loss_history.get(split_name, {}).get(metric_key, [])
+    return values[epoch] if epoch < len(values) else float("nan")
+
+
+def _format_detailed_loss_line(epoch, loss_history):
+    return (
+        f"[{epoch}]"
+        f"\ttrain-classification_loss:{_loss_value_at(loss_history, 'train', 'classification', epoch):.5f}"
+        f"\ttrain-decorrelation_loss:{_loss_value_at(loss_history, 'train', 'decorrelation', epoch):.5f}"
+        f"\ttrain-total_loss:{_loss_value_at(loss_history, 'train', 'total', epoch):.5f}"
+        f"\ttest-classification_loss:{_loss_value_at(loss_history, 'test', 'classification', epoch):.5f}"
+        f"\ttest-decorrelation_loss:{_loss_value_at(loss_history, 'test', 'decorrelation', epoch):.5f}"
+        f"\ttest-total_loss:{_loss_value_at(loss_history, 'test', 'total', epoch):.5f}"
+    )
+
+
+def _log_detailed_loss_history(loss_history):
+    n_rounds = 0
+    for metrics in loss_history.values():
+        for values in metrics.values():
+            n_rounds = max(n_rounds, len(values))
+    for epoch in range(n_rounds):
+        log_message(_format_detailed_loss_line(epoch, loss_history))
+
+
+class _DetailedLossMonitor(xgb.callback.TrainingCallback):
+    def __init__(self, recorder):
+        self.recorder = recorder
+
+    def after_iteration(self, model, epoch, evals_log):
+        del model, evals_log
+        log_message(_format_detailed_loss_line(epoch, self.recorder.history))
+        return False
 
 
 def _trim_loss_history(loss_history, n_rounds):
@@ -1080,10 +1125,15 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
     if use_decor:
+        decor_scale = max(float(np.sum(w_train)), 1.0)
         dtrain = _make_dmatrix(X_train, y_train, w_train)
         dtest = _make_dmatrix(X_test, y_test, w_test)
         train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE)
         test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE)
+        log_message(
+            f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}, "
+            f"train_weight_sum={float(np.sum(w_train)):.6g}"
+        )
         recorder = _TotalLossMetricRecorder(
             [
                 ("train", y_train, w_train, train_decor_state),
@@ -1091,8 +1141,9 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             ],
             NUM_CLASSES,
             DECOR_LAMBDA,
+            decor_scale,
         )
-        custom_obj = _make_multiclass_objective(NUM_CLASSES, train_decor_state, w_train, DECOR_LAMBDA)
+        custom_obj = _make_multiclass_objective(NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale)
 
         train_params = dict(
             num_class=NUM_CLASSES,
@@ -1117,7 +1168,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                 evals=[(dtrain, "train"), (dtest, "test")],
                 obj=custom_obj,
                 early_stopping_rounds=10,
-                verbose_eval=True,
+                verbose_eval=False,
+                callbacks=[_DetailedLossMonitor(recorder)],
             )
             try:
                 return xgb.train(custom_metric=recorder, **train_kwargs)
@@ -1166,7 +1218,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             sample_weight=w_train,
             eval_set=[(X_train, y_train), (X_test, y_test)],
             sample_weight_eval_set=[w_train, w_test],
-            verbose=True,
+            verbose=False,
         )
         return clf
 
@@ -1181,6 +1233,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     if best_iteration is not None and best_iteration >= 0:
         n_rounds = min(n_rounds, int(best_iteration) + 1)
         loss_history = _trim_loss_history(loss_history, n_rounds)
+    _log_detailed_loss_history(loss_history)
 
     if model_name.endswith(".json"):
         save_path = model_name
@@ -1674,19 +1727,21 @@ def main():
         write_split_metadata(output_root, tree_name, split_plans)
 
         log_message(f"Loading training split for tree = {tree_name}")
-        X_train, y_train, w_train, sample_labels_train = prepare_split_data(
+        X_train, y_train, w_train, sample_labels_train, _ = prepare_split_data(
             tree_name, load_cols, "train", split_plans, shuffle=True
         )
         check_weights(w_train, f"{tree_name}_train_weight_before_filter")
 
         log_message(f"Loading test split for tree = {tree_name}")
-        X_test, y_test, w_test, sample_labels_test = prepare_split_data(
+        X_test, y_test, w_test, sample_labels_test, w_test_physics = prepare_split_data(
             tree_name, load_cols, "test", split_plans, shuffle=False
         )
         check_weights(w_test, f"{tree_name}_test_weight_before_filter")
+        check_weights(w_test_physics, f"{tree_name}_test_physics_weight_before_filter")
         X_test_unfiltered = X_test.copy()
         y_test_unfiltered = y_test.copy()
         w_test_unfiltered = w_test.copy()
+        w_test_physics_unfiltered = w_test_physics.copy()
         sample_labels_test_unfiltered = np.asarray(sample_labels_test).copy()
 
         log_message(f"Applying thresholds for training split of tree = {tree_name}")
@@ -1702,12 +1757,25 @@ def main():
             X_test, y_test, w_test, load_cols, thresholds, apply_to_sentinel=True,
             sample_labels=sample_labels_test
         )
+        X_test_ref, y_test_ref, w_test_ref, sample_labels_test_ref = filter_X(
+            X_test_unfiltered.copy(),
+            y_test_unfiltered.copy(),
+            w_test_physics_unfiltered.copy(),
+            load_cols,
+            thresholds,
+            apply_to_sentinel=True,
+            sample_labels=sample_labels_test_unfiltered.copy(),
+        )
+        if not X_test_ref.index.equals(X_test.index):
+            raise RuntimeError("Filtered model/reference test splits are misaligned")
         _validate_filtered_split(tree_name, "test", y_test, w_test, sample_labels_test)
         check_weights(w_test, f"{tree_name}_test_weight_after_filter")
+        check_weights(w_test_ref, f"{tree_name}_test_physics_weight_after_filter")
 
         if drop_after_filter:
             X_train = X_train.drop(columns=drop_after_filter, errors="ignore")
             X_test = X_test.drop(columns=drop_after_filter, errors="ignore")
+            X_test_ref = X_test_ref.drop(columns=drop_after_filter, errors="ignore")
 
         log_message(f"Standardising training split for tree = {tree_name}")
         X_train_std = standardize_X(X_train.copy(), clip_ranges, log_tf)
@@ -1730,9 +1798,9 @@ def main():
             tree_name,
             "signal_region",
             X_test_signal_model.columns,
-            sample_labels_test,
-            y_test,
-            w_test,
+            sample_labels_test_ref,
+            y_test_ref,
+            w_test_ref,
             proba_signal_test,
         )
 
@@ -1750,6 +1818,17 @@ def main():
             apply_to_sentinel=True,
             sample_labels=sample_labels_test_unfiltered,
         )
+        X_test_qcd_ref, y_test_qcd_ref, w_test_qcd_ref, sample_labels_test_qcd_ref = filter_X(
+            X_test_unfiltered.copy(),
+            y_test_unfiltered.copy(),
+            w_test_physics_unfiltered.copy(),
+            load_cols,
+            bdt_thresholds,
+            apply_to_sentinel=True,
+            sample_labels=sample_labels_test_unfiltered.copy(),
+        )
+        if not X_test_qcd_ref.index.equals(X_test_qcd_raw.index):
+            raise RuntimeError("Filtered qcd_est model/reference test splits are misaligned")
         X_test_qcd_model = standardize_X(X_test_qcd_raw[branches].copy(), clip_ranges, log_tf)
         X_test_qcd_model = _drop_decorrelated_features(X_test_qcd_model, decorrelate)
         proba_qcd_test = _predict_proba(clf, X_test_qcd_model)
@@ -1759,9 +1838,9 @@ def main():
             tree_name,
             "qcd_est",
             X_test_qcd_model.columns,
-            sample_labels_test_qcd,
-            y_test_qcd,
-            w_test_qcd,
+            sample_labels_test_qcd_ref,
+            y_test_qcd_ref,
+            w_test_qcd_ref,
             proba_qcd_test,
         )
 
