@@ -10,6 +10,7 @@
   "random_state": 42,
   "decor_lambda": 10,
   "decor_loss_mode": "smooth_cvm",
+  "decor_hess_floor_c": "pilot",
   "class_groups": {
     "VVV": ["www", "wwz", "wzz", "zzz"],
     "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
@@ -27,6 +28,7 @@
     "reg_lambda": 1,
     "reg_alpha": 1,
     "min_child_weight": 3,
+    "early_stopping_rounds": 10,
     "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
     "event_reweight_branches": ["weight_pu"]
   },
@@ -38,6 +40,7 @@
     "reg_lambda": 10,
     "reg_alpha": 10,
     "min_child_weight": 3,
+    "early_stopping_rounds": 10,
     "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
     "event_reweight_branches": ["weight_pu"]
   }
