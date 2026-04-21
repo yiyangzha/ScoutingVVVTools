@@ -265,7 +265,7 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
     if not np.array_equal(cur_class_idx, ref_class_idx):
         raise RuntimeError("Prediction reference mismatch for qcd_est class labels")
 
-    ref_weights = ref["weight"].astype(float)
+    ref_weights = ref["weight"].astype(float) * LUMI
     cur_weights = np.asarray(weights, dtype=float)
     weight_rtol = float(ref["weight_rtol"])
     weight_atol = float(ref["weight_atol"])
