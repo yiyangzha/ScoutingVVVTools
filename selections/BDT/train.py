@@ -945,6 +945,7 @@ def _loss_components(logits, labels, weights, decor_state, num_class, lam, decor
     return {
         "classification": float(cls_loss),
         "decorrelation": decor_loss,
+        "regularization": 0.0,
         "total": float(cls_loss + decor_loss),
     }
 
@@ -971,6 +972,29 @@ def _make_multiclass_objective(num_class, decor_state, lam, decor_scale):
     return obj
 
 
+def _collect_leaf_weights(node, out):
+    if "leaf" in node:
+        out.append(float(node["leaf"]))
+        return
+    for child in node.get("children", []):
+        _collect_leaf_weights(child, out)
+
+
+def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma):
+    booster = model.get_booster() if hasattr(model, "get_booster") else model
+    total = 0.0
+    for tree_json in booster.get_dump(dump_format="json"):
+        leaf_weights = []
+        _collect_leaf_weights(json.loads(tree_json), leaf_weights)
+        if not leaf_weights:
+            continue
+        leaf_weights = np.asarray(leaf_weights, dtype=float)
+        total += float(gamma) * float(leaf_weights.size)
+        total += 0.5 * float(reg_lambda) * float(np.sum(leaf_weights * leaf_weights))
+        total += float(reg_alpha) * float(np.sum(np.abs(leaf_weights)))
+    return float(total)
+
+
 class _TotalLossMetricRecorder:
     def __init__(self, datasets, num_class, lam, decor_scale):
         self.datasets = list(datasets)
@@ -979,7 +1003,7 @@ class _TotalLossMetricRecorder:
         self.decor_scale = float(decor_scale)
         self._call_idx = 0
         self.history = {
-            tag: {"classification": [], "decorrelation": [], "total": []}
+            tag: {"classification": [], "decorrelation": [], "regularization": [], "total": []}
             for tag, _, _, _ in self.datasets
         }
 
@@ -990,9 +1014,24 @@ class _TotalLossMetricRecorder:
         comp = _loss_components(
             logits, labels, weights, decor_state, self.num_class, self.lam, self.decor_scale
         )
-        for key in ("classification", "decorrelation", "total"):
+        for key in ("classification", "decorrelation", "regularization", "total"):
             self.history[tag][key].append(comp[key])
         return "total_loss", comp["total"]
+
+    def finalize_iteration(self, reg_loss):
+        reg_loss = float(reg_loss)
+        for tag in self.history:
+            metrics = self.history[tag]
+            if len(metrics["regularization"]) < len(metrics["classification"]):
+                metrics["regularization"].append(reg_loss)
+            else:
+                metrics["regularization"][-1] = reg_loss
+            if metrics["total"]:
+                metrics["total"][-1] = (
+                    metrics["classification"][-1]
+                    + metrics["decorrelation"][-1]
+                    + metrics["regularization"][-1]
+                )
 
 
 def _loss_value_at(loss_history, split_name, metric_key, epoch):
@@ -1022,12 +1061,41 @@ def _log_detailed_loss_history(loss_history):
 
 
 class _DetailedLossMonitor(xgb.callback.TrainingCallback):
-    def __init__(self, recorder):
+    def __init__(self, recorder, reg_lambda, reg_alpha, gamma, early_stopping_rounds=None):
         self.recorder = recorder
+        self.reg_lambda = float(reg_lambda)
+        self.reg_alpha = float(reg_alpha)
+        self.gamma = float(gamma)
+        self.early_stopping_rounds = None if early_stopping_rounds is None else int(early_stopping_rounds)
+        self.cumulative_regularization = 0.0
+        self.best_iteration = None
+        self.best_score = float("inf")
+        self._stale_rounds = 0
 
     def after_iteration(self, model, epoch, evals_log):
-        del model, evals_log
+        del evals_log
+        self.cumulative_regularization += _booster_regularization_loss(
+            model[epoch:epoch + 1], self.reg_lambda, self.reg_alpha, self.gamma
+        )
+        self.recorder.finalize_iteration(self.cumulative_regularization)
         log_message(_format_detailed_loss_line(epoch, self.recorder.history))
+        current_score = _loss_value_at(self.recorder.history, "test", "total", epoch)
+        if np.isfinite(current_score) and (
+            self.best_iteration is None or current_score < self.best_score - 1e-12
+        ):
+            self.best_iteration = int(epoch)
+            self.best_score = float(current_score)
+            self._stale_rounds = 0
+            model.set_attr(best_iteration=str(self.best_iteration), best_score=str(self.best_score))
+        else:
+            self._stale_rounds += 1
+
+        if self.early_stopping_rounds is not None and self._stale_rounds >= self.early_stopping_rounds:
+            log_message(
+                "Info: early stopping on full total_loss "
+                f"(best_iteration={self.best_iteration}, best_test_total_loss={self.best_score:.5f})"
+            )
+            return True
         return False
 
 
@@ -1042,8 +1110,8 @@ def _trim_loss_history(loss_history, n_rounds):
 
 def _loss_history_from_classifier(clf):
     history = {
-        "train": {"classification": [], "decorrelation": [], "total": []},
-        "test": {"classification": [], "decorrelation": [], "total": []},
+        "train": {"classification": [], "decorrelation": [], "regularization": [], "total": []},
+        "test": {"classification": [], "decorrelation": [], "regularization": [], "total": []},
     }
     try:
         evals = clf.evals_result()
@@ -1064,9 +1132,11 @@ def _loss_history_from_classifier(clf):
 
     history["train"]["classification"] = train_loss
     history["train"]["decorrelation"] = [0.0] * n_rounds
+    history["train"]["regularization"] = [0.0] * n_rounds
     history["train"]["total"] = train_loss
     history["test"]["classification"] = test_loss[:n_rounds]
     history["test"]["decorrelation"] = [0.0] * n_rounds
+    history["test"]["regularization"] = [0.0] * n_rounds
     history["test"]["total"] = test_loss[:n_rounds]
     return history
 
@@ -1119,31 +1189,17 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     hp = cfg.get(tree_name, {})
     n_threads = max(1, min(16, os.cpu_count() or 1))
     num_boost_round = int(hp.get("n_estimators", 200))
+    early_stopping_rounds = 10
     log_message(f"Thread mode: XGBoost, threads = {n_threads}")
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
     if use_decor:
-        decor_scale = max(float(np.sum(w_train)), 1.0)
         dtrain = _make_dmatrix(X_train, y_train, w_train)
         dtest = _make_dmatrix(X_test, y_test, w_test)
         train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE)
         test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE)
-        log_message(
-            f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}, "
-            f"train_weight_sum={float(np.sum(w_train)):.6g}"
-        )
-        recorder = _TotalLossMetricRecorder(
-            [
-                ("train", y_train, w_train, train_decor_state),
-                ("test", y_test, w_test, test_decor_state),
-            ],
-            NUM_CLASSES,
-            DECOR_LAMBDA,
-            decor_scale,
-        )
-        custom_obj = _make_multiclass_objective(NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale)
 
         train_params = dict(
             num_class=NUM_CLASSES,
@@ -1160,28 +1216,79 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             tree_method="hist",
         )
 
+        def _calibrate_decor_scale(extra_params):
+            pilot_rounds = min(max(8, num_boost_round // 25), 32)
+            pilot = xgb.train(
+                params={**train_params, **extra_params},
+                dtrain=dtrain,
+                num_boost_round=pilot_rounds,
+                evals=[],
+                verbose_eval=False,
+            )
+            pilot_logits = _reshape_multiclass_margin(
+                pilot.predict(dtrain, output_margin=True), NUM_CLASSES, len(y_train)
+            )
+            _, _, _, cls_loss_ref = _multiclass_classification_terms(y_train, pilot_logits, w_train, NUM_CLASSES)
+            decor_loss_ref, _, _ = _decorrelation_loss_components(
+                pilot_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
+            )
+            fallback_scale = max(float(np.sum(w_train)), 1.0)
+            if not np.isfinite(decor_loss_ref) or decor_loss_ref <= _EPS:
+                log_warning(
+                    "Pilot decorrelation loss is non-positive; falling back to train_weight_sum "
+                    f"scale={fallback_scale:.6g}"
+                )
+                return fallback_scale, pilot_rounds, cls_loss_ref, decor_loss_ref
+            return max(float(cls_loss_ref / decor_loss_ref), 1.0), pilot_rounds, cls_loss_ref, decor_loss_ref
+
         def _train_with_params(extra_params):
+            decor_scale, pilot_rounds, cls_loss_ref, decor_loss_ref = _calibrate_decor_scale(extra_params)
+            log_message(
+                f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}, "
+                f"pilot_rounds={pilot_rounds}, pilot_classification_loss={cls_loss_ref:.6g}, "
+                f"pilot_decorrelation_loss_unit_scale={decor_loss_ref:.6g}"
+            )
+            recorder = _TotalLossMetricRecorder(
+                [
+                    ("train", y_train, w_train, train_decor_state),
+                    ("test", y_test, w_test, test_decor_state),
+                ],
+                NUM_CLASSES,
+                DECOR_LAMBDA,
+                decor_scale,
+            )
+            custom_obj = _make_multiclass_objective(NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale)
+            monitor = _DetailedLossMonitor(
+                recorder,
+                reg_lambda=train_params["reg_lambda"],
+                reg_alpha=train_params["reg_alpha"],
+                gamma=train_params["gamma"],
+                early_stopping_rounds=early_stopping_rounds,
+            )
             train_kwargs = dict(
                 params={**train_params, **extra_params},
                 dtrain=dtrain,
                 num_boost_round=num_boost_round,
                 evals=[(dtrain, "train"), (dtest, "test")],
                 obj=custom_obj,
-                early_stopping_rounds=10,
                 verbose_eval=False,
-                callbacks=[_DetailedLossMonitor(recorder)],
+                callbacks=[monitor],
             )
             try:
-                return xgb.train(custom_metric=recorder, **train_kwargs)
+                model = xgb.train(custom_metric=recorder, **train_kwargs)
             except TypeError:
-                return xgb.train(feval=recorder, **train_kwargs)
+                model = xgb.train(feval=recorder, **train_kwargs)
+            return model, recorder, monitor
 
         try:
-            model = _train_with_params({"device": "cuda"})
+            model, recorder, monitor = _train_with_params({"device": "cuda"})
         except xgb.core.XGBoostError:
-            model = _train_with_params({})
+            model, recorder, monitor = _train_with_params({})
 
-        n_rounds = int(getattr(model, "best_iteration", model.num_boosted_rounds() - 1)) + 1
+        best_iteration = monitor.best_iteration
+        if best_iteration is None:
+            best_iteration = model.num_boosted_rounds() - 1
+        n_rounds = int(best_iteration) + 1
         if model.num_boosted_rounds() != n_rounds:
             model = model[:n_rounds]
         loss_history = _trim_loss_history(recorder.history, n_rounds)
