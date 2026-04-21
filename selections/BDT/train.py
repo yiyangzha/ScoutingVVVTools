@@ -12,7 +12,7 @@ import xgboost as xgb
 import gc
 
 from sklearn.metrics import roc_auc_score, roc_curve
-from xgboost import XGBClassifier, plot_importance
+from xgboost import XGBClassifier
 from typing import List
 
 plt.rcParams['mathtext.fontset'] = 'cm'
@@ -58,6 +58,11 @@ RANDOM_STATE       = cfg.get("random_state", 42)
 ENTRIES_PER_SAMPLE = cfg.get("entries_per_sample", 1_000_000)
 TRAIN_FRACTION     = float(cfg.get("train_fraction", 0.7))
 DECOR_LAMBDA       = cfg.get("decor_lambda", 30)
+DECOR_LOSS_MODE    = str(cfg.get("decor_loss_mode", "smooth_cvm")).strip().lower()
+DECOR_N_BINS       = int(cfg.get("decor_n_bins", 5))
+DECOR_N_THRESHOLDS = int(cfg.get("decor_n_thresholds", 31))
+DECOR_SCORE_TAU    = float(cfg.get("decor_score_tau", 0.20))
+DECOR_BIN_TAU_SCALE = float(cfg.get("decor_bin_tau_scale", 0.35))
 SUBMIT_TREES       = cfg.get("submit_trees", ["fat2"])
 INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"]))
 INPUT_PATTERN      = cfg["input_pattern"]
@@ -67,6 +72,13 @@ CLASS_TARGET_WEIGHT = float(cfg.get("class_target_weight", 1e10))
 
 if not 0.0 < TRAIN_FRACTION < 1.0:
     raise ValueError(f"train_fraction must be in (0, 1), got {TRAIN_FRACTION}")
+
+if DECOR_LOSS_MODE == "soft_cvm":
+    DECOR_LOSS_MODE = "smooth_cvm"
+if DECOR_LOSS_MODE not in {"smooth_cvm", "cvm"}:
+    raise ValueError(
+        f"decor_loss_mode must be one of ['smooth_cvm', 'cvm'], got {DECOR_LOSS_MODE!r}"
+    )
 
 # -------------------- Sample registry --------------------
 SAMPLE_INFO = {}
@@ -593,6 +605,36 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
+# -------------------- Score helpers --------------------
+def _reshape_multiclass_margin(predt, num_class, n_rows=None):
+    predt = np.asarray(predt, dtype=float)
+    if predt.ndim == 2:
+        if predt.shape[1] == num_class:
+            return predt
+        if predt.shape[0] == num_class:
+            return predt.T
+    if n_rows is None:
+        n_rows = predt.size // num_class
+    return predt.reshape(int(n_rows), int(num_class))
+
+
+def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+    logits = np.asarray(logits, dtype=float)
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp_v = np.exp(shifted)
+    return exp_v / (np.sum(exp_v, axis=1, keepdims=True) + _EPS)
+
+
+def _sigmoid(x):
+    x = np.asarray(x, dtype=float)
+    out = np.empty_like(x, dtype=float)
+    pos = x >= 0
+    out[pos] = 1.0 / (1.0 + np.exp(-x[pos]))
+    exp_x = np.exp(x[~pos])
+    out[~pos] = exp_x / (1.0 + exp_x)
+    return out
+
+
 # -------------------- CvM helpers --------------------
 def _weighted_ecdf_positions(y: np.ndarray, w: np.ndarray) -> np.ndarray:
     y = np.asarray(y, dtype=float).ravel()
@@ -600,47 +642,57 @@ def _weighted_ecdf_positions(y: np.ndarray, w: np.ndarray) -> np.ndarray:
     n = y.shape[0]
     if n == 0:
         return np.zeros_like(y)
-    order    = np.argsort(y)
+    order = np.argsort(y)
     w_sorted = w[order].astype(float)
-    W        = float(np.sum(w_sorted)) + _EPS
+    W = float(np.sum(w_sorted)) + _EPS
     w_sorted /= W
-    cum      = np.cumsum(w_sorted) - 0.5 * w_sorted
-    pos      = np.empty_like(cum)
+    cum = np.cumsum(w_sorted) - 0.5 * w_sorted
+    pos = np.empty_like(cum)
     pos[order] = cum
     return pos
 
 
-def _cvm_flatness_value(y, Z, w, n_bins=10, power=2.0):
-    y = np.asarray(y, dtype=float).ravel()
+def _build_cvm_groups(Z: np.ndarray, n_bins: int = DECOR_N_BINS):
     Z = np.asarray(Z, dtype=float)
-    w = np.asarray(w, dtype=float).ravel()
-    n = y.shape[0]
-    if n == 0 or Z.size == 0:
-        return 0.0
     if Z.ndim == 1:
         Z = Z.reshape(-1, 1)
-    _, n_decor = Z.shape
-    W_abs = float(np.sum(w) + _EPS)
-    if W_abs <= _EPS:
-        return 0.0
-    w_norm      = w / W_abs
-    global_pos  = _weighted_ecdf_positions(y, w_norm)
-    flat_penalty = 0.0
-    for j in range(n_decor):
-        zj    = Z[:, j]
+    groups_by_feature = []
+    for j in range(Z.shape[1]):
+        zj = Z[:, j]
         z_min = float(np.min(zj))
         z_max = float(np.max(zj))
         if not np.isfinite(z_min) or not np.isfinite(z_max) or z_min == z_max:
+            groups_by_feature.append(None)
             continue
-        edges   = np.linspace(z_min, z_max, n_bins + 1)
-        bin_idx = np.clip(np.searchsorted(edges, zj, side="right") - 1, 0, n_bins - 1)
-        for b in range(n_bins):
-            idx_b = np.nonzero(bin_idx == b)[0]
-            if idx_b.size < 3:
+        edges = np.linspace(z_min, z_max, max(2, n_bins) + 1)
+        bin_idx = np.clip(np.searchsorted(edges, zj, side="right") - 1, 0, len(edges) - 2)
+        groups_j = [np.nonzero(bin_idx == b)[0] for b in range(len(edges) - 1)]
+        groups_j = [idx for idx in groups_j if idx.size >= 3]
+        groups_by_feature.append(groups_j if groups_j else None)
+    return groups_by_feature
+
+
+def _cvm_flatness_value_from_groups(y, groups_by_feature, w, power=2.0):
+    y = np.asarray(y, dtype=float).ravel()
+    w = np.asarray(w, dtype=float).ravel()
+    if y.size == 0 or not groups_by_feature:
+        return 0.0
+    W_abs = float(np.sum(w))
+    if W_abs <= _EPS:
+        return 0.0
+    w_norm = w / W_abs
+    global_pos = _weighted_ecdf_positions(y, w_norm)
+    flat_penalty = 0.0
+    for groups in groups_by_feature:
+        if not groups:
+            continue
+        for idx in groups:
+            idx = np.asarray(idx, dtype=int)
+            if idx.size < 3:
                 continue
-            local_pos = _weighted_ecdf_positions(y[idx_b], w_norm[idx_b])
-            diff      = local_pos - global_pos[idx_b]
-            flat_penalty += float(np.sum(w_norm[idx_b] * (np.abs(diff) ** power)))
+            local_pos = _weighted_ecdf_positions(y[idx], w_norm[idx])
+            diff = local_pos - global_pos[idx]
+            flat_penalty += float(np.sum(w_norm[idx] * (np.abs(diff) ** power)))
     return float(flat_penalty)
 
 
@@ -650,22 +702,114 @@ def _cvm_flatness_neg_grad_wrt_y(y, groups, w, power=2.0):
     n = y.shape[0]
     if n == 0 or not groups:
         return np.zeros_like(y)
-    W_abs = float(np.sum(w) + _EPS)
+    W_abs = float(np.sum(w))
     if W_abs <= _EPS:
         return np.zeros_like(y)
-    w_norm     = w / W_abs
+    w_norm = w / W_abs
     global_pos = _weighted_ecdf_positions(y, w_norm)
-    neg_grad   = np.zeros_like(y)
+    neg_grad = np.zeros_like(y)
     for idx in groups:
         idx = np.asarray(idx, dtype=int)
         if idx.size < 2:
             continue
         local_pos = _weighted_ecdf_positions(y[idx], w_norm[idx])
-        diff      = local_pos - global_pos[idx]
-        bin_grad  = power * np.sign(diff) * (np.abs(diff) ** (power - 1.0))
+        diff = local_pos - global_pos[idx]
+        bin_grad = power * np.sign(diff) * (np.abs(diff) ** (power - 1.0))
         neg_grad[idx] += bin_grad
     neg_grad *= w_norm
     return neg_grad
+
+
+# -------------------- Smooth CvM helpers --------------------
+def _build_smooth_cvm_memberships(Z: np.ndarray, n_bins: int = DECOR_N_BINS):
+    Z = np.asarray(Z, dtype=float)
+    if Z.ndim == 1:
+        Z = Z.reshape(-1, 1)
+    memberships = []
+    for j in range(Z.shape[1]):
+        zj = Z[:, j]
+        z_min = float(np.min(zj))
+        z_max = float(np.max(zj))
+        if not np.isfinite(z_min) or not np.isfinite(z_max) or z_min == z_max:
+            memberships.append(None)
+            continue
+        edges = np.linspace(z_min, z_max, max(2, n_bins) + 1)
+        width = max(float(edges[1] - edges[0]), _EPS)
+        tau_z = max(width * DECOR_BIN_TAU_SCALE, _EPS)
+        left = _sigmoid((zj[:, None] - edges[:-1][None, :]) / tau_z)
+        right = _sigmoid((edges[1:][None, :] - zj[:, None]) / tau_z)
+        memb = left * right
+        row_sum = np.sum(memb, axis=1, keepdims=True)
+        valid = row_sum[:, 0] > _EPS
+        if np.any(valid):
+            memb[valid] /= row_sum[valid]
+        if np.any(~valid):
+            hard = np.clip(np.searchsorted(edges, zj[~valid], side="right") - 1, 0, len(edges) - 2)
+            memb[~valid] = 0.0
+            memb[np.where(~valid)[0], hard] = 1.0
+        memberships.append(memb.astype(float))
+    return memberships
+
+
+def _build_decor_state(Z: np.ndarray, mode: str):
+    Z = np.asarray(Z, dtype=float)
+    if Z.ndim == 1:
+        Z = Z.reshape(-1, 1)
+    if Z.size == 0 or Z.shape[1] == 0:
+        return {"mode": "none"}
+    if mode == "cvm":
+        return {"mode": "cvm", "groups": _build_cvm_groups(Z)}
+    if mode == "smooth_cvm":
+        prob_grid = np.linspace(0.02, 0.98, max(3, DECOR_N_THRESHOLDS))
+        score_thresholds = np.log(prob_grid / (1.0 - prob_grid))
+        return {
+            "mode": "smooth_cvm",
+            "memberships": _build_smooth_cvm_memberships(Z),
+            "score_thresholds": score_thresholds.astype(float),
+            "score_tau": max(float(DECOR_SCORE_TAU), _EPS),
+        }
+    raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
+
+
+def _smooth_cvm_value_and_grad_1d(score, memberships, weights, thresholds, score_tau):
+    score = np.asarray(score, dtype=float).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    n = score.size
+    grad = np.zeros(n, dtype=float)
+    hess = np.zeros(n, dtype=float)
+    if memberships is None or n == 0:
+        return 0.0, grad, hess
+
+    total_w = float(np.sum(weights))
+    if total_w <= _EPS:
+        return 0.0, grad, hess
+
+    thresholds = np.asarray(thresholds, dtype=float).ravel()
+    sig = _sigmoid((score[:, None] - thresholds[None, :]) / score_tau)
+    dsig = sig * (1.0 - sig) / score_tau
+
+    global_eff = np.sum(weights[:, None] * sig, axis=0) / total_w
+    weighted_memberships = weights[:, None] * memberships
+    bin_totals = np.sum(weighted_memberships, axis=0)
+    valid_bins = bin_totals > _EPS
+    if not np.any(valid_bins):
+        return 0.0, grad, hess
+
+    memberships_v = memberships[:, valid_bins]
+    bin_totals_v = bin_totals[valid_bins]
+    rho = bin_totals_v / total_w
+    local_eff = (weighted_memberships[:, valid_bins].T @ sig) / bin_totals_v[:, None]
+    delta = local_eff - global_eff[None, :]
+    n_thr = float(sig.shape[1])
+
+    loss = float(np.sum(rho[:, None] * delta * delta) / n_thr)
+    local_term = (memberships_v / bin_totals_v) @ (rho[:, None] * delta)
+    global_term = np.sum(rho[:, None] * delta, axis=0) / total_w
+    coeff = local_term - global_term[None, :]
+    grad = (2.0 * weights[:, None] * dsig * coeff).sum(axis=1) / n_thr
+    # Positive Gauss-Newton-style diagonal surrogate for the coupled decorrelation term.
+    hess = (2.0 * (weights[:, None] * dsig * coeff) ** 2).sum(axis=1) / n_thr
+    return loss, grad, hess
 
 
 # -------------------- Diagnostics --------------------
@@ -677,7 +821,7 @@ def check_weights(w, name="w"):
         log_warning(f"{name} non-finite count: {bad.size}. e.g. indices: {bad[:10].tolist()}")
     else:
         log_message(f"{name}: all finite")
-    n     = w.size
+    n = w.size
     n_pos = int(np.sum(w > 0))
     n_neg = int(np.sum(w < 0))
     log_message(
@@ -710,170 +854,187 @@ def _resolve_decor_indices(X, decorrelate_feature_names):
     return sorted(set(idx))
 
 
-# -------------------- Custom objective --------------------
-def _make_multiclass_objective_with_decor(num_class, Z_train, w_train, lam):
-    Z_train = np.asarray(Z_train, dtype=float)
-    w_train = np.asarray(w_train, dtype=float).ravel()
-    n_train = w_train.shape[0]
-    if Z_train.ndim == 1:
-        Z_train = Z_train.reshape(-1, 1)
-    n_samples, n_decor = Z_train.shape
+def _multiclass_classification_terms(labels, logits, weights, num_class):
+    labels = np.asarray(labels, dtype=int).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    logits = _reshape_multiclass_margin(logits, num_class, labels.size)
+    probs = _softmax_rows(logits)
 
-    N_DECOR_BINS = 5
-    decor_groups_list: List = []
-    if lam > 0.0 and n_decor > 0:
-        for j in range(n_decor):
-            zj    = Z_train[:, j]
-            z_min, z_max = float(np.min(zj)), float(np.max(zj))
-            if not np.isfinite(z_min) or not np.isfinite(z_max) or z_min == z_max:
-                decor_groups_list.append(None)
-                continue
-            edges   = np.linspace(z_min, z_max, N_DECOR_BINS + 1)
-            bin_idx = np.clip(np.searchsorted(edges, zj, side="right") - 1, 0, N_DECOR_BINS - 1)
-            groups_j = [np.nonzero(bin_idx == b)[0] for b in range(N_DECOR_BINS)
-                        if np.nonzero(bin_idx == b)[0].size >= 3]
-            decor_groups_list.append(groups_j if groups_j else None)
-    else:
-        decor_groups_list = [None] * n_decor
+    class_w_sum = np.bincount(labels, weights=weights, minlength=num_class).astype(float)
+    class_w_sum[class_w_sum <= _EPS] = _EPS
+    scale = float(labels.size) / float(num_class) if labels.size > 0 else 1.0
+    w_eff = (weights / class_w_sum[labels]) * scale
 
-    _scale       = float(n_train) / float(num_class) if n_train > 0 else 1.0
-    _base_lr     = 0.05
-    _iter_state  = {"t": 0}
+    grad = probs.copy()
+    grad[np.arange(labels.size), labels] -= 1.0
+    grad *= w_eff[:, None]
+    hess = np.maximum(2.0 * probs * (1.0 - probs) * w_eff[:, None], 1e-6)
+    loss = float(np.sum(w_eff * (-np.log(probs[np.arange(labels.size), labels] + _EPS))))
+    return probs, grad, hess, loss
 
-    def obj(y_true, y_pred_in):
-        t = int(_iter_state["t"])
-        _iter_state["t"] = t + 1
-        if t < 1000:
-            lr_t = 0.01
-        elif t < 1200:
-            lr_t = 0.01 - (0.01 - 0.005) * (t - 1000) / 200
-        else:
-            lr_t = 0.005
-        lr_mult = float(lr_t) / float(_base_lr)
 
-        y_true    = np.asarray(y_true, dtype=int)
-        n         = y_true.shape[0]
-        y_pred_in = np.asarray(y_pred_in, dtype=float)
-        if y_pred_in.ndim == 1:
-            y_pred = y_pred_in.reshape(n, num_class)
-        elif y_pred_in.shape == (num_class, n):
-            y_pred = y_pred_in.T
-        else:
-            y_pred = y_pred_in.reshape(n, num_class)
+def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class):
+    labels = np.asarray(labels, dtype=int).ravel()
+    weights = np.asarray(weights, dtype=float).ravel()
+    logits = _reshape_multiclass_margin(logits, num_class, labels.size)
+    mode = decor_state.get("mode", "none")
+    grad = np.zeros_like(logits, dtype=float)
+    hess = np.zeros_like(logits, dtype=float)
+    loss = 0.0
 
-        y_shift = y_pred - np.max(y_pred, axis=1, keepdims=True)
-        exp_y   = np.exp(y_shift)
-        P       = exp_y / (np.sum(exp_y, axis=1, keepdims=True) + _EPS)
+    if mode == "none":
+        return loss, grad, hess
 
-        w_used      = w_train
-        class_w_sum = np.bincount(y_true, weights=w_used, minlength=num_class).astype(float)
-        class_w_sum[class_w_sum <= _EPS] = _EPS
-        w_eff       = (w_used / class_w_sum[y_true]) * _scale
+    for cls_idx in range(num_class):
+        mask_cls = labels == cls_idx
+        if not np.any(mask_cls):
+            continue
+        cls_weights = np.zeros_like(weights)
+        cls_weights[mask_cls] = weights[mask_cls]
+        score = logits[:, cls_idx]
 
-        grad_cls = P.copy()
-        grad_cls[np.arange(n), y_true] -= 1.0
-        grad_cls *= w_eff[:, None]
-        hess_cls  = (P * (1.0 - P)) * w_eff[:, None]
-
-        grad_dec = np.zeros_like(grad_cls)
-        if lam > 0.0 and n_decor > 0:
-            for k in range(num_class):
-                mask_k  = y_true == k
-                if not np.any(mask_k):
+        if mode == "cvm":
+            groups_by_feature = decor_state.get("groups", [])
+            cls_loss = _cvm_flatness_value_from_groups(score, groups_by_feature, cls_weights, power=2.0)
+            cls_grad = np.zeros_like(score)
+            for groups in groups_by_feature:
+                if not groups:
                     continue
-                yk      = y_pred[:, k]
-                w_cls_k = np.zeros_like(w_used)
-                w_cls_k[mask_k] = w_used[mask_k]
-                gk = np.zeros(n, dtype=float)
-                for j in range(n_decor):
-                    groups_j = decor_groups_list[j]
-                    if groups_j is None:
-                        continue
-                    gk += -_cvm_flatness_neg_grad_wrt_y(yk, groups_j, w_cls_k, power=2.0)
-                grad_dec[:, k] = (lam * _scale) * gk
+                # Hard-bin CvM is non-smooth; keep the legacy surrogate gradient but
+                # make it consistent with the loss recorded below.
+                cls_grad += -_cvm_flatness_neg_grad_wrt_y(score, groups, cls_weights, power=2.0)
+            cls_hess = np.maximum(np.abs(cls_grad), 1e-6)
+        elif mode == "smooth_cvm":
+            cls_loss = 0.0
+            cls_grad = np.zeros_like(score)
+            cls_hess = np.zeros_like(score)
+            for memberships in decor_state.get("memberships", []):
+                part_loss, part_grad, part_hess = _smooth_cvm_value_and_grad_1d(
+                    score,
+                    memberships,
+                    cls_weights,
+                    decor_state["score_thresholds"],
+                    decor_state["score_tau"],
+                )
+                cls_loss += part_loss
+                cls_grad += part_grad
+                cls_hess += part_hess
+            cls_hess = np.maximum(cls_hess, 1e-6)
+        else:
+            raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
 
-        grad = (grad_cls + grad_dec) * lr_mult
-        hess = hess_cls + 1e-6
-        return grad.astype(np.float32), hess.astype(np.float32)
+        loss += float(cls_loss)
+        grad[:, cls_idx] = cls_grad
+        hess[:, cls_idx] = cls_hess
+
+    return float(loss), grad, hess
+
+
+def _loss_components(logits, labels, weights, decor_state, num_class, lam):
+    _, _, _, cls_loss = _multiclass_classification_terms(labels, logits, weights, num_class)
+    decor_loss, _, _ = _decorrelation_loss_components(logits, labels, weights, decor_state, num_class)
+    return {
+        "classification": float(cls_loss),
+        "decorrelation": float(lam * decor_loss),
+        "total": float(cls_loss + lam * decor_loss),
+    }
+
+
+def _make_multiclass_objective(num_class, decor_state, w_train, lam):
+    w_train = np.asarray(w_train, dtype=float).ravel()
+
+    def obj(predt, dtrain):
+        labels = dtrain.get_label().astype(int)
+        logits = _reshape_multiclass_margin(predt, num_class, labels.size)
+        _, grad_cls, hess_cls, _ = _multiclass_classification_terms(labels, logits, w_train, num_class)
+        if lam > 0.0 and decor_state.get("mode", "none") != "none":
+            _, grad_dec, hess_dec = _decorrelation_loss_components(
+                logits, labels, w_train, decor_state, num_class
+            )
+            grad = grad_cls + lam * grad_dec
+            hess = hess_cls + lam * hess_dec
+        else:
+            grad = grad_cls
+            hess = hess_cls
+        return grad.reshape(-1, 1).astype(np.float32), np.maximum(hess, 1e-6).reshape(-1, 1).astype(np.float32)
 
     return obj
 
 
-def _make_multiclass_total_loss_metric(num_class, Z_train, Z_test, w_train, w_test, lam):
-    Z_train = np.asarray(Z_train, dtype=float)
-    Z_test  = np.asarray(Z_test,  dtype=float)
-    w_train = np.asarray(w_train, dtype=float).ravel()
-    w_test  = np.asarray(w_test,  dtype=float).ravel()
-    N_DECOR_BINS = 5
-    datasets = [
-        {"Z": Z_train, "w": w_train},
-        {"Z": Z_test, "w": w_test},
-    ]
-    state = {"idx": 0}
+class _TotalLossMetricRecorder:
+    def __init__(self, datasets, num_class, lam):
+        self.datasets = list(datasets)
+        self.num_class = int(num_class)
+        self.lam = float(lam)
+        self._call_idx = 0
+        self.history = {
+            tag: {"classification": [], "decorrelation": [], "total": []}
+            for tag, _, _, _ in self.datasets
+        }
 
-    def feval(y_true, y_pred):
-        y_true = np.asarray(y_true, dtype=int)
-        n      = y_true.shape[0]
-        ds = datasets[state["idx"] % len(datasets)]
-        state["idx"] += 1
-        if ds["w"].shape[0] != n:
-            matches = [cand for cand in datasets if cand["w"].shape[0] == n]
-            ds = matches[0] if matches else {"Z": Z_train[:n], "w": w_train[:n]}
-        Z = ds["Z"][:n]
-        w = ds["w"][:n]
+    def __call__(self, predt, dtrain):
+        tag, labels, weights, decor_state = self.datasets[self._call_idx % len(self.datasets)]
+        self._call_idx += 1
+        logits = _reshape_multiclass_margin(predt, self.num_class, len(labels))
+        comp = _loss_components(logits, labels, weights, decor_state, self.num_class, self.lam)
+        for key in ("classification", "decorrelation", "total"):
+            self.history[tag][key].append(comp[key])
+        return "total_loss", comp["total"]
 
-        y_pred = np.asarray(y_pred, dtype=float)
-        if y_pred.ndim == 1:
-            y_pred = y_pred.reshape(n, num_class)
-        elif y_pred.shape == (num_class, n):
-            y_pred = y_pred.T
-        else:
-            y_pred = y_pred.reshape(n, num_class)
 
-        row_sum = np.sum(y_pred, axis=1)
-        is_prob = (np.all(np.isfinite(y_pred)) and np.all(y_pred >= -1e-6)
-                   and np.all(y_pred <= 1.0 + 1e-6)
-                   and np.mean(np.abs(row_sum - 1.0)) < 1e-3)
-        if is_prob:
-            P = np.clip(y_pred, _EPS, 1.0)
-            P = P / (np.sum(P, axis=1, keepdims=True) + _EPS)
-        else:
-            y_shift = y_pred - np.max(y_pred, axis=1, keepdims=True)
-            exp_y   = np.exp(y_shift)
-            P       = exp_y / (np.sum(exp_y, axis=1, keepdims=True) + _EPS)
+def _trim_loss_history(loss_history, n_rounds):
+    trimmed = {}
+    for split_name, metrics in loss_history.items():
+        trimmed[split_name] = {
+            key: list(values[:n_rounds]) for key, values in metrics.items()
+        }
+    return trimmed
 
-        class_w_sum = np.bincount(y_true, weights=w, minlength=num_class).astype(float)
-        class_w_sum[class_w_sum <= _EPS] = _EPS
-        w_eff  = w / class_w_sum[y_true]
-        p_true = P[np.arange(n), y_true]
-        ell    = -np.log(p_true + _EPS)
-        logloss = float(np.sum(w_eff * ell))
 
-        flat_penalty = 0.0
-        if lam > 0.0 and Z.size > 0:
-            for k in range(num_class):
-                mask_k  = y_true == k
-                if not np.any(mask_k):
-                    continue
-                w_cls_k = np.zeros_like(w)
-                w_cls_k[mask_k] = w[mask_k]
-                yk = y_pred[:, k] if not is_prob else np.log(P[:, k] + _EPS)
-                flat_penalty += _cvm_flatness_value(yk, Z, w_cls_k,
-                                                    n_bins=N_DECOR_BINS, power=2.0)
-            flat_penalty *= lam
+def _loss_history_from_classifier(clf):
+    history = {
+        "train": {"classification": [], "decorrelation": [], "total": []},
+        "test": {"classification": [], "decorrelation": [], "total": []},
+    }
+    try:
+        evals = clf.evals_result()
+    except Exception:
+        return history
 
-        return float(logloss + flat_penalty)
+    train_metrics = evals.get("validation_0", {})
+    test_metrics = evals.get("validation_1", {})
+    loss_key = next((k for k in train_metrics if "logloss" in k), None)
+    if loss_key is None:
+        return history
 
-    return feval
+    n_rounds = len(train_metrics[loss_key])
+    train_loss = list(train_metrics[loss_key])
+    test_loss = list(test_metrics.get(loss_key, []))
+    if len(test_loss) < n_rounds:
+        test_loss += [test_loss[-1] if test_loss else 0.0] * (n_rounds - len(test_loss))
+
+    history["train"]["classification"] = train_loss
+    history["train"]["decorrelation"] = [0.0] * n_rounds
+    history["train"]["total"] = train_loss
+    history["test"]["classification"] = test_loss[:n_rounds]
+    history["test"]["decorrelation"] = [0.0] * n_rounds
+    history["test"]["total"] = test_loss[:n_rounds]
+    return history
+
+
+def _make_dmatrix(Xlike, y=None, w=None):
+    data = Xlike
+    feature_names = list(Xlike.columns) if hasattr(Xlike, "columns") else None
+    return xgb.DMatrix(data, label=y, weight=w, feature_names=feature_names)
 
 
 # -------------------- Training --------------------
 def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                       model_name, tree_name, decorrelate_feature_names=None):
-    """Train a multiclass BDT with optional CvM decorrelation.
+    """Train a multiclass BDT with optional decorrelation.
 
     Hyperparameters are read from config.json under the key matching tree_name.
-    Returns clf and the feature splits used for plotting.
+    Returns the trained model, plotting splits, and per-round loss histories.
     """
     X_train_all = np.asarray(X_train_all) if not isinstance(X_train_all, pd.DataFrame) else X_train_all
     X_test_all = np.asarray(X_test_all) if not isinstance(X_test_all, pd.DataFrame) else X_test_all
@@ -884,8 +1045,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
 
     decor_idx = _resolve_decor_indices(X_train_all, decorrelate_feature_names)
     if decor_idx:
-        all_idx  = np.arange(X_train_all.shape[1] if isinstance(X_train_all, np.ndarray)
-                             else len(X_train_all.columns))
+        all_idx = np.arange(X_train_all.shape[1] if isinstance(X_train_all, np.ndarray)
+                            else len(X_train_all.columns))
         keep_idx = np.setdiff1d(all_idx, decor_idx)
         if keep_idx.size == 0:
             raise ValueError("Decorrelation columns cover all features; nothing left to train on.")
@@ -893,63 +1054,132 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         def _slice(Xlike, idx):
             return Xlike.iloc[:, idx] if hasattr(Xlike, "iloc") else Xlike[:, idx]
 
-        X_train  = _slice(X_train_all, keep_idx)
-        X_test   = _slice(X_test_all,  keep_idx)
-        Z_train  = _slice(X_train_all, decor_idx)
-        Z_test   = _slice(X_test_all,  decor_idx)
-        Z_train  = np.asarray(Z_train, dtype=float)
-        Z_test   = np.asarray(Z_test,  dtype=float)
+        X_train = _slice(X_train_all, keep_idx)
+        X_test = _slice(X_test_all, keep_idx)
+        Z_train = np.asarray(_slice(X_train_all, decor_idx), dtype=float)
+        Z_test = np.asarray(_slice(X_test_all, decor_idx), dtype=float)
     else:
         X_train, X_test = X_train_all, X_test_all
         Z_train = np.zeros((X_train_all.shape[0], 0), dtype=float)
-        Z_test  = np.zeros((X_test_all.shape[0],  0), dtype=float)
+        Z_test = np.zeros((X_test_all.shape[0], 0), dtype=float)
 
-    log_message(f"Training arrays: X_train={X_train.shape}, Z_train={Z_train.shape}")
+    log_message(
+        f"Training arrays: X_train={X_train.shape}, Z_train={Z_train.shape}, decor_mode={DECOR_LOSS_MODE}"
+    )
 
-    # Read hyperparameters from the config.
     hp = cfg.get(tree_name, {})
     n_threads = max(1, min(16, os.cpu_count() or 1))
-    common_kwargs = dict(
-        num_class        = NUM_CLASSES,
-        n_estimators     = hp.get("n_estimators",    200),
-        max_depth        = hp.get("max_depth",         6),
-        learning_rate    = hp.get("learning_rate",   0.1),
-        gamma            = hp.get("gamma",             0),
-        reg_lambda       = hp.get("reg_lambda",        1),
-        reg_alpha        = hp.get("reg_alpha",         0),
-        min_child_weight = hp.get("min_child_weight",  1),
-        n_jobs           = n_threads,
-        random_state     = RANDOM_STATE,
-    )
+    num_boost_round = int(hp.get("n_estimators", 200))
     log_message(f"Thread mode: XGBoost, threads = {n_threads}")
-    gpu_kwargs = dict(tree_method="hist", device="cuda")
-    cpu_kwargs = dict(tree_method="hist")
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
+    splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
     if use_decor:
-        custom_obj    = _make_multiclass_objective_with_decor(
-            NUM_CLASSES, Z_train, w_train, DECOR_LAMBDA)
-        loss_metric   = _make_multiclass_total_loss_metric(
-            NUM_CLASSES, Z_train, Z_test, w_train, w_test, DECOR_LAMBDA)
-        extra = dict(objective=custom_obj, eval_metric=loss_metric,
-                     early_stopping_rounds=10)
-    else:
-        extra = dict(objective="multi:softprob", early_stopping_rounds=10)
+        dtrain = _make_dmatrix(X_train, y_train, w_train)
+        dtest = _make_dmatrix(X_test, y_test, w_test)
+        train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE)
+        test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE)
+        recorder = _TotalLossMetricRecorder(
+            [
+                ("train", y_train, w_train, train_decor_state),
+                ("test", y_test, w_test, test_decor_state),
+            ],
+            NUM_CLASSES,
+            DECOR_LAMBDA,
+        )
+        custom_obj = _make_multiclass_objective(NUM_CLASSES, train_decor_state, w_train, DECOR_LAMBDA)
+
+        train_params = dict(
+            num_class=NUM_CLASSES,
+            objective="multi:softprob",
+            max_depth=hp.get("max_depth", 6),
+            eta=hp.get("learning_rate", 0.1),
+            gamma=hp.get("gamma", 0),
+            reg_lambda=hp.get("reg_lambda", 1),
+            reg_alpha=hp.get("reg_alpha", 0),
+            min_child_weight=hp.get("min_child_weight", 1),
+            nthread=n_threads,
+            seed=RANDOM_STATE,
+            disable_default_eval_metric=1,
+            tree_method="hist",
+        )
+
+        def _train_with_params(extra_params):
+            train_kwargs = dict(
+                params={**train_params, **extra_params},
+                dtrain=dtrain,
+                num_boost_round=num_boost_round,
+                evals=[(dtrain, "train"), (dtest, "test")],
+                obj=custom_obj,
+                early_stopping_rounds=10,
+                verbose_eval=True,
+            )
+            try:
+                return xgb.train(custom_metric=recorder, **train_kwargs)
+            except TypeError:
+                return xgb.train(feval=recorder, **train_kwargs)
+
+        try:
+            model = _train_with_params({"device": "cuda"})
+        except xgb.core.XGBoostError:
+            model = _train_with_params({})
+
+        n_rounds = int(getattr(model, "best_iteration", model.num_boosted_rounds() - 1)) + 1
+        if model.num_boosted_rounds() != n_rounds:
+            model = model[:n_rounds]
+        loss_history = _trim_loss_history(recorder.history, n_rounds)
+
+        save_path = model_name if model_name.endswith(".json") else model_name + ".json"
+        model.save_model(save_path)
+        log_message(f"Wrote model file: {save_path}")
+        return model, splits, loss_history
+
+    common_kwargs = dict(
+        num_class=NUM_CLASSES,
+        n_estimators=num_boost_round,
+        max_depth=hp.get("max_depth", 6),
+        learning_rate=hp.get("learning_rate", 0.1),
+        gamma=hp.get("gamma", 0),
+        reg_lambda=hp.get("reg_lambda", 1),
+        reg_alpha=hp.get("reg_alpha", 0),
+        min_child_weight=hp.get("min_child_weight", 1),
+        n_jobs=n_threads,
+        random_state=RANDOM_STATE,
+    )
+
+    def _fit_classifier(extra_kwargs):
+        clf = XGBClassifier(
+            **common_kwargs,
+            tree_method="hist",
+            objective="multi:softprob",
+            early_stopping_rounds=10,
+            **extra_kwargs,
+        )
+        clf.fit(
+            X_train,
+            y_train,
+            sample_weight=w_train,
+            eval_set=[(X_train, y_train), (X_test, y_test)],
+            sample_weight_eval_set=[w_train, w_test],
+            verbose=True,
+        )
+        return clf
 
     try:
-        clf = XGBClassifier(**common_kwargs, **gpu_kwargs, **extra)
+        clf = _fit_classifier({"device": "cuda"})
     except xgb.core.XGBoostError:
-        clf = XGBClassifier(**common_kwargs, **cpu_kwargs, **extra)
+        clf = _fit_classifier({})
 
-    fit_kwargs = dict(eval_set=[(X_train, y_train), (X_test, y_test)], verbose=True)
-    if not use_decor:
-        fit_kwargs["sample_weight"]          = w_train
-        fit_kwargs["sample_weight_eval_set"] = [w_train, w_test]
-    clf.fit(X_train, y_train, **fit_kwargs)
+    loss_history = _loss_history_from_classifier(clf)
+    n_rounds = len(loss_history["train"]["total"])
+    best_iteration = getattr(clf, "best_iteration", None)
+    if best_iteration is not None and best_iteration >= 0:
+        n_rounds = min(n_rounds, int(best_iteration) + 1)
+        loss_history = _trim_loss_history(loss_history, n_rounds)
 
-    if model_name.endswith(".json") or use_decor:
-        save_path = model_name if model_name.endswith(".json") else model_name + ".json"
+    if model_name.endswith(".json"):
+        save_path = model_name
         clf.save_model(save_path)
         log_message(f"Wrote model file: {save_path}")
     else:
@@ -958,12 +1188,27 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             pickle.dump(clf, fout)
         log_message(f"Wrote model file: {save_path}")
 
-    return clf, (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
+    return clf, splits, loss_history
 
 
 # -------------------- Plotting --------------------
-def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=None):
-    """ROC curves, feature importance, score distributions, loss curve, decorrelation checks."""
+def _booster_from_model(model):
+    return model.get_booster() if hasattr(model, "get_booster") else model
+
+
+def _predict_margins(model, Xlike):
+    booster = _booster_from_model(model)
+    dmat = _make_dmatrix(Xlike)
+    pred = booster.predict(dmat, output_margin=True)
+    return _reshape_multiclass_margin(pred, NUM_CLASSES, len(Xlike))
+
+
+def _predict_proba(model, Xlike):
+    return _softmax_rows(_predict_margins(model, Xlike))
+
+
+def plot_results(model, splits, tree_name, output_root, loss_history, decorrelate_feature_names=None):
+    """ROC curves, feature importance, score distributions, loss curves, and decorrelation checks."""
     X_train_full, X_test_full, y_train, y_test, w_train, w_test = splits
 
     full_feature_names = list(X_train_full.columns) if hasattr(X_train_full, "columns") \
@@ -991,30 +1236,34 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
         return res
 
     decor_idx_full = _resolve(decorrelate_feature_names)
-    all_idx        = np.arange(len(full_feature_names))
-    keep_idx       = np.setdiff1d(all_idx, decor_idx_full)
+    all_idx = np.arange(len(full_feature_names))
+    keep_idx = np.setdiff1d(all_idx, decor_idx_full)
 
     def _slice(Xlike, idx):
         return Xlike.iloc[:, idx] if hasattr(Xlike, "iloc") else Xlike[:, idx]
 
     X_train_used = _slice(X_train_full, keep_idx)
-    X_test_used  = _slice(X_test_full,  keep_idx)
+    X_test_used = _slice(X_test_full, keep_idx)
     feat_names_used = [full_feature_names[i] for i in keep_idx]
 
-    if hasattr(clf, "n_features_in_") and clf.n_features_in_ == X_train_full.shape[1]:
+    booster = _booster_from_model(model)
+    booster_features = booster.feature_names or []
+    if booster_features and len(booster_features) == len(full_feature_names):
         X_train_used, X_test_used = X_train_full, X_test_full
-        feat_names_used    = full_feature_names
-        decor_idx_full     = []
+        feat_names_used = full_feature_names
+        decor_idx_full = []
 
-    n_classes   = NUM_CLASSES
+    n_classes = NUM_CLASSES
     class_names = CLASS_NAMES
-    palette     = plt.cm.get_cmap("tab10", max(n_classes, 3))(np.arange(max(n_classes, 3)))
+    palette = plt.cm.get_cmap("tab10", max(n_classes, 3))(np.arange(max(n_classes, 3)))
 
-    def _savefig(stem):
+    def _savefig(stem, fig=None, tight=True):
+        fig = plt.gcf() if fig is None else fig
         path = _figure_path(output_root, stem)
-        plt.tight_layout()
-        plt.savefig(path)
-        plt.close()
+        if tight:
+            fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
         log_message(f"Wrote plot file: {path}")
 
     def _as_array(Xlike):
@@ -1024,10 +1273,10 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
         return np.abs(np.asarray(wv, float).ravel())
 
     def _weighted_pearson(x, y_arr, wv, eps=1e-12):
-        x  = np.asarray(x, float).ravel()
+        x = np.asarray(x, float).ravel()
         y_arr = np.asarray(y_arr, float).ravel()
         wv = _safe_w(wv)
-        m  = np.isfinite(x) & np.isfinite(y_arr) & np.isfinite(wv)
+        m = np.isfinite(x) & np.isfinite(y_arr) & np.isfinite(wv)
         if not np.any(m):
             return 0.0
         x, y_arr, wv = x[m], y_arr[m], wv[m]
@@ -1038,12 +1287,62 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
         my = (wv * y_arr).sum() / (sw + eps)
         x0, y0 = x - mx, y_arr - my
         cov = (wv * x0 * y0).sum() / (sw + eps)
-        vx  = (wv * x0 * x0).sum() / (sw + eps)
-        vy  = (wv * y0 * y0).sum() / (sw + eps)
+        vx = (wv * x0 * x0).sum() / (sw + eps)
+        vy = (wv * y0 * y0).sum() / (sw + eps)
         return float(cov / (np.sqrt(vx * vy) + eps))
 
-    probs_train = clf.predict_proba(X_train_used)
-    probs_test  = clf.predict_proba(X_test_used)
+    def _plot_matrix_heatmap(matrix, row_labels, col_labels, stem, *, aspect, annotate, cbar_label=None):
+        matrix = np.asarray(matrix, dtype=float)
+        fig_w = max(6.5, 0.55 * len(col_labels) + 4.0)
+        fig_h = max(5.0, 0.48 * len(row_labels) + 3.0)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        x_edges = np.arange(matrix.shape[1] + 1, dtype=float)
+        y_edges = np.arange(matrix.shape[0] + 1, dtype=float)
+        mesh = ax.pcolormesh(
+            x_edges,
+            y_edges,
+            matrix,
+            cmap="bwr",
+            vmin=-1.0,
+            vmax=1.0,
+            shading="flat",
+            edgecolors="white",
+            linewidth=0.35,
+            antialiased=False,
+            rasterized=False,
+        )
+        ax.set_xlim(0.0, float(matrix.shape[1]))
+        ax.set_ylim(0.0, float(matrix.shape[0]))
+        ax.invert_yaxis()
+        ax.set_aspect(aspect)
+        ax.set_xticks(np.arange(matrix.shape[1]) + 0.5)
+        ax.set_yticks(np.arange(matrix.shape[0]) + 0.5)
+        ax.set_xticklabels(col_labels, rotation=90 if aspect == "equal" else 45,
+                           ha="center" if aspect == "equal" else "right", fontsize=10)
+        ax.set_yticklabels(row_labels, fontsize=10)
+        cbar = fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
+        if cbar_label:
+            cbar.set_label(cbar_label)
+        if annotate:
+            for i in range(matrix.shape[0]):
+                for j in range(matrix.shape[1]):
+                    v = matrix[i, j]
+                    ax.text(
+                        j + 0.5,
+                        i + 0.5,
+                        f"{v:+.2f}",
+                        ha="center",
+                        va="center",
+                        color="white" if abs(v) > 0.5 else "black",
+                        fontsize=10,
+                    )
+        _savefig(stem, fig=fig)
+
+    probs_train = _predict_proba(model, X_train_used)
+    probs_test = _predict_proba(model, X_test_used)
+    margins_train = _predict_margins(model, X_train_used)
+    margins_test = _predict_margins(model, X_test_used)
 
     def _roc_binary(mask, scores, ys, ws, positive_idx):
         if not np.any(mask):
@@ -1058,121 +1357,171 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
     def _plot_roc_pair(sig_idx, bkg_idx):
         sig_name = class_names[sig_idx]
         bkg_name = class_names[bkg_idx]
-        score_train = probs_train[:, sig_idx] / np.clip(probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None)
-        score_test = probs_test[:, sig_idx] / np.clip(probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None)
+        score_train = probs_train[:, sig_idx] / np.clip(
+            probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
+        )
+        score_test = probs_test[:, sig_idx] / np.clip(
+            probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
+        )
         mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
         mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
-        plt.figure(figsize=(10, 10))
+        fig, ax = plt.subplots(figsize=(10, 10))
         r_tst = _roc_binary(mask_test, score_test, y_test, w_test, sig_idx)
         r_trn = _roc_binary(mask_train, score_train, y_train, w_train, sig_idx)
         if r_tst:
             fpr, tpr, auc = r_tst
-            plt.plot(tpr, fpr, color=palette[sig_idx], linestyle="-", label=f"Test AUC={auc:.3f}")
+            ax.plot(tpr, fpr, color=palette[sig_idx], linestyle="-", label=f"Test AUC={auc:.3f}")
             log_message(f"{tree_name} test AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
         if r_trn:
             fpr, tpr, auc = r_trn
-            plt.plot(tpr, fpr, color=palette[sig_idx], linestyle="--", label=f"Train AUC={auc:.3f}")
+            ax.plot(tpr, fpr, color=palette[sig_idx], linestyle="--", label=f"Train AUC={auc:.3f}")
             log_message(f"{tree_name} train AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
-        plt.xlabel(rf"$\epsilon_{{\rm {sig_name}}}$", fontsize=20)
-        plt.ylabel(rf"$\epsilon_{{\rm {bkg_name}}}$", fontsize=20)
-        plt.yscale("log")
-        plt.ylim(1e-6, 1)
-        plt.xlim(0, 1)
-        plt.legend(loc="lower right", fontsize=14)
-        _savefig(f"roc_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}")
+        ax.set_xlabel(rf"$\epsilon_{{\rm {sig_name}}}$", fontsize=20)
+        ax.set_ylabel(rf"$\epsilon_{{\rm {bkg_name}}}$", fontsize=20)
+        ax.set_yscale("log")
+        ax.set_ylim(1e-6, 1)
+        ax.set_xlim(0, 1)
+        ax.legend(loc="lower right", fontsize=14)
+        _savefig(f"roc_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}", fig=fig)
 
     if SIGNAL_CLASS_INDICES and BACKGROUND_CLASS_INDICES:
-        roc_pairs = [(sig_idx, bkg_idx) for sig_idx in SIGNAL_CLASS_INDICES for bkg_idx in BACKGROUND_CLASS_INDICES]
+        roc_pairs = [
+            (sig_idx, bkg_idx)
+            for sig_idx in SIGNAL_CLASS_INDICES for bkg_idx in BACKGROUND_CLASS_INDICES
+        ]
     else:
         roc_pairs = [(i, j) for i in range(n_classes) for j in range(i + 1, n_classes)]
     for sig_idx, bkg_idx in roc_pairs:
         _plot_roc_pair(sig_idx, bkg_idx)
 
-    fig, ax = plt.subplots(figsize=(10, 20))
-    plot_importance(clf, ax=ax, max_num_features=200)
+    score_map = booster.get_score(importance_type="gain")
+    importances = []
+    for i, name in enumerate(feat_names_used):
+        importances.append(float(score_map.get(name, score_map.get(f"f{i}", 0.0))))
+    importances = np.asarray(importances, dtype=float)
+    positive = importances > 0.0
+    if not np.any(positive):
+        positive = np.ones_like(importances, dtype=bool)
+    imp_names = [feat_names_used[i] for i in np.where(positive)[0]]
+    imp_vals = importances[positive]
+    order = np.argsort(imp_vals)
+    imp_names = [imp_names[i] for i in order]
+    imp_vals = imp_vals[order]
+    max_label_len = max((len(name) for name in imp_names), default=10)
+    fig_h = max(4.5, 0.28 * len(imp_names) + 1.8)
+    fig_w = max(9.0, min(18.0, 7.0 + 0.09 * max_label_len))
+    left_margin = min(0.72, max(0.22, 0.012 * max_label_len + 0.10))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    y_pos = np.arange(len(imp_names))
+    ax.barh(y_pos, np.maximum(imp_vals, 1e-12), color="steelblue", edgecolor="none", alpha=0.9)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(imp_names, fontsize=10)
     ax.set_title(f"{tree_name} Feature Importance", fontsize=16)
-    ax.set_xscale("log")
-    widths = [p.get_width() for p in ax.patches]
-    if widths:
-        nz = [w for w in widths if w > 0]
-        if nz:
-            ax.set_xlim(min(nz) / 2, max(widths) * 2)
-    try:
-        raw_labels = [t.get_text() for t in ax.get_yticklabels()]
-        mapped = []
-        for s in raw_labels:
-            if isinstance(s, str) and s.startswith("f") and s[1:].isdigit():
-                i = int(s[1:])
-                mapped.append(feat_names_used[i] if i < len(feat_names_used) else s)
-            else:
-                mapped.append(s)
-        if mapped:
-            ax.set_yticklabels(mapped)
-    except Exception:
-        pass
-    _savefig("importance")
+    ax.set_xlabel("Gain", fontsize=12)
+    positive_vals = imp_vals[imp_vals > 0.0]
+    if positive_vals.size > 0:
+        ax.set_xscale("log")
+        ax.set_xlim(max(np.min(positive_vals) / 2.0, 1e-12), np.max(positive_vals) * 2.0)
+    ax.grid(True, axis="x", linestyle="--", alpha=0.35)
+    fig.subplots_adjust(left=left_margin, right=0.98, top=0.94, bottom=0.08)
+    _savefig("importance", fig=fig, tight=False)
 
     def _plot_score_dist(sig_idx, bkg_idx):
         sig_name = class_names[sig_idx]
         bkg_name = class_names[bkg_idx]
-        score_train = probs_train[:, sig_idx] / np.clip(probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None)
-        score_test = probs_test[:, sig_idx] / np.clip(probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None)
+        score_train = probs_train[:, sig_idx] / np.clip(
+            probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
+        )
+        score_test = probs_test[:, sig_idx] / np.clip(
+            probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
+        )
         mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
         mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
         bins = np.linspace(0, 1, 31)
-        plt.figure()
-        plt.xlim(0, 1)
-        plt.hist(score_train[mask_train & (y_train == bkg_idx)], bins=bins,
-                 weights=w_train[mask_train & (y_train == bkg_idx)],
-                 density=True, histtype="bar", alpha=0.5, label=f"Train {bkg_name}")
-        plt.hist(score_train[mask_train & (y_train == sig_idx)], bins=bins,
-                 weights=w_train[mask_train & (y_train == sig_idx)],
-                 density=True, histtype="bar", alpha=0.5, label=f"Train {sig_name}")
-        plt.hist(score_test[mask_test & (y_test == bkg_idx)], bins=bins,
-                 weights=w_test[mask_test & (y_test == bkg_idx)],
-                 density=True, histtype="step", linewidth=2, color="lime",
-                 label=f"Test {bkg_name}")
-        plt.hist(score_test[mask_test & (y_test == sig_idx)], bins=bins,
-                 weights=w_test[mask_test & (y_test == sig_idx)],
-                 density=True, histtype="step", linewidth=2, color="red",
-                 label=f"Test {sig_name}")
-        plt.xlabel("BDT Score")
-        plt.yscale("log")
-        plt.ylim(1e-2,)
-        plt.ylabel("Density")
-        plt.legend()
-        _savefig(f"score_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}")
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.set_xlim(0, 1)
+        ax.hist(
+            score_train[mask_train & (y_train == bkg_idx)],
+            bins=bins,
+            weights=w_train[mask_train & (y_train == bkg_idx)],
+            density=True,
+            histtype="bar",
+            alpha=0.5,
+            label=f"Train {bkg_name}",
+        )
+        ax.hist(
+            score_train[mask_train & (y_train == sig_idx)],
+            bins=bins,
+            weights=w_train[mask_train & (y_train == sig_idx)],
+            density=True,
+            histtype="bar",
+            alpha=0.5,
+            label=f"Train {sig_name}",
+        )
+        ax.hist(
+            score_test[mask_test & (y_test == bkg_idx)],
+            bins=bins,
+            weights=w_test[mask_test & (y_test == bkg_idx)],
+            density=True,
+            histtype="step",
+            linewidth=2,
+            color="lime",
+            label=f"Test {bkg_name}",
+        )
+        ax.hist(
+            score_test[mask_test & (y_test == sig_idx)],
+            bins=bins,
+            weights=w_test[mask_test & (y_test == sig_idx)],
+            density=True,
+            histtype="step",
+            linewidth=2,
+            color="red",
+            label=f"Test {sig_name}",
+        )
+        ax.set_xlabel("BDT Score")
+        ax.set_yscale("log")
+        ax.set_ylim(1e-2,)
+        ax.set_ylabel("Density")
+        ax.legend()
+        _savefig(f"score_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}", fig=fig)
 
     for sig_idx, bkg_idx in roc_pairs:
         _plot_score_dist(sig_idx, bkg_idx)
 
-    try:
-        evals = clf.evals_result()
-        v0    = evals.get("validation_0", {})
-        loss_key = next((k for k in v0 if "total_loss" in k or "feval" in k or "logloss" in k), None)
-        if loss_key and "validation_1" in evals:
-            tr_loss = evals["validation_0"][loss_key]
-            te_loss = evals["validation_1"][loss_key]
-            plt.figure(figsize=(8, 5))
-            plt.plot(range(1, len(tr_loss) + 1), tr_loss, label="Train")
-            plt.plot(range(1, len(te_loss) + 1), te_loss, label="Test")
-            plt.xlabel("Epoch")
-            plt.ylabel("total_loss")
-            plt.legend()
-            plt.grid(True, linestyle="--", alpha=0.5)
-            _savefig("loss")
-    except Exception:
-        pass
+    def _plot_loss_metric(metric_key, ylabel, stem):
+        tr_loss = list(loss_history.get("train", {}).get(metric_key, []))
+        te_loss = list(loss_history.get("test", {}).get(metric_key, []))
+        if not tr_loss and not te_loss:
+            return
+        n_rounds = max(len(tr_loss), len(te_loss))
+        fig, ax = plt.subplots(figsize=(8, 5))
+        if tr_loss:
+            ax.plot(range(1, len(tr_loss) + 1), tr_loss, label="Train")
+        if te_loss:
+            ax.plot(range(1, len(te_loss) + 1), te_loss, label="Test")
+        ax.set_xlabel("Boosting Round")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, linestyle="--", alpha=0.5)
+        if tr_loss or te_loss:
+            ax.legend()
+        ax.set_xlim(1, max(1, n_rounds))
+        _savefig(stem, fig=fig)
+
+    _plot_loss_metric("classification", "classification_loss", "loss_classification")
+    _plot_loss_metric("decorrelation", "decorrelation_loss", "loss_decorrelation")
+    _plot_loss_metric("total", "total_loss", "loss_total")
 
     X_tr_df = pd.DataFrame(_as_array(X_train_used), columns=feat_names_used)
-    corr    = X_tr_df.corr(numeric_only=True).dropna(axis=0, how="all").dropna(axis=1, how="all")
-    plt.figure(figsize=(20, 20))
-    plt.imshow(corr.values, aspect="equal", interpolation="none", vmin=-1, vmax=1, cmap="bwr")
-    cbar = plt.colorbar(fraction=0.046, pad=0.04)
-    cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
-    plt.xticks(range(len(corr.columns)), corr.columns, rotation=90, fontsize=10)
-    plt.yticks(range(len(corr.index)),   corr.index,   fontsize=10)
-    _savefig("feature_corr")
+    corr = X_tr_df.corr(numeric_only=True).dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if not corr.empty:
+        _plot_matrix_heatmap(
+            corr.values,
+            list(corr.index),
+            list(corr.columns),
+            "feature_corr",
+            aspect="equal",
+            annotate=False,
+        )
 
     if not decor_idx_full:
         return
@@ -1181,8 +1530,8 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
 
     def _build_corr_matrix(scores, Xfull, y_true, wv):
         Xarr = _as_array(Xfull)
-        wv   = _safe_w(wv)
-        R    = np.zeros((n_classes, len(decor_idx_full)))
+        wv = _safe_w(wv)
+        R = np.zeros((n_classes, len(decor_idx_full)))
         for r, ci in enumerate(range(n_classes)):
             class_mask = np.asarray(y_true) == ci
             if not np.any(class_mask):
@@ -1192,29 +1541,20 @@ def plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=
                 R[r, c] = _weighted_pearson(Xarr[class_mask, j], s, wv[class_mask])
         return R
 
-    try:
-        margins_train = clf.predict(X_train_used, output_margin=True)
-        margins_test  = clf.predict(X_test_used, output_margin=True)
-    except TypeError:
-        margins_train = np.log(np.clip(probs_train, _EPS, 1.0))
-        margins_test  = np.log(np.clip(probs_test, _EPS, 1.0))
-
     for tag, scores, Xfull, y_true, wv in [
         ("train", margins_train, X_train_full, y_train, w_train),
-        ("test",  margins_test,  X_test_full,  y_test,  w_test),
+        ("test", margins_test, X_test_full, y_test, w_test),
     ]:
         R = _build_corr_matrix(scores, Xfull, y_true, wv)
-        plt.figure(figsize=(max(6, 1.2 * len(decor_idx_full) + 4), n_classes + 4))
-        plt.imshow(R, aspect="auto", interpolation="none", vmin=-1, vmax=1, cmap="bwr")
-        plt.colorbar(fraction=0.046, pad=0.04, label="weighted Pearson r")
-        plt.xticks(range(len(decor_var_names)), decor_var_names, rotation=45, ha="right")
-        plt.yticks(range(n_classes), class_names)
-        for i in range(n_classes):
-            for j in range(len(decor_var_names)):
-                v = R[i, j]
-                plt.text(j, i, f"{v:+.2f}", ha="center", va="center",
-                         color="white" if abs(v) > 0.5 else "black", fontsize=10)
-        _savefig(f"decor_corr_{tag}")
+        _plot_matrix_heatmap(
+            R,
+            class_names,
+            decor_var_names,
+            f"decor_corr_{tag}",
+            aspect="auto",
+            annotate=True,
+            cbar_label="weighted Pearson r",
+        )
         for i, cls_name in enumerate(class_names):
             stats = ", ".join(
                 f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
@@ -1312,7 +1652,7 @@ def main():
         X_test_std = standardize_X(X_test.copy(), clip_ranges, log_tf)
 
         log_message(f"Training model for tree = {tree_name}")
-        clf, splits = train_multi_model(
+        clf, splits, loss_history = train_multi_model(
             X_train_std, y_train, w_train,
             X_test_std, y_test, w_test,
             model_path, tree_name,
@@ -1320,7 +1660,14 @@ def main():
         )
 
         log_message(f"Plotting results for tree = {tree_name}")
-        plot_results(clf, splits, tree_name, output_root, decorrelate_feature_names=decorrelate)
+        plot_results(
+            clf,
+            splits,
+            tree_name,
+            output_root,
+            loss_history,
+            decorrelate_feature_names=decorrelate,
+        )
         log_message(f"Finished train.py for tree = {tree_name}")
 
 

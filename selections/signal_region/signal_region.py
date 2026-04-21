@@ -246,6 +246,32 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
+def _reshape_multiclass_margin(predt, num_class):
+    predt = np.asarray(predt, dtype=float)
+    if predt.ndim == 2:
+        if predt.shape[1] == num_class:
+            return predt
+        if predt.shape[0] == num_class:
+            return predt.T
+    rows = predt.size // num_class
+    return predt.reshape(rows, num_class)
+
+
+def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+    logits = np.asarray(logits, dtype=float)
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp_v = np.exp(shifted)
+    return exp_v / (np.sum(exp_v, axis=1, keepdims=True) + 1e-12)
+
+
+def _predict_model_proba(model, X):
+    if isinstance(model, xgb.Booster):
+        dmat = xgb.DMatrix(X, feature_names=list(X.columns) if hasattr(X, "columns") else None)
+        margins = model.predict(dmat, output_margin=True)
+        return _softmax_rows(_reshape_multiclass_margin(margins, NUM_CLASSES))
+    return model.predict_proba(X)
+
+
 # -------------------- Threshold filtering --------------------
 def filter_X(X: pd.DataFrame, y, w, branch: list,
              thresholds: dict = None, apply_to_sentinel: bool = True,
@@ -892,7 +918,7 @@ def main():
     model_base = MODEL_PATTERN.format(output_root=BDT_ROOT, tree_name=TREE_NAME)
     if os.path.exists(model_base + ".json"):
         model_path = model_base + ".json"
-        clf = xgb.XGBClassifier()
+        clf = xgb.Booster()
         clf.load_model(model_path)
         log_message(f"Loaded model: {model_path}")
     elif os.path.exists(model_base + ".pkl"):
@@ -905,7 +931,7 @@ def main():
 
     # Run the BDT prediction.
     log_message("Running BDT prediction")
-    proba = clf.predict_proba(X_model)
+    proba = _predict_model_proba(clf, X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
 
     # Plot the weighted score distributions.

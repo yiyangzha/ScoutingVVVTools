@@ -9,6 +9,7 @@
   "train_fraction": 0.7,
   "random_state": 42,
   "decor_lambda": 30,
+  "decor_loss_mode": "smooth_cvm",
   "class_groups": {
     "VVV": ["www", "wwz", "wzz", "zzz"],
     "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
