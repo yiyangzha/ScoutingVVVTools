@@ -38,8 +38,8 @@
       "SelectedLepton_hcalIso_3"
     ],
     "thresholds": {
-      "ScoutingFatPFJetRecluster_msoftdrop_1": [40, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_2": [40, 150],
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [60, 150],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [60, 150],
       "ScoutingFatPFJetRecluster_pt_1": [180, null],
       "ScoutingFatPFJetRecluster_pt_2": [180, null],
       "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
@@ -77,9 +77,9 @@
       "SelectedLepton_hcalIso_3"
     ],
     "thresholds": {
-      "ScoutingFatPFJetRecluster_msoftdrop_1": [40, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_2": [40, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_3": [40, 150],
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [60, 150],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [60, 150],
+      "ScoutingFatPFJetRecluster_msoftdrop_3": [60, 150],
       "ScoutingFatPFJetRecluster_pt_1": [180, null],
       "ScoutingFatPFJetRecluster_pt_2": [180, null],
       "ScoutingFatPFJetRecluster_pt_3": [180, null],

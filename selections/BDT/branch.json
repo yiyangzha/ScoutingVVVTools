@@ -19,7 +19,7 @@
     { "name": "ScoutingFatPFJetRecluster_pt_1" },
     { "name": "ScoutingFatPFJetRecluster_pt_2" },
     { "name": "ScoutingFatPFJetRecluster_eta_1" },
-    { "name": "ScoutingFatPFJetRecluster_eta_2" }
+    { "name": "ScoutingFatPFJetRecluster_eta_2" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_1" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_2" },
     { "name": "ScoutingPFJetRecluster2_pt_1" },
@@ -73,7 +73,7 @@
     { "name": "ScoutingFatPFJetRecluster_pt_3" },
     { "name": "ScoutingFatPFJetRecluster_eta_1" },
     { "name": "ScoutingFatPFJetRecluster_eta_2" },
-    { "name": "ScoutingFatPFJetRecluster_eta_3" }
+    { "name": "ScoutingFatPFJetRecluster_eta_3" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_1" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_2" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_3" },
