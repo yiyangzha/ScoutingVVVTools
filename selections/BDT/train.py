@@ -7,12 +7,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import mplhep as hep
-import pickle
 import xgboost as xgb
 import gc
 
 from sklearn.metrics import roc_auc_score, roc_curve
-from xgboost import XGBClassifier
 from typing import List
 
 plt.rcParams['mathtext.fontset'] = 'cm'
@@ -63,18 +61,6 @@ DECOR_N_BINS       = int(cfg.get("decor_n_bins", 5))
 DECOR_N_THRESHOLDS = int(cfg.get("decor_n_thresholds", 31))
 DECOR_SCORE_TAU    = float(cfg.get("decor_score_tau", 0.20))
 DECOR_BIN_TAU_SCALE = float(cfg.get("decor_bin_tau_scale", 0.35))
-
-_decor_hess_raw = cfg.get("decor_hess_floor_c", "pilot")
-if isinstance(_decor_hess_raw, str):
-    if _decor_hess_raw.strip().lower() != "pilot":
-        raise ValueError(
-            f"decor_hess_floor_c must be 'pilot' or a non-negative number, got {_decor_hess_raw!r}"
-        )
-    DECOR_HESS_FLOOR_C = "pilot"
-else:
-    DECOR_HESS_FLOOR_C = float(_decor_hess_raw)
-    if DECOR_HESS_FLOOR_C < 0.0:
-        raise ValueError(f"decor_hess_floor_c must be non-negative, got {DECOR_HESS_FLOOR_C}")
 SUBMIT_TREES       = cfg.get("submit_trees", ["fat2"])
 INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"]))
 INPUT_PATTERN      = cfg["input_pattern"]
@@ -876,23 +862,29 @@ def _resolve_decor_indices(X, decorrelate_feature_names):
     return sorted(set(idx))
 
 
-def _multiclass_classification_terms(labels, logits, weights, num_class):
+def _multiclass_classification_terms(labels, predt, weights, num_class, prediction_mode="margin"):
     labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
-    logits = _reshape_multiclass_margin(logits, num_class, labels.size)
-    probs = _softmax_rows(logits)
-
-    grad = probs.copy()
-    grad[np.arange(labels.size), labels] -= 1.0
-    grad *= weights[:, None]
-    hess = np.maximum(2.0 * probs * (1.0 - probs) * weights[:, None], 1e-6)
+    predt = _reshape_multiclass_margin(predt, num_class, labels.size)
+    if prediction_mode == "margin":
+        probs = _softmax_rows(predt)
+        grad = probs.copy()
+        grad[np.arange(labels.size), labels] -= 1.0
+        grad *= weights[:, None]
+        hess = np.maximum(2.0 * probs * (1.0 - probs) * weights[:, None], 1e-6)
+    elif prediction_mode == "probability":
+        probs = np.clip(predt.astype(float, copy=True), _EPS, None)
+        row_sum = np.sum(probs, axis=1, keepdims=True)
+        probs /= np.where(row_sum > _EPS, row_sum, 1.0)
+        grad = None
+        hess = None
+    else:
+        raise ValueError(f"Unsupported prediction_mode: {prediction_mode!r}")
     loss = float(np.sum(weights * (-np.log(probs[np.arange(labels.size), labels] + _EPS))))
     return probs, grad, hess, loss
 
 
-def _decorrelation_loss_components(
-    logits, labels, weights, decor_state, num_class, decor_scale=1.0, hess_floor_c=0.0
-):
+def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class, decor_scale=1.0):
     labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
     logits = _reshape_multiclass_margin(logits, num_class, labels.size)
@@ -903,8 +895,6 @@ def _decorrelation_loss_components(
 
     if mode == "none":
         return loss, grad, hess
-
-    hess_floor_c = float(hess_floor_c)
 
     for cls_idx in range(num_class):
         mask_cls = labels == cls_idx
@@ -924,7 +914,7 @@ def _decorrelation_loss_components(
                 # Hard-bin CvM is non-smooth; keep the legacy surrogate gradient but
                 # make it consistent with the loss recorded below.
                 cls_grad += -_cvm_flatness_neg_grad_wrt_y(score, groups, cls_weights, power=2.0)
-            cls_hess = np.abs(cls_grad)
+            cls_hess = np.maximum(np.abs(cls_grad), 1e-6)
         elif mode == "smooth_cvm":
             cls_loss = 0.0
             cls_grad = np.zeros_like(score)
@@ -940,15 +930,9 @@ def _decorrelation_loss_components(
                 cls_loss += part_loss
                 cls_grad += part_grad
                 cls_hess += part_hess
+            cls_hess = np.maximum(cls_hess, 1e-6)
         else:
             raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
-
-        # Floor the per-event decor hess at c*|grad| so XGBoost's Newton step
-        # -grad/hess on the decor contribution is bounded by 1/c, avoiding
-        # overshoot when the Gauss-Newton surrogate underestimates curvature.
-        if hess_floor_c > 0.0:
-            cls_hess = np.maximum(cls_hess, hess_floor_c * np.abs(cls_grad))
-        cls_hess = np.maximum(cls_hess, 1e-6)
 
         loss += float(decor_scale * cls_loss)
         grad[:, cls_idx] = decor_scale * cls_grad
@@ -957,12 +941,20 @@ def _decorrelation_loss_components(
     return float(loss), grad, hess
 
 
-def _loss_components(logits, labels, weights, decor_state, num_class, lam, decor_scale):
+def _loss_components(predt, labels, weights, decor_state, num_class, lam, decor_scale,
+                     prediction_mode="margin"):
     labels = np.asarray(labels, dtype=int).ravel()
-    _, _, _, cls_loss = _multiclass_classification_terms(labels, logits, weights, num_class)
-    decor_loss_raw, _, _ = _decorrelation_loss_components(
-        logits, labels, weights, decor_state, num_class, decor_scale
+    _, _, _, cls_loss = _multiclass_classification_terms(
+        labels, predt, weights, num_class, prediction_mode=prediction_mode
     )
+    if decor_state.get("mode", "none") == "none" or lam <= 0.0:
+        decor_loss_raw = 0.0
+    else:
+        if prediction_mode != "margin":
+            raise ValueError("Decorrelation loss requires raw margin predictions.")
+        decor_loss_raw, _, _ = _decorrelation_loss_components(
+            predt, labels, weights, decor_state, num_class, decor_scale
+        )
     decor_loss = float(lam * decor_loss_raw)
     return {
         "classification": float(cls_loss),
@@ -972,7 +964,7 @@ def _loss_components(logits, labels, weights, decor_state, num_class, lam, decor
     }
 
 
-def _make_multiclass_objective(num_class, decor_state, lam, decor_scale, hess_floor_c):
+def _make_multiclass_objective(num_class, decor_state, lam, decor_scale):
     def obj(predt, dtrain):
         labels = dtrain.get_label().astype(int)
         weights = dtrain.get_weight()
@@ -982,7 +974,7 @@ def _make_multiclass_objective(num_class, decor_state, lam, decor_scale, hess_fl
         _, grad_cls, hess_cls, _ = _multiclass_classification_terms(labels, logits, weights, num_class)
         if lam > 0.0 and decor_state.get("mode", "none") != "none":
             _, grad_dec, hess_dec = _decorrelation_loss_components(
-                logits, labels, weights, decor_state, num_class, decor_scale, hess_floor_c
+                logits, labels, weights, decor_state, num_class, decor_scale
             )
             grad = grad_cls + lam * grad_dec
             hess = hess_cls + lam * hess_dec
@@ -1018,11 +1010,12 @@ def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma):
 
 
 class _TotalLossMetricRecorder:
-    def __init__(self, datasets, num_class, lam, decor_scale):
+    def __init__(self, datasets, num_class, lam, decor_scale, prediction_mode="margin"):
         self.datasets = list(datasets)
         self.num_class = int(num_class)
         self.lam = float(lam)
         self.decor_scale = float(decor_scale)
+        self.prediction_mode = str(prediction_mode)
         self._call_idx = 0
         self.history = {
             tag: {"classification": [], "decorrelation": [], "regularization": [], "total": []}
@@ -1032,9 +1025,15 @@ class _TotalLossMetricRecorder:
     def __call__(self, predt, dtrain):
         tag, labels, weights, decor_state = self.datasets[self._call_idx % len(self.datasets)]
         self._call_idx += 1
-        logits = _reshape_multiclass_margin(predt, self.num_class, len(labels))
         comp = _loss_components(
-            logits, labels, weights, decor_state, self.num_class, self.lam, self.decor_scale
+            predt,
+            labels,
+            weights,
+            decor_state,
+            self.num_class,
+            self.lam,
+            self.decor_scale,
+            prediction_mode=self.prediction_mode,
         )
         for key in ("classification", "decorrelation", "regularization", "total"):
             self.history[tag][key].append(comp[key])
@@ -1061,9 +1060,16 @@ def _loss_value_at(loss_history, split_name, metric_key, epoch):
     return values[epoch] if epoch < len(values) else float("nan")
 
 
-def _format_detailed_loss_line(epoch, loss_history):
+def _format_detailed_loss_line(epoch, loss_history, prefix="", compact=False):
+    head = f"{prefix}[{epoch}]" if prefix else f"[{epoch}]"
+    if compact:
+        return (
+            f"{head}"
+            f"\ttrain-total_loss:{_loss_value_at(loss_history, 'train', 'total', epoch):.5f}"
+            f"\ttest-total_loss:{_loss_value_at(loss_history, 'test', 'total', epoch):.5f}"
+        )
     return (
-        f"[{epoch}]"
+        f"{head}"
         f"\ttrain-classification_loss:{_loss_value_at(loss_history, 'train', 'classification', epoch):.5f}"
         f"\ttrain-decorrelation_loss:{_loss_value_at(loss_history, 'train', 'decorrelation', epoch):.5f}"
         f"\ttrain-total_loss:{_loss_value_at(loss_history, 'train', 'total', epoch):.5f}"
@@ -1073,48 +1079,52 @@ def _format_detailed_loss_line(epoch, loss_history):
     )
 
 
-def _log_detailed_loss_history(loss_history):
-    n_rounds = 0
-    for metrics in loss_history.values():
-        for values in metrics.values():
-            n_rounds = max(n_rounds, len(values))
-    for epoch in range(n_rounds):
-        log_message(_format_detailed_loss_line(epoch, loss_history))
-
-
 class _DetailedLossMonitor(xgb.callback.TrainingCallback):
-    def __init__(self, recorder, reg_lambda, reg_alpha, gamma, early_stopping_rounds=None):
+    def __init__(self, recorder, reg_lambda, reg_alpha, gamma, early_stopping_rounds,
+                 stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0):
         self.recorder = recorder
         self.reg_lambda = float(reg_lambda)
         self.reg_alpha = float(reg_alpha)
         self.gamma = float(gamma)
-        self.early_stopping_rounds = None if early_stopping_rounds is None else int(early_stopping_rounds)
-        self.cumulative_regularization = 0.0
-        self.best_iteration = None
+        self.early_stopping_rounds = int(early_stopping_rounds)
+        self.stage_label = str(stage_label)
+        self.compact_log = bool(compact_log)
+        self.cumulative_regularization = float(initial_reg)
+        self.tree_offset = int(tree_offset)
+        self.best_iteration = None  # stage-local best iteration
         self.best_score = float("inf")
         self._stale_rounds = 0
 
     def after_iteration(self, model, epoch, evals_log):
         del evals_log
+        local_epoch = int(epoch)
+        tree_index = self.tree_offset + local_epoch
         self.cumulative_regularization += _booster_regularization_loss(
-            model[epoch:epoch + 1], self.reg_lambda, self.reg_alpha, self.gamma
+            model[tree_index:tree_index + 1], self.reg_lambda, self.reg_alpha, self.gamma
         )
         self.recorder.finalize_iteration(self.cumulative_regularization)
-        log_message(_format_detailed_loss_line(epoch, self.recorder.history))
-        current_score = _loss_value_at(self.recorder.history, "test", "total", epoch)
+        prefix = f"[{self.stage_label}]" if self.stage_label else ""
+        log_message(_format_detailed_loss_line(
+            local_epoch, self.recorder.history, prefix=prefix, compact=self.compact_log
+        ))
+        current_score = _loss_value_at(self.recorder.history, "test", "total", local_epoch)
         if np.isfinite(current_score) and (
             self.best_iteration is None or current_score < self.best_score - 1e-12
         ):
-            self.best_iteration = int(epoch)
+            self.best_iteration = int(local_epoch)
             self.best_score = float(current_score)
             self._stale_rounds = 0
-            model.set_attr(best_iteration=str(self.best_iteration), best_score=str(self.best_score))
+            model.set_attr(
+                best_iteration=str(self.tree_offset + self.best_iteration),
+                best_score=str(self.best_score),
+            )
         else:
             self._stale_rounds += 1
 
-        if self.early_stopping_rounds is not None and self._stale_rounds >= self.early_stopping_rounds:
+        if self._stale_rounds >= self.early_stopping_rounds:
+            tag = f" ({self.stage_label})" if self.stage_label else ""
             log_message(
-                "Info: early stopping on full total_loss "
+                f"Info: early stopping{tag} on total_loss "
                 f"(best_iteration={self.best_iteration}, best_test_total_loss={self.best_score:.5f})"
             )
             return True
@@ -1130,39 +1140,6 @@ def _trim_loss_history(loss_history, n_rounds):
     return trimmed
 
 
-def _loss_history_from_classifier(clf):
-    history = {
-        "train": {"classification": [], "decorrelation": [], "regularization": [], "total": []},
-        "test": {"classification": [], "decorrelation": [], "regularization": [], "total": []},
-    }
-    try:
-        evals = clf.evals_result()
-    except Exception:
-        return history
-
-    train_metrics = evals.get("validation_0", {})
-    test_metrics = evals.get("validation_1", {})
-    loss_key = next((k for k in train_metrics if "logloss" in k), None)
-    if loss_key is None:
-        return history
-
-    n_rounds = len(train_metrics[loss_key])
-    train_loss = list(train_metrics[loss_key])
-    test_loss = list(test_metrics.get(loss_key, []))
-    if len(test_loss) < n_rounds:
-        test_loss += [test_loss[-1] if test_loss else 0.0] * (n_rounds - len(test_loss))
-
-    history["train"]["classification"] = train_loss
-    history["train"]["decorrelation"] = [0.0] * n_rounds
-    history["train"]["regularization"] = [0.0] * n_rounds
-    history["train"]["total"] = train_loss
-    history["test"]["classification"] = test_loss[:n_rounds]
-    history["test"]["decorrelation"] = [0.0] * n_rounds
-    history["test"]["regularization"] = [0.0] * n_rounds
-    history["test"]["total"] = test_loss[:n_rounds]
-    return history
-
-
 def _make_dmatrix(Xlike, y=None, w=None):
     data = Xlike
     feature_names = list(Xlike.columns) if hasattr(Xlike, "columns") else None
@@ -1172,10 +1149,18 @@ def _make_dmatrix(Xlike, y=None, w=None):
 # -------------------- Training --------------------
 def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                       model_name, tree_name, decorrelate_feature_names=None):
-    """Train a multiclass BDT with optional decorrelation.
+    """Two-stage multiclass BDT training.
 
-    Hyperparameters are read from config.json under the key matching tree_name.
-    Returns the trained model, plotting splits, and per-round loss histories.
+    Stage 1 uses native ``multi:softprob`` (cls-only). When decorrelation is
+    enabled (non-empty ``decorrelate`` and ``decor_lambda > 0``), stage 2
+    continues from the stage-1 best model with a custom objective that adds
+    the smooth-CvM (or hard-CvM) decorrelation term to the native softprob
+    gradient. Classification and regularization loss definitions are identical
+    across both stages; stage 1 prints only train/test ``total_loss`` per
+    round, while stage 2 prints the six detailed fields.
+
+    Returns ``(stage1_model, stage2_model_or_None, splits, combined_loss_history, stage_boundary)``
+    where ``stage_boundary`` is the number of stage-1 iterations kept.
     """
     X_train_all = np.asarray(X_train_all) if not isinstance(X_train_all, pd.DataFrame) else X_train_all
     X_test_all = np.asarray(X_test_all) if not isinstance(X_test_all, pd.DataFrame) else X_test_all
@@ -1210,224 +1195,216 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
 
     hp = cfg.get(tree_name, {})
     n_threads = max(1, min(16, os.cpu_count() or 1))
-    num_boost_round = int(hp.get("n_estimators", 200))
+    n_estimators = int(hp.get("n_estimators", 200))
+    n_estimators_decorr = int(hp.get("n_estimators_decorr", 1000))
     early_stopping_rounds = int(hp.get("early_stopping_rounds", 10))
     if early_stopping_rounds <= 0:
         raise ValueError(
             f"early_stopping_rounds must be a positive integer, got {early_stopping_rounds}"
         )
+    learning_rate = float(hp.get("learning_rate", 0.1))
+    learning_rate_decorr = float(hp.get("learning_rate_decorr", 0.01))
     log_message(f"Thread mode: XGBoost, threads = {n_threads}")
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
-    if use_decor:
-        dtrain = _make_dmatrix(X_train, y_train, w_train)
-        dtest = _make_dmatrix(X_test, y_test, w_test)
-        train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE)
-        test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE)
+    dtrain = _make_dmatrix(X_train, y_train, w_train)
+    dtest = _make_dmatrix(X_test, y_test, w_test)
 
-        train_params = dict(
-            num_class=NUM_CLASSES,
-            objective="multi:softprob",
-            max_depth=hp.get("max_depth", 6),
-            eta=hp.get("learning_rate", 0.1),
-            gamma=hp.get("gamma", 0),
-            reg_lambda=hp.get("reg_lambda", 1),
-            reg_alpha=hp.get("reg_alpha", 0),
-            min_child_weight=hp.get("min_child_weight", 1),
-            nthread=n_threads,
-            seed=RANDOM_STATE,
-            disable_default_eval_metric=1,
-            tree_method="hist",
-        )
-
-        def _calibrate_decor_scale(extra_params):
-            # Run a long enough classification-only pilot for the scores to
-            # actually separate; that is the regime where raw_decor_loss
-            # reflects its realistic magnitude, not the near-zero value it
-            # takes at initialisation. One fixed scale is then set so that
-            # `decor_lambda=1` makes the scaled decor loss comparable to
-            # `cls_loss + reg_loss` at that pilot point.
-            pilot_rounds = max(20, num_boost_round // 4)
-            pilot_rounds = min(pilot_rounds, max(1, num_boost_round))
-            pilot = xgb.train(
-                params={**train_params, **extra_params},
-                dtrain=dtrain,
-                num_boost_round=pilot_rounds,
-                evals=[],
-                verbose_eval=False,
-            )
-            pilot_logits = _reshape_multiclass_margin(
-                pilot.predict(dtrain, output_margin=True), NUM_CLASSES, len(y_train)
-            )
-            _, grad_cls_ref, hess_cls_ref, cls_loss_ref = _multiclass_classification_terms(
-                y_train, pilot_logits, w_train, NUM_CLASSES
-            )
-            reg_loss_ref = _booster_regularization_loss(
-                pilot,
-                train_params["reg_lambda"],
-                train_params["reg_alpha"],
-                train_params["gamma"],
-            )
-            decor_loss_ref_raw, _, _ = _decorrelation_loss_components(
-                pilot_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
-            )
-            numerator = max(float(cls_loss_ref) + float(reg_loss_ref), _EPS)
-            if not np.isfinite(decor_loss_ref_raw) or decor_loss_ref_raw <= _EPS:
-                log_warning(
-                    f"Pilot raw decorrelation loss is non-positive ({decor_loss_ref_raw:.6g}); "
-                    "falling back to scale=1.0"
-                )
-                scale = 1.0
-            else:
-                scale = numerator / float(decor_loss_ref_raw)
-
-            if DECOR_HESS_FLOOR_C == "pilot":
-                median_abs_grad_cls = float(np.median(np.abs(grad_cls_ref)))
-                median_hess_cls = float(np.median(hess_cls_ref))
-                if median_abs_grad_cls > _EPS and np.isfinite(median_hess_cls):
-                    hess_floor_c = median_hess_cls / median_abs_grad_cls
-                else:
-                    log_warning(
-                        "Pilot median |grad_cls| is non-positive; falling back to hess_floor_c=1.0"
-                    )
-                    hess_floor_c = 1.0
-            else:
-                hess_floor_c = float(DECOR_HESS_FLOOR_C)
-
-            return (
-                scale,
-                hess_floor_c,
-                pilot_rounds,
-                float(cls_loss_ref),
-                float(reg_loss_ref),
-                float(decor_loss_ref_raw),
-            )
-
-        def _train_with_params(extra_params):
-            (
-                decor_scale,
-                hess_floor_c,
-                pilot_rounds,
-                cls_loss_ref,
-                reg_loss_ref,
-                decor_loss_ref_raw,
-            ) = _calibrate_decor_scale(extra_params)
-            log_message(
-                f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}, "
-                f"hess_floor_c={hess_floor_c:.6g} (config={DECOR_HESS_FLOOR_C!r}), "
-                f"pilot_rounds={pilot_rounds}, pilot_cls_loss={cls_loss_ref:.6g}, "
-                f"pilot_reg_loss={reg_loss_ref:.6g}, "
-                f"pilot_raw_decor_loss={decor_loss_ref_raw:.6g}"
-            )
-            recorder = _TotalLossMetricRecorder(
-                [
-                    ("train", y_train, w_train, train_decor_state),
-                    ("test", y_test, w_test, test_decor_state),
-                ],
-                NUM_CLASSES,
-                DECOR_LAMBDA,
-                decor_scale,
-            )
-            custom_obj = _make_multiclass_objective(
-                NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale, hess_floor_c
-            )
-            monitor = _DetailedLossMonitor(
-                recorder,
-                reg_lambda=train_params["reg_lambda"],
-                reg_alpha=train_params["reg_alpha"],
-                gamma=train_params["gamma"],
-                early_stopping_rounds=early_stopping_rounds,
-            )
-            train_kwargs = dict(
-                params={**train_params, **extra_params},
-                dtrain=dtrain,
-                num_boost_round=num_boost_round,
-                evals=[(dtrain, "train"), (dtest, "test")],
-                obj=custom_obj,
-                verbose_eval=False,
-                callbacks=[monitor],
-            )
-            try:
-                model = xgb.train(custom_metric=recorder, **train_kwargs)
-            except TypeError:
-                model = xgb.train(feval=recorder, **train_kwargs)
-            return model, recorder, monitor
-
-        try:
-            model, recorder, monitor = _train_with_params({"device": "cuda"})
-        except xgb.core.XGBoostError:
-            model, recorder, monitor = _train_with_params({})
-
-        best_iteration = monitor.best_iteration
-        if best_iteration is None:
-            best_iteration = model.num_boosted_rounds() - 1
-        n_rounds = int(best_iteration) + 1
-        if model.num_boosted_rounds() != n_rounds:
-            model = model[:n_rounds]
-        loss_history = _trim_loss_history(recorder.history, n_rounds)
-
-        save_path = model_name if model_name.endswith(".json") else model_name + ".json"
-        model.save_model(save_path)
-        log_message(f"Wrote model file: {save_path}")
-        return model, splits, loss_history
-
-    common_kwargs = dict(
+    base_params = dict(
         num_class=NUM_CLASSES,
-        n_estimators=num_boost_round,
+        objective="multi:softprob",
         max_depth=hp.get("max_depth", 6),
-        learning_rate=hp.get("learning_rate", 0.1),
         gamma=hp.get("gamma", 0),
         reg_lambda=hp.get("reg_lambda", 1),
         reg_alpha=hp.get("reg_alpha", 0),
         min_child_weight=hp.get("min_child_weight", 1),
-        n_jobs=n_threads,
-        random_state=RANDOM_STATE,
+        nthread=n_threads,
+        seed=RANDOM_STATE,
+        disable_default_eval_metric=1,
+        tree_method="hist",
     )
 
-    def _fit_classifier(extra_kwargs):
-        clf = XGBClassifier(
-            **common_kwargs,
-            tree_method="hist",
-            objective="multi:softprob",
+    # Build decor state on both splits when decor is enabled; stage-1 recorder
+    # uses an explicit "none" decor_state so it contributes zero loss/grad/hess.
+    train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE) if use_decor else {"mode": "none"}
+    test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE) if use_decor else {"mode": "none"}
+
+    # ---------- Stage 1: native cls-only ----------
+    stage1_params = dict(base_params)
+    stage1_params["eta"] = learning_rate
+
+    def _run_stage1(extra_params):
+        recorder = _TotalLossMetricRecorder(
+            [
+                ("train", y_train, w_train, {"mode": "none"}),
+                ("test", y_test, w_test, {"mode": "none"}),
+            ],
+            NUM_CLASSES, 0.0, 1.0, prediction_mode="probability",
+        )
+        monitor = _DetailedLossMonitor(
+            recorder,
+            reg_lambda=stage1_params["reg_lambda"],
+            reg_alpha=stage1_params["reg_alpha"],
+            gamma=stage1_params["gamma"],
             early_stopping_rounds=early_stopping_rounds,
-            **extra_kwargs,
+            stage_label="stage1",
+            compact_log=True,
         )
-        clf.fit(
-            X_train,
-            y_train,
-            sample_weight=w_train,
-            eval_set=[(X_train, y_train), (X_test, y_test)],
-            sample_weight_eval_set=[w_train, w_test],
-            verbose=False,
+        train_kwargs = dict(
+            params={**stage1_params, **extra_params},
+            dtrain=dtrain,
+            num_boost_round=n_estimators,
+            evals=[(dtrain, "train"), (dtest, "test")],
+            verbose_eval=False,
+            callbacks=[monitor],
         )
-        return clf
+        try:
+            model = xgb.train(custom_metric=recorder, **train_kwargs)
+        except TypeError:
+            model = xgb.train(feval=recorder, **train_kwargs)
+        return model, recorder, monitor
 
+    log_message(
+        f"Starting stage 1 (native multi:softprob, n_estimators={n_estimators}, eta={learning_rate})"
+    )
     try:
-        clf = _fit_classifier({"device": "cuda"})
+        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
     except xgb.core.XGBoostError:
-        clf = _fit_classifier({})
+        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
 
-    loss_history = _loss_history_from_classifier(clf)
-    n_rounds = len(loss_history["train"]["total"])
-    best_iteration = getattr(clf, "best_iteration", None)
-    if best_iteration is not None and best_iteration >= 0:
-        n_rounds = min(n_rounds, int(best_iteration) + 1)
-        loss_history = _trim_loss_history(loss_history, n_rounds)
-    _log_detailed_loss_history(loss_history)
+    stage1_best = stage1_monitor.best_iteration
+    if stage1_best is None:
+        stage1_best = stage1_model.num_boosted_rounds() - 1
+    stage1_rounds = int(stage1_best) + 1
+    if stage1_model.num_boosted_rounds() != stage1_rounds:
+        stage1_model = stage1_model[:stage1_rounds]
+    stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
 
-    if model_name.endswith(".json"):
-        save_path = model_name
-        clf.save_model(save_path)
-        log_message(f"Wrote model file: {save_path}")
+    base_path = model_name[:-5] if model_name.endswith(".json") else model_name
+    stage1_save_path = f"{base_path}_stage1.json"
+    stage1_model.save_model(stage1_save_path)
+    log_message(f"Wrote model file: {stage1_save_path}")
+
+    if not use_decor:
+        # No stage 2. Copy stage 1 as the main model file so downstream paths stay unchanged.
+        main_save_path = f"{base_path}.json"
+        stage1_model.save_model(main_save_path)
+        log_message(f"Wrote model file: {main_save_path}")
+        return stage1_model, None, splits, stage1_history, stage1_rounds
+
+    # ---------- Stage 2: continuation with decorrelation ----------
+    # Calibrate fixed decor scale from stage 1 best-model state so that
+    # decor_lambda=1 keeps the logged decor_loss at a magnitude comparable to
+    # cls_loss + reg_loss at the point where stage 2 actually starts.
+    stage1_logits = _reshape_multiclass_margin(
+        stage1_model.predict(dtrain, output_margin=True), NUM_CLASSES, len(y_train)
+    )
+    _, _, _, cls_loss_ref = _multiclass_classification_terms(
+        y_train, stage1_logits, w_train, NUM_CLASSES
+    )
+    reg_loss_ref = _booster_regularization_loss(
+        stage1_model,
+        stage1_params["reg_lambda"],
+        stage1_params["reg_alpha"],
+        stage1_params["gamma"],
+    )
+    decor_loss_ref_raw, _, _ = _decorrelation_loss_components(
+        stage1_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
+    )
+    numerator = max(float(cls_loss_ref) + float(reg_loss_ref), _EPS)
+    if not np.isfinite(decor_loss_ref_raw) or decor_loss_ref_raw <= _EPS:
+        log_warning(
+            f"Stage-1 raw decorrelation loss is non-positive ({decor_loss_ref_raw:.6g}); "
+            "falling back to scale=1.0"
+        )
+        decor_scale = 1.0
     else:
-        save_path = model_name + ".pkl"
-        with open(save_path, "wb") as fout:
-            pickle.dump(clf, fout)
-        log_message(f"Wrote model file: {save_path}")
+        decor_scale = numerator / float(decor_loss_ref_raw)
 
-    return clf, splits, loss_history
+    log_message(
+        f"Stage-1 end: best_iter={stage1_rounds - 1}, cls_loss={cls_loss_ref:.6g}, "
+        f"reg_loss={reg_loss_ref:.6g}, raw_decor_loss={decor_loss_ref_raw:.6g}"
+    )
+    log_message(f"Decorrelation scale: mode={DECOR_LOSS_MODE}, fixed_scale={decor_scale:.6g}")
+
+    stage2_params = dict(base_params)
+    stage2_params["eta"] = learning_rate_decorr
+
+    def _run_stage2(extra_params):
+        recorder = _TotalLossMetricRecorder(
+            [
+                ("train", y_train, w_train, train_decor_state),
+                ("test", y_test, w_test, test_decor_state),
+            ],
+            NUM_CLASSES, DECOR_LAMBDA, decor_scale, prediction_mode="margin",
+        )
+        monitor = _DetailedLossMonitor(
+            recorder,
+            reg_lambda=stage2_params["reg_lambda"],
+            reg_alpha=stage2_params["reg_alpha"],
+            gamma=stage2_params["gamma"],
+            early_stopping_rounds=early_stopping_rounds,
+            stage_label="stage2",
+            compact_log=False,
+            initial_reg=reg_loss_ref,
+            tree_offset=stage1_rounds,
+        )
+        custom_obj = _make_multiclass_objective(
+            NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale
+        )
+        # In xgb.train continuation, num_boost_round is the number of additional
+        # rounds to add, while the callback epoch counter restarts from 0.
+        train_kwargs = dict(
+            params={**stage2_params, **extra_params},
+            dtrain=dtrain,
+            num_boost_round=n_estimators_decorr,
+            evals=[(dtrain, "train"), (dtest, "test")],
+            obj=custom_obj,
+            xgb_model=stage1_save_path,
+            verbose_eval=False,
+            callbacks=[monitor],
+        )
+        try:
+            model = xgb.train(custom_metric=recorder, **train_kwargs)
+        except TypeError:
+            model = xgb.train(feval=recorder, **train_kwargs)
+        return model, recorder, monitor
+
+    log_message(
+        f"Starting stage 2 (cls+decor, n_estimators_decorr={n_estimators_decorr}, eta={learning_rate_decorr})"
+    )
+    try:
+        stage2_model, stage2_recorder, stage2_monitor = _run_stage2({"device": "cuda"})
+    except xgb.core.XGBoostError:
+        stage2_model, stage2_recorder, stage2_monitor = _run_stage2({})
+
+    stage2_best = stage2_monitor.best_iteration  # stage-local index
+    if stage2_best is None:
+        stage2_best = stage2_model.num_boosted_rounds() - stage1_rounds - 1
+    stage2_rounds = int(stage2_best) + 1
+    total_rounds = stage1_rounds + stage2_rounds
+    if stage2_model.num_boosted_rounds() != total_rounds:
+        stage2_model = stage2_model[:total_rounds]
+    stage2_history = _trim_loss_history(stage2_recorder.history, stage2_rounds)
+
+    combined_history = {
+        "train": {
+            k: list(stage1_history["train"].get(k, [])) + list(stage2_history["train"].get(k, []))
+            for k in ("classification", "decorrelation", "regularization", "total")
+        },
+        "test": {
+            k: list(stage1_history["test"].get(k, [])) + list(stage2_history["test"].get(k, []))
+            for k in ("classification", "decorrelation", "regularization", "total")
+        },
+    }
+
+    main_save_path = f"{base_path}.json"
+    stage2_model.save_model(main_save_path)
+    log_message(f"Wrote model file: {main_save_path}")
+
+    return stage1_model, stage2_model, splits, combined_history, stage1_rounds
 
 
 # -------------------- Plotting --------------------
@@ -1446,8 +1423,17 @@ def _predict_proba(model, Xlike):
     return _softmax_rows(_predict_margins(model, Xlike))
 
 
-def plot_results(model, splits, tree_name, output_root, loss_history, decorrelate_feature_names=None):
-    """ROC curves, feature importance, score distributions, loss curves, and decorrelation checks."""
+def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
+                 loss_history, stage_boundary, decorrelate_feature_names=None):
+    """ROC curves, feature importance, score distributions, loss curves, and decorrelation checks.
+
+    Model-dependent plots (ROC, importance, score distributions, decor_corr)
+    are saved twice with ``_cls`` / ``_decorr`` suffixes (for the stage-1
+    baseline and stage-2 final model respectively). ``feature_corr.pdf`` and
+    the three ``loss_*.pdf`` files are saved once and shared across stages.
+    ``stage_boundary`` is the number of stage-1 iterations kept; it is drawn
+    as a dotted vertical line on the loss curves.
+    """
     X_train_full, X_test_full, y_train, y_test, w_train, w_test = splits
 
     full_feature_names = list(X_train_full.columns) if hasattr(X_train_full, "columns") \
@@ -1485,8 +1471,8 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
     X_test_used = _slice(X_test_full, keep_idx)
     feat_names_used = [full_feature_names[i] for i in keep_idx]
 
-    booster = _booster_from_model(model)
-    booster_features = booster.feature_names or []
+    booster_ref = _booster_from_model(stage1_model if stage1_model is not None else stage2_model)
+    booster_features = booster_ref.feature_names or []
     if booster_features and len(booster_features) == len(full_feature_names):
         X_train_used, X_test_used = X_train_full, X_test_full
         feat_names_used = full_feature_names
@@ -1578,11 +1564,6 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
                     )
         _savefig(stem, fig=fig)
 
-    probs_train = _predict_proba(model, X_train_used)
-    probs_test = _predict_proba(model, X_test_used)
-    margins_train = _predict_margins(model, X_train_used)
-    margins_test = _predict_margins(model, X_test_used)
-
     def _roc_binary(mask, scores, ys, ws, positive_idx):
         if not np.any(mask):
             return None
@@ -1592,46 +1573,6 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
         auc = roc_auc_score(y_bin, scores[mask], sample_weight=ws[mask])
         fpr, tpr, _ = roc_curve(y_bin, scores[mask], sample_weight=ws[mask])
         return fpr, tpr, auc
-
-    def _plot_roc_for_signal(sig_idx, bkg_indices):
-        sig_name = class_names[sig_idx]
-        fig, ax = plt.subplots(figsize=(10, 10))
-        any_curve = False
-        for bkg_idx in bkg_indices:
-            bkg_name = class_names[bkg_idx]
-            score_train = probs_train[:, sig_idx] / np.clip(
-                probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
-            )
-            score_test = probs_test[:, sig_idx] / np.clip(
-                probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
-            )
-            mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
-            mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
-            color = palette[bkg_idx]
-            r_tst = _roc_binary(mask_test, score_test, y_test, w_test, sig_idx)
-            r_trn = _roc_binary(mask_train, score_train, y_train, w_train, sig_idx)
-            if r_tst:
-                fpr, tpr, auc = r_tst
-                ax.plot(tpr, fpr, color=color, linestyle="-",
-                        label=f"Test vs {bkg_name} AUC={auc:.3f}")
-                log_message(f"{tree_name} test AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
-                any_curve = True
-            if r_trn:
-                fpr, tpr, auc = r_trn
-                ax.plot(tpr, fpr, color=color, linestyle="--",
-                        label=f"Train vs {bkg_name} AUC={auc:.3f}")
-                log_message(f"{tree_name} train AUC ({sig_name} vs {bkg_name}) = {auc:.4f}")
-                any_curve = True
-        if not any_curve:
-            plt.close(fig)
-            return
-        ax.set_xlabel(rf"$\epsilon_{{\rm {sig_name}}}$", fontsize=20)
-        ax.set_ylabel(r"$\epsilon_{\rm bkg}$", fontsize=20)
-        ax.set_yscale("log")
-        ax.set_ylim(1e-6, 1)
-        ax.set_xlim(0, 1)
-        ax.legend(loc="lower right", fontsize=12)
-        _savefig(f"roc_{_slugify(sig_name)}", fig=fig)
 
     if SIGNAL_CLASS_INDICES and BACKGROUND_CLASS_INDICES:
         roc_pairs = [
@@ -1646,103 +1587,201 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
         roc_signal_groups = [
             (i, [j for j in range(n_classes) if j != i]) for i in range(n_classes)
         ]
-    for sig_idx, bkg_indices in roc_signal_groups:
-        _plot_roc_for_signal(sig_idx, bkg_indices)
 
-    score_map = booster.get_score(importance_type="gain")
-    importances = []
-    for i, name in enumerate(feat_names_used):
-        importances.append(float(score_map.get(name, score_map.get(f"f{i}", 0.0))))
-    importances = np.asarray(importances, dtype=float)
-    positive = importances > 0.0
-    if not np.any(positive):
-        positive = np.ones_like(importances, dtype=bool)
-    imp_names = [feat_names_used[i] for i in np.where(positive)[0]]
-    imp_vals = importances[positive]
-    order = np.argsort(imp_vals)
-    imp_names = [imp_names[i] for i in order]
-    imp_vals = imp_vals[order]
-    max_label_len = max((len(name) for name in imp_names), default=10)
-    fig_h = max(4.0, 0.24 * len(imp_names) + 1.4)
-    fig_w = max(7.0, min(13.0, 4.8 + 0.055 * max_label_len))
-    left_margin = min(0.45, max(0.16, 0.0065 * max_label_len + 0.06))
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    y_pos = np.arange(len(imp_names))
-    ax.barh(y_pos, np.maximum(imp_vals, 1e-12), color="steelblue", edgecolor="none", alpha=0.9)
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(imp_names, fontsize=10)
-    ax.set_title(f"{tree_name} Feature Importance", fontsize=16)
-    ax.set_xlabel("Gain", fontsize=12)
-    positive_vals = imp_vals[imp_vals > 0.0]
-    if positive_vals.size > 0:
-        ax.set_xscale("log")
-        ax.set_xlim(max(np.min(positive_vals) / 2.0, 1e-12), np.max(positive_vals) * 2.0)
-    ax.grid(True, axis="x", linestyle="--", alpha=0.35)
-    fig.subplots_adjust(left=left_margin, right=0.98, top=0.94, bottom=0.08)
-    _savefig("importance", fig=fig, tight=False)
+    decor_var_names = [full_feature_names[i] for i in decor_idx_full]
 
-    def _plot_score_dist(sig_idx, bkg_idx):
-        sig_name = class_names[sig_idx]
-        bkg_name = class_names[bkg_idx]
-        score_train = probs_train[:, sig_idx] / np.clip(
-            probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
-        )
-        score_test = probs_test[:, sig_idx] / np.clip(
-            probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
-        )
-        mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
-        mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
-        bins = np.linspace(0, 1, 31)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.set_xlim(0, 1)
-        ax.hist(
-            score_train[mask_train & (y_train == bkg_idx)],
-            bins=bins,
-            weights=w_train[mask_train & (y_train == bkg_idx)],
-            density=True,
-            histtype="bar",
-            alpha=0.5,
-            label=f"Train {bkg_name}",
-        )
-        ax.hist(
-            score_train[mask_train & (y_train == sig_idx)],
-            bins=bins,
-            weights=w_train[mask_train & (y_train == sig_idx)],
-            density=True,
-            histtype="bar",
-            alpha=0.5,
-            label=f"Train {sig_name}",
-        )
-        ax.hist(
-            score_test[mask_test & (y_test == bkg_idx)],
-            bins=bins,
-            weights=w_test[mask_test & (y_test == bkg_idx)],
-            density=True,
-            histtype="step",
-            linewidth=2,
-            color="lime",
-            label=f"Test {bkg_name}",
-        )
-        ax.hist(
-            score_test[mask_test & (y_test == sig_idx)],
-            bins=bins,
-            weights=w_test[mask_test & (y_test == sig_idx)],
-            density=True,
-            histtype="step",
-            linewidth=2,
-            color="red",
-            label=f"Test {sig_name}",
-        )
-        ax.set_xlabel("BDT Score")
-        ax.set_yscale("log")
-        ax.set_ylim(1e-2,)
-        ax.set_ylabel("Density")
-        ax.legend()
-        _savefig(f"score_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}", fig=fig)
+    def _plot_for_model(model, suffix, stage_tag):
+        if model is None:
+            return
+        probs_train = _predict_proba(model, X_train_used)
+        probs_test = _predict_proba(model, X_test_used)
+        margins_train = _predict_margins(model, X_train_used)
+        margins_test = _predict_margins(model, X_test_used)
+        booster = _booster_from_model(model)
 
-    for sig_idx, bkg_idx in roc_pairs:
-        _plot_score_dist(sig_idx, bkg_idx)
+        # ROC plots
+        def _plot_roc_for_signal(sig_idx, bkg_indices):
+            sig_name = class_names[sig_idx]
+            fig, ax = plt.subplots(figsize=(10, 10))
+            any_curve = False
+            for bkg_idx in bkg_indices:
+                bkg_name = class_names[bkg_idx]
+                score_train = probs_train[:, sig_idx] / np.clip(
+                    probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
+                )
+                score_test = probs_test[:, sig_idx] / np.clip(
+                    probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
+                )
+                mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
+                mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
+                color = palette[bkg_idx]
+                r_tst = _roc_binary(mask_test, score_test, y_test, w_test, sig_idx)
+                r_trn = _roc_binary(mask_train, score_train, y_train, w_train, sig_idx)
+                if r_tst:
+                    fpr, tpr, auc = r_tst
+                    ax.plot(tpr, fpr, color=color, linestyle="-",
+                            label=f"Test vs {bkg_name} AUC={auc:.3f}")
+                    log_message(
+                        f"{tree_name} [{stage_tag}] test AUC ({sig_name} vs {bkg_name}) = {auc:.4f}"
+                    )
+                    any_curve = True
+                if r_trn:
+                    fpr, tpr, auc = r_trn
+                    ax.plot(tpr, fpr, color=color, linestyle="--",
+                            label=f"Train vs {bkg_name} AUC={auc:.3f}")
+                    log_message(
+                        f"{tree_name} [{stage_tag}] train AUC ({sig_name} vs {bkg_name}) = {auc:.4f}"
+                    )
+                    any_curve = True
+            if not any_curve:
+                plt.close(fig)
+                return
+            ax.set_xlabel(rf"$\epsilon_{{\rm {sig_name}}}$", fontsize=20)
+            ax.set_ylabel(r"$\epsilon_{\rm bkg}$", fontsize=20)
+            ax.set_yscale("log")
+            ax.set_ylim(1e-6, 1)
+            ax.set_xlim(0, 1)
+            ax.legend(loc="lower right", fontsize=12)
+            _savefig(f"roc_{_slugify(sig_name)}{suffix}", fig=fig)
 
+        for sig_idx, bkg_indices in roc_signal_groups:
+            _plot_roc_for_signal(sig_idx, bkg_indices)
+
+        # Importance plot
+        score_map = booster.get_score(importance_type="gain")
+        importances = []
+        for i, name in enumerate(feat_names_used):
+            importances.append(float(score_map.get(name, score_map.get(f"f{i}", 0.0))))
+        importances = np.asarray(importances, dtype=float)
+        positive = importances > 0.0
+        if not np.any(positive):
+            positive = np.ones_like(importances, dtype=bool)
+        imp_names = [feat_names_used[i] for i in np.where(positive)[0]]
+        imp_vals = importances[positive]
+        order = np.argsort(imp_vals)
+        imp_names = [imp_names[i] for i in order]
+        imp_vals = imp_vals[order]
+        max_label_len = max((len(name) for name in imp_names), default=10)
+        fig_h = max(4.0, 0.24 * len(imp_names) + 1.4)
+        fig_w = max(7.0, min(13.0, 4.8 + 0.055 * max_label_len))
+        left_margin = min(0.45, max(0.16, 0.0065 * max_label_len + 0.06))
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        y_pos = np.arange(len(imp_names))
+        ax.barh(y_pos, np.maximum(imp_vals, 1e-12), color="steelblue", edgecolor="none", alpha=0.9)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(imp_names, fontsize=10)
+        ax.set_title(f"{tree_name} Feature Importance [{stage_tag}]", fontsize=16)
+        ax.set_xlabel("Gain", fontsize=12)
+        positive_vals = imp_vals[imp_vals > 0.0]
+        if positive_vals.size > 0:
+            ax.set_xscale("log")
+            ax.set_xlim(max(np.min(positive_vals) / 2.0, 1e-12), np.max(positive_vals) * 2.0)
+        ax.grid(True, axis="x", linestyle="--", alpha=0.35)
+        fig.subplots_adjust(left=left_margin, right=0.98, top=0.94, bottom=0.08)
+        _savefig(f"importance{suffix}", fig=fig, tight=False)
+
+        # Score distributions
+        def _plot_score_dist(sig_idx, bkg_idx):
+            sig_name = class_names[sig_idx]
+            bkg_name = class_names[bkg_idx]
+            score_train = probs_train[:, sig_idx] / np.clip(
+                probs_train[:, sig_idx] + probs_train[:, bkg_idx], _EPS, None
+            )
+            score_test = probs_test[:, sig_idx] / np.clip(
+                probs_test[:, sig_idx] + probs_test[:, bkg_idx], _EPS, None
+            )
+            mask_train = (y_train == sig_idx) | (y_train == bkg_idx)
+            mask_test = (y_test == sig_idx) | (y_test == bkg_idx)
+            bins = np.linspace(0, 1, 31)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            ax.set_xlim(0, 1)
+            ax.hist(
+                score_train[mask_train & (y_train == bkg_idx)],
+                bins=bins,
+                weights=w_train[mask_train & (y_train == bkg_idx)],
+                density=True,
+                histtype="bar",
+                alpha=0.5,
+                label=f"Train {bkg_name}",
+            )
+            ax.hist(
+                score_train[mask_train & (y_train == sig_idx)],
+                bins=bins,
+                weights=w_train[mask_train & (y_train == sig_idx)],
+                density=True,
+                histtype="bar",
+                alpha=0.5,
+                label=f"Train {sig_name}",
+            )
+            ax.hist(
+                score_test[mask_test & (y_test == bkg_idx)],
+                bins=bins,
+                weights=w_test[mask_test & (y_test == bkg_idx)],
+                density=True,
+                histtype="step",
+                linewidth=2,
+                color="lime",
+                label=f"Test {bkg_name}",
+            )
+            ax.hist(
+                score_test[mask_test & (y_test == sig_idx)],
+                bins=bins,
+                weights=w_test[mask_test & (y_test == sig_idx)],
+                density=True,
+                histtype="step",
+                linewidth=2,
+                color="red",
+                label=f"Test {sig_name}",
+            )
+            ax.set_xlabel("BDT Score")
+            ax.set_yscale("log")
+            ax.set_ylim(1e-2,)
+            ax.set_ylabel("Density")
+            ax.legend()
+            _savefig(f"score_{_slugify(sig_name)}_vs_{_slugify(bkg_name)}{suffix}", fig=fig)
+
+        for sig_idx, bkg_idx in roc_pairs:
+            _plot_score_dist(sig_idx, bkg_idx)
+
+        # Decorrelation correlation matrices (one per split), save under suffix.
+        if decor_idx_full:
+            def _build_corr_matrix(scores, Xfull, y_true, wv):
+                Xarr = _as_array(Xfull)
+                wv_abs = _safe_w(wv)
+                R = np.zeros((n_classes, len(decor_idx_full)))
+                for r, ci in enumerate(range(n_classes)):
+                    class_mask = np.asarray(y_true) == ci
+                    if not np.any(class_mask):
+                        continue
+                    s = scores[class_mask, ci]
+                    for c, j in enumerate(decor_idx_full):
+                        R[r, c] = _weighted_pearson(Xarr[class_mask, j], s, wv_abs[class_mask])
+                return R
+
+            for tag, scores, Xfull, y_true, wv in [
+                ("train", margins_train, X_train_full, y_train, w_train),
+                ("test", margins_test, X_test_full, y_test, w_test),
+            ]:
+                R = _build_corr_matrix(scores, Xfull, y_true, wv)
+                _plot_matrix_heatmap(
+                    R,
+                    class_names,
+                    decor_var_names,
+                    f"decor_corr_{tag}{suffix}",
+                    aspect="auto",
+                    annotate=True,
+                    cbar_label="weighted Pearson r",
+                )
+                for i, cls_name in enumerate(class_names):
+                    stats = ", ".join(
+                        f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
+                    )
+                    log_message(f"{tree_name} [{stage_tag}] {tag} decor corr [{cls_name}] {stats}")
+
+    _plot_for_model(stage1_model, "_cls", "stage1")
+    _plot_for_model(stage2_model, "_decorr", "stage2")
+
+    # ---- Shared plots (saved once) ----
     def _plot_loss_metric(metric_key, ylabel, stem):
         tr_loss = list(loss_history.get("train", {}).get(metric_key, []))
         te_loss = list(loss_history.get("test", {}).get(metric_key, []))
@@ -1754,11 +1793,16 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
             ax.plot(range(1, len(tr_loss) + 1), tr_loss, label="Train")
         if te_loss:
             ax.plot(range(1, len(te_loss) + 1), te_loss, label="Test")
+        if stage_boundary is not None and 0 < int(stage_boundary) < n_rounds:
+            ax.axvline(
+                float(stage_boundary) + 0.5,
+                color="gray", linestyle=":", alpha=0.7,
+                label="stage 2 start",
+            )
         ax.set_xlabel("Boosting Round")
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle="--", alpha=0.5)
-        if tr_loss or te_loss:
-            ax.legend()
+        ax.legend()
         ax.set_xlim(1, max(1, n_rounds))
         finite_vals = [v for v in tr_loss + te_loss if np.isfinite(v)]
         if finite_vals:
@@ -1785,44 +1829,6 @@ def plot_results(model, splits, tree_name, output_root, loss_history, decorrelat
             aspect="equal",
             annotate=False,
         )
-
-    if not decor_idx_full:
-        return
-
-    decor_var_names = [full_feature_names[i] for i in decor_idx_full]
-
-    def _build_corr_matrix(scores, Xfull, y_true, wv):
-        Xarr = _as_array(Xfull)
-        wv = _safe_w(wv)
-        R = np.zeros((n_classes, len(decor_idx_full)))
-        for r, ci in enumerate(range(n_classes)):
-            class_mask = np.asarray(y_true) == ci
-            if not np.any(class_mask):
-                continue
-            s = scores[class_mask, ci]
-            for c, j in enumerate(decor_idx_full):
-                R[r, c] = _weighted_pearson(Xarr[class_mask, j], s, wv[class_mask])
-        return R
-
-    for tag, scores, Xfull, y_true, wv in [
-        ("train", margins_train, X_train_full, y_train, w_train),
-        ("test", margins_test, X_test_full, y_test, w_test),
-    ]:
-        R = _build_corr_matrix(scores, Xfull, y_true, wv)
-        _plot_matrix_heatmap(
-            R,
-            class_names,
-            decor_var_names,
-            f"decor_corr_{tag}",
-            aspect="auto",
-            annotate=True,
-            cbar_label="weighted Pearson r",
-        )
-        for i, cls_name in enumerate(class_names):
-            stats = ", ".join(
-                f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
-            )
-            log_message(f"{tree_name} {tag} decor corr [{cls_name}] {stats}")
 
 
 def _validate_filtered_split(tree_name, split_name, y, w, sample_labels):
@@ -1989,15 +1995,16 @@ def main():
         X_test_std = standardize_X(X_test.copy(), clip_ranges, log_tf)
 
         log_message(f"Training model for tree = {tree_name}")
-        clf, splits, loss_history = train_multi_model(
+        stage1_model, stage2_model, splits, loss_history, stage_boundary = train_multi_model(
             X_train_std, y_train, w_train,
             X_test_std, y_test, w_test,
             model_path, tree_name,
             decorrelate_feature_names=decorrelate
         )
+        final_model = stage2_model if stage2_model is not None else stage1_model
 
         X_test_signal_model = _drop_decorrelated_features(X_test_std, decorrelate)
-        proba_signal_test = _predict_proba(clf, X_test_signal_model)
+        proba_signal_test = _predict_proba(final_model, X_test_signal_model)
         _write_prediction_reference(
             output_root,
             "test_reference_signal_region",
@@ -2037,7 +2044,7 @@ def main():
             raise RuntimeError("Filtered qcd_est model/reference test splits are misaligned")
         X_test_qcd_model = standardize_X(X_test_qcd_raw[branches].copy(), clip_ranges, log_tf)
         X_test_qcd_model = _drop_decorrelated_features(X_test_qcd_model, decorrelate)
-        proba_qcd_test = _predict_proba(clf, X_test_qcd_model)
+        proba_qcd_test = _predict_proba(final_model, X_test_qcd_model)
         _write_prediction_reference(
             output_root,
             "test_reference_qcd_est",
@@ -2052,11 +2059,13 @@ def main():
 
         log_message(f"Plotting results for tree = {tree_name}")
         plot_results(
-            clf,
+            stage1_model,
+            stage2_model,
             splits,
             tree_name,
             output_root,
             loss_history,
+            stage_boundary,
             decorrelate_feature_names=decorrelate,
         )
         log_message(f"Finished train.py for tree = {tree_name}")
