@@ -8,7 +8,7 @@
   "entries_per_sample": 5000000,
   "train_fraction": 0.7,
   "random_state": 42,
-  "decor_lambda": 0.05,
+  "decor_lambda": 0.2,
   "decor_loss_mode": "smooth_cvm",
   "decor_n_bins": 5,
   "decor_n_thresholds": 31,
