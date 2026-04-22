@@ -884,6 +884,14 @@ def _multiclass_classification_terms(labels, predt, weights, num_class, predicti
     return probs, grad, hess, loss
 
 
+def _weighted_mlogloss(loss_sum, weights):
+    weights = np.asarray(weights, dtype=float).ravel()
+    weight_sum = float(np.sum(weights))
+    if not np.isfinite(weight_sum) or weight_sum <= 0.0:
+        return float("nan")
+    return float(loss_sum / weight_sum)
+
+
 def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class, decor_scale=1.0):
     labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
@@ -947,6 +955,7 @@ def _loss_components(predt, labels, weights, decor_state, num_class, lam, decor_
     _, _, _, cls_loss = _multiclass_classification_terms(
         labels, predt, weights, num_class, prediction_mode=prediction_mode
     )
+    mlogloss = _weighted_mlogloss(cls_loss, weights)
     if decor_state.get("mode", "none") == "none" or lam <= 0.0:
         decor_loss_raw = 0.0
     else:
@@ -958,6 +967,7 @@ def _loss_components(predt, labels, weights, decor_state, num_class, lam, decor_
     decor_loss = float(lam * decor_loss_raw)
     return {
         "classification": float(cls_loss),
+        "mlogloss": float(mlogloss),
         "decorrelation": decor_loss,
         "regularization": 0.0,
         "total": float(cls_loss + decor_loss),
@@ -994,8 +1004,11 @@ def _collect_leaf_weights(node, out):
         _collect_leaf_weights(child, out)
 
 
-def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma):
+def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma, learning_rate):
     booster = model.get_booster() if hasattr(model, "get_booster") else model
+    eta = float(learning_rate)
+    if eta <= 0.0:
+        raise ValueError(f"learning_rate must be positive to reconstruct native regularization, got {eta}")
     total = 0.0
     for tree_json in booster.get_dump(dump_format="json"):
         leaf_weights = []
@@ -1003,9 +1016,10 @@ def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma):
         if not leaf_weights:
             continue
         leaf_weights = np.asarray(leaf_weights, dtype=float)
+        unshrunk_leaf_weights = leaf_weights / eta
         total += float(gamma) * float(leaf_weights.size)
-        total += 0.5 * float(reg_lambda) * float(np.sum(leaf_weights * leaf_weights))
-        total += float(reg_alpha) * float(np.sum(np.abs(leaf_weights)))
+        total += 0.5 * float(reg_lambda) * float(np.sum(unshrunk_leaf_weights * unshrunk_leaf_weights))
+        total += float(reg_alpha) * float(np.sum(np.abs(unshrunk_leaf_weights)))
     return float(total)
 
 
@@ -1018,7 +1032,13 @@ class _TotalLossMetricRecorder:
         self.prediction_mode = str(prediction_mode)
         self._call_idx = 0
         self.history = {
-            tag: {"classification": [], "decorrelation": [], "regularization": [], "total": []}
+            tag: {
+                "classification": [],
+                "mlogloss": [],
+                "decorrelation": [],
+                "regularization": [],
+                "total": [],
+            }
             for tag, _, _, _ in self.datasets
         }
 
@@ -1035,9 +1055,9 @@ class _TotalLossMetricRecorder:
             self.decor_scale,
             prediction_mode=self.prediction_mode,
         )
-        for key in ("classification", "decorrelation", "regularization", "total"):
+        for key in ("classification", "mlogloss", "decorrelation", "regularization", "total"):
             self.history[tag][key].append(comp[key])
-        return "total_loss", comp["total"]
+        return "mlogloss", comp["mlogloss"]
 
     def finalize_iteration(self, reg_loss):
         reg_loss = float(reg_loss)
@@ -1065,14 +1085,16 @@ def _format_detailed_loss_line(epoch, loss_history, prefix="", compact=False):
     if compact:
         return (
             f"{head}"
-            f"\ttrain-total_loss:{_loss_value_at(loss_history, 'train', 'total', epoch):.5f}"
-            f"\ttest-total_loss:{_loss_value_at(loss_history, 'test', 'total', epoch):.5f}"
+            f"\ttrain-mlogloss:{_loss_value_at(loss_history, 'train', 'mlogloss', epoch):.5f}"
+            f"\ttest-mlogloss:{_loss_value_at(loss_history, 'test', 'mlogloss', epoch):.5f}"
         )
     return (
         f"{head}"
+        f"\ttrain-mlogloss:{_loss_value_at(loss_history, 'train', 'mlogloss', epoch):.5f}"
         f"\ttrain-classification_loss:{_loss_value_at(loss_history, 'train', 'classification', epoch):.5f}"
         f"\ttrain-decorrelation_loss:{_loss_value_at(loss_history, 'train', 'decorrelation', epoch):.5f}"
         f"\ttrain-total_loss:{_loss_value_at(loss_history, 'train', 'total', epoch):.5f}"
+        f"\ttest-mlogloss:{_loss_value_at(loss_history, 'test', 'mlogloss', epoch):.5f}"
         f"\ttest-classification_loss:{_loss_value_at(loss_history, 'test', 'classification', epoch):.5f}"
         f"\ttest-decorrelation_loss:{_loss_value_at(loss_history, 'test', 'decorrelation', epoch):.5f}"
         f"\ttest-total_loss:{_loss_value_at(loss_history, 'test', 'total', epoch):.5f}"
@@ -1080,12 +1102,13 @@ def _format_detailed_loss_line(epoch, loss_history, prefix="", compact=False):
 
 
 class _DetailedLossMonitor(xgb.callback.TrainingCallback):
-    def __init__(self, recorder, reg_lambda, reg_alpha, gamma, early_stopping_rounds,
+    def __init__(self, recorder, reg_lambda, reg_alpha, gamma, learning_rate, early_stopping_rounds,
                  stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0):
         self.recorder = recorder
         self.reg_lambda = float(reg_lambda)
         self.reg_alpha = float(reg_alpha)
         self.gamma = float(gamma)
+        self.learning_rate = float(learning_rate)
         self.early_stopping_rounds = int(early_stopping_rounds)
         self.stage_label = str(stage_label)
         self.compact_log = bool(compact_log)
@@ -1096,18 +1119,23 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         self._stale_rounds = 0
 
     def after_iteration(self, model, epoch, evals_log):
-        del evals_log
         local_epoch = int(epoch)
         tree_index = self.tree_offset + local_epoch
         self.cumulative_regularization += _booster_regularization_loss(
-            model[tree_index:tree_index + 1], self.reg_lambda, self.reg_alpha, self.gamma
+            model[tree_index:tree_index + 1],
+            self.reg_lambda,
+            self.reg_alpha,
+            self.gamma,
+            self.learning_rate,
         )
         self.recorder.finalize_iteration(self.cumulative_regularization)
         prefix = f"[{self.stage_label}]" if self.stage_label else ""
         log_message(_format_detailed_loss_line(
             local_epoch, self.recorder.history, prefix=prefix, compact=self.compact_log
         ))
-        current_score = _loss_value_at(self.recorder.history, "test", "total", local_epoch)
+        current_score = _loss_value_at(self.recorder.history, "test", "mlogloss", local_epoch)
+        if isinstance(evals_log, dict):
+            current_score = evals_log.get("test", {}).get("mlogloss", [current_score])[-1]
         if np.isfinite(current_score) and (
             self.best_iteration is None or current_score < self.best_score - 1e-12
         ):
@@ -1124,8 +1152,8 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         if self._stale_rounds >= self.early_stopping_rounds:
             tag = f" ({self.stage_label})" if self.stage_label else ""
             log_message(
-                f"Info: early stopping{tag} on total_loss "
-                f"(best_iteration={self.best_iteration}, best_test_total_loss={self.best_score:.5f})"
+                f"Info: early stopping{tag} on mlogloss "
+                f"(best_iteration={self.best_iteration}, best_test_mlogloss={self.best_score:.5f})"
             )
             return True
         return False
@@ -1155,9 +1183,10 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     enabled (non-empty ``decorrelate`` and ``decor_lambda > 0``), stage 2
     continues from the stage-1 best model with a custom objective that adds
     the smooth-CvM (or hard-CvM) decorrelation term to the native softprob
-    gradient. Classification and regularization loss definitions are identical
-    across both stages; stage 1 prints only train/test ``total_loss`` per
-    round, while stage 2 prints the six detailed fields.
+    gradient. Both stages early-stop on the native weighted-average test
+    ``mlogloss``; the sum-scale ``classification_loss``, exact native-style
+    ``regularization_loss``, and ``total_loss`` remain diagnostic outputs
+    shared across both stages.
 
     Returns ``(stage1_model, stage2_model_or_None, splits, combined_loss_history, stage_boundary)``
     where ``stage_boundary`` is the number of stage-1 iterations kept.
@@ -1248,6 +1277,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             reg_lambda=stage1_params["reg_lambda"],
             reg_alpha=stage1_params["reg_alpha"],
             gamma=stage1_params["gamma"],
+            learning_rate=stage1_params["eta"],
             early_stopping_rounds=early_stopping_rounds,
             stage_label="stage1",
             compact_log=True,
@@ -1309,6 +1339,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         stage1_params["reg_lambda"],
         stage1_params["reg_alpha"],
         stage1_params["gamma"],
+        stage1_params["eta"],
     )
     decor_loss_ref_raw, _, _ = _decorrelation_loss_components(
         stage1_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
@@ -1345,6 +1376,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             reg_lambda=stage2_params["reg_lambda"],
             reg_alpha=stage2_params["reg_alpha"],
             gamma=stage2_params["gamma"],
+            learning_rate=stage2_params["eta"],
             early_stopping_rounds=early_stopping_rounds,
             stage_label="stage2",
             compact_log=False,
@@ -1392,11 +1424,11 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     combined_history = {
         "train": {
             k: list(stage1_history["train"].get(k, [])) + list(stage2_history["train"].get(k, []))
-            for k in ("classification", "decorrelation", "regularization", "total")
+            for k in ("classification", "mlogloss", "decorrelation", "regularization", "total")
         },
         "test": {
             k: list(stage1_history["test"].get(k, [])) + list(stage2_history["test"].get(k, []))
-            for k in ("classification", "decorrelation", "regularization", "total")
+            for k in ("classification", "mlogloss", "decorrelation", "regularization", "total")
         },
     }
 
@@ -1430,7 +1462,8 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
     Model-dependent plots (ROC, importance, score distributions, decor_corr)
     are saved twice with ``_cls`` / ``_decorr`` suffixes (for the stage-1
     baseline and stage-2 final model respectively). ``feature_corr.pdf`` and
-    the three ``loss_*.pdf`` files are saved once and shared across stages.
+    the shared ``loss_mlogloss.pdf`` / ``loss_classification.pdf`` /
+    ``loss_decorrelation.pdf`` / ``loss_total.pdf`` files are saved once.
     ``stage_boundary`` is the number of stage-1 iterations kept; it is drawn
     as a dotted vertical line on the loss curves.
     """
@@ -1815,6 +1848,7 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
         _savefig(stem, fig=fig)
 
     _plot_loss_metric("classification", "classification_loss", "loss_classification")
+    _plot_loss_metric("mlogloss", "mlogloss", "loss_mlogloss")
     _plot_loss_metric("decorrelation", "decorrelation_loss", "loss_decorrelation")
     _plot_loss_metric("total", "total_loss", "loss_total")
 
