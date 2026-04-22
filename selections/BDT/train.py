@@ -1024,12 +1024,19 @@ def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma, learning_r
 
 
 class _TotalLossMetricRecorder:
-    def __init__(self, datasets, num_class, lam, decor_scale, prediction_mode="margin"):
+    def __init__(self, datasets, num_class, lam, decor_scale, prediction_mode="margin",
+                 selection_metric_key="mlogloss", selection_metric_name=None):
         self.datasets = list(datasets)
         self.num_class = int(num_class)
         self.lam = float(lam)
         self.decor_scale = float(decor_scale)
         self.prediction_mode = str(prediction_mode)
+        self.selection_metric_key = str(selection_metric_key)
+        self.selection_metric_name = (
+            str(selection_metric_name)
+            if selection_metric_name is not None
+            else self.selection_metric_key
+        )
         self._call_idx = 0
         self.history = {
             tag: {
@@ -1057,7 +1064,7 @@ class _TotalLossMetricRecorder:
         )
         for key in ("classification", "mlogloss", "decorrelation", "regularization", "total"):
             self.history[tag][key].append(comp[key])
-        return "mlogloss", comp["mlogloss"]
+        return self.selection_metric_name, comp[self.selection_metric_key]
 
     def finalize_iteration(self, reg_loss):
         reg_loss = float(reg_loss)
@@ -1071,7 +1078,6 @@ class _TotalLossMetricRecorder:
                 metrics["total"][-1] = (
                     metrics["classification"][-1]
                     + metrics["decorrelation"][-1]
-                    + metrics["regularization"][-1]
                 )
 
 
@@ -1103,7 +1109,8 @@ def _format_detailed_loss_line(epoch, loss_history, prefix="", compact=False):
 
 class _DetailedLossMonitor(xgb.callback.TrainingCallback):
     def __init__(self, recorder, reg_lambda, reg_alpha, gamma, learning_rate, early_stopping_rounds,
-                 stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0):
+                 stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0,
+                 monitor_metric_key="mlogloss", monitor_metric_label=None):
         self.recorder = recorder
         self.reg_lambda = float(reg_lambda)
         self.reg_alpha = float(reg_alpha)
@@ -1114,6 +1121,12 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         self.compact_log = bool(compact_log)
         self.cumulative_regularization = float(initial_reg)
         self.tree_offset = int(tree_offset)
+        self.monitor_metric_key = str(monitor_metric_key)
+        self.monitor_metric_label = (
+            str(monitor_metric_label)
+            if monitor_metric_label is not None
+            else self.monitor_metric_key
+        )
         self.best_iteration = None  # stage-local best iteration
         self.best_score = float("inf")
         self._stale_rounds = 0
@@ -1133,9 +1146,9 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         log_message(_format_detailed_loss_line(
             local_epoch, self.recorder.history, prefix=prefix, compact=self.compact_log
         ))
-        current_score = _loss_value_at(self.recorder.history, "test", "mlogloss", local_epoch)
-        if isinstance(evals_log, dict):
-            current_score = evals_log.get("test", {}).get("mlogloss", [current_score])[-1]
+        current_score = _loss_value_at(
+            self.recorder.history, "test", self.monitor_metric_key, local_epoch
+        )
         if np.isfinite(current_score) and (
             self.best_iteration is None or current_score < self.best_score - 1e-12
         ):
@@ -1152,8 +1165,9 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         if self._stale_rounds >= self.early_stopping_rounds:
             tag = f" ({self.stage_label})" if self.stage_label else ""
             log_message(
-                f"Info: early stopping{tag} on mlogloss "
-                f"(best_iteration={self.best_iteration}, best_test_mlogloss={self.best_score:.5f})"
+                f"Info: early stopping{tag} on {self.monitor_metric_label} "
+                f"(best_iteration={self.best_iteration}, "
+                f"best_test_{self.monitor_metric_label}={self.best_score:.5f})"
             )
             return True
         return False
@@ -1183,10 +1197,11 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     enabled (non-empty ``decorrelate`` and ``decor_lambda > 0``), stage 2
     continues from the stage-1 best model with a custom objective that adds
     the smooth-CvM (or hard-CvM) decorrelation term to the native softprob
-    gradient. Both stages early-stop on the native weighted-average test
-    ``mlogloss``; the sum-scale ``classification_loss``, exact native-style
-    ``regularization_loss``, and ``total_loss`` remain diagnostic outputs
-    shared across both stages.
+    gradient. Stage 1 early-stops on test ``classification_loss``; stage 2
+    early-stops on test ``total_loss = classification_loss +
+    decorrelation_loss``. The sum-scale ``classification_loss``, exact
+    native-style ``regularization_loss``, and ``total_loss`` remain
+    diagnostic outputs shared across both stages.
 
     Returns ``(stage1_model, stage2_model_or_None, splits, combined_loss_history, stage_boundary)``
     where ``stage_boundary`` is the number of stage-1 iterations kept.
@@ -1271,6 +1286,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                 ("test", y_test, w_test, {"mode": "none"}),
             ],
             NUM_CLASSES, 0.0, 1.0, prediction_mode="probability",
+            selection_metric_key="classification",
+            selection_metric_name="classification_loss",
         )
         monitor = _DetailedLossMonitor(
             recorder,
@@ -1281,6 +1298,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             early_stopping_rounds=early_stopping_rounds,
             stage_label="stage1",
             compact_log=True,
+            monitor_metric_key="classification",
+            monitor_metric_label="classification_loss",
         )
         train_kwargs = dict(
             params={**stage1_params, **extra_params},
@@ -1370,6 +1389,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
                 ("test", y_test, w_test, test_decor_state),
             ],
             NUM_CLASSES, DECOR_LAMBDA, decor_scale, prediction_mode="margin",
+            selection_metric_key="total",
+            selection_metric_name="total_loss",
         )
         monitor = _DetailedLossMonitor(
             recorder,
@@ -1382,6 +1403,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             compact_log=False,
             initial_reg=reg_loss_ref,
             tree_offset=stage1_rounds,
+            monitor_metric_key="total",
+            monitor_metric_label="total_loss",
         )
         custom_obj = _make_multiclass_objective(
             NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale
