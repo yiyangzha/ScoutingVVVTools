@@ -216,6 +216,20 @@ def _rebalance_class_weights(df_all):
     return df_all
 
 
+def _rebalance_filtered_weights(split_name, y, w, sample_labels):
+    balance_df = pd.DataFrame({
+        "weight": np.asarray(w, dtype=float),
+        "class_idx": np.asarray(y, dtype=int),
+        "sample_name": np.asarray(sample_labels),
+    })
+    balance_df = _rebalance_class_weights(balance_df)
+    _report_sample_weights(
+        balance_df,
+        f"Sample totals after thresholding and class balancing ({split_name})",
+    )
+    return balance_df["weight"].to_numpy(dtype=float, copy=True)
+
+
 def _segment_length(segment):
     return int(segment["entry_stop"]) - int(segment["entry_start"])
 
@@ -432,7 +446,7 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
     gc.collect()
 
     _validate_sample_weight_totals(df_all, sample_target_totals)
-    _report_sample_weights(df_all, f"Sample totals before class balancing ({split_name})")
+    _report_sample_weights(df_all, f"Sample totals before thresholding ({split_name})")
     missing_classes = [
         cls_name for cls_idx, cls_name in enumerate(CLASS_NAMES)
         if float(df_all.loc[df_all["class_idx"] == cls_idx, "weight"].sum()) <= 0.0
@@ -443,8 +457,6 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
             + ", ".join(missing_classes)
         )
 
-    df_all = _rebalance_class_weights(df_all)
-    _report_sample_weights(df_all, f"Sample totals after class balancing ({split_name})")
     if shuffle:
         df_all = df_all.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
@@ -1264,6 +1276,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         reg_lambda=hp.get("reg_lambda", 1),
         reg_alpha=hp.get("reg_alpha", 0),
         min_child_weight=hp.get("min_child_weight", 1),
+        subsample=hp.get("subsample", 1.0),
+        colsample_bytree=hp.get("colsample_bytree", 1.0),
         nthread=n_threads,
         seed=RANDOM_STATE,
         disable_default_eval_metric=1,
@@ -2019,6 +2033,7 @@ def main():
             sample_labels=sample_labels_train
         )
         _validate_filtered_split(tree_name, "train", y_train, w_train, sample_labels_train)
+        w_train = _rebalance_filtered_weights("train", y_train, w_train, sample_labels_train)
         check_weights(w_train, f"{tree_name}_train_weight_after_filter")
 
         log_message(f"Applying thresholds for test split of tree = {tree_name}")
@@ -2038,6 +2053,7 @@ def main():
         if not X_test_ref.index.equals(X_test.index):
             raise RuntimeError("Filtered model/reference test splits are misaligned")
         _validate_filtered_split(tree_name, "test", y_test, w_test, sample_labels_test)
+        w_test = _rebalance_filtered_weights("test", y_test, w_test, sample_labels_test)
         check_weights(w_test, f"{tree_name}_test_weight_after_filter")
         check_weights(w_test_ref, f"{tree_name}_test_physics_weight_after_filter")
 
