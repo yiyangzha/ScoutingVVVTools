@@ -16,12 +16,13 @@ Modes:
   mode=3  Run signal_region/signal_region.py.
   mode=4  Run plotting/data_mc.py.
   mode=5  Run background_estimation/qcd_est.py.
+  mode=6  Run selections/mix/mix.C (shuffle sample entries across chunks).
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
   2. Otherwise the script reads submit_samples from the chosen config.json.
   3. If submit_samples is empty or missing, all MC samples are submitted.
-  4. Sample arguments are only supported for mode=0 and mode=1.
+  4. Sample arguments are only supported for mode=0, mode=1, and mode=6.
 EOF
 }
 
@@ -77,6 +78,14 @@ case "${MODE}" in
     CONFIG_ENV_VAR="QCD_EST_CONFIG_PATH"
     MODE_LABEL="qcd_est"
     PYTHON_SCRIPT="qcd_est.py"
+    ;;
+  6)
+    WORK_DIR="${ROOT_DIR}/selections/mix"
+    SOURCE_FILE="mix.C"
+    BIN_NAME="mix"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="MIX_CONFIG_PATH"
+    MODE_LABEL="mix"
     ;;
   *)
     echo "Unknown mode: ${MODE}" >&2

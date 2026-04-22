@@ -1122,7 +1122,8 @@ def _format_detailed_loss_line(epoch, loss_history, prefix="", compact=False):
 class _DetailedLossMonitor(xgb.callback.TrainingCallback):
     def __init__(self, recorder, reg_lambda, reg_alpha, gamma, learning_rate, early_stopping_rounds,
                  stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0,
-                 monitor_metric_key="mlogloss", monitor_metric_label=None):
+                 monitor_metric_key="mlogloss", monitor_metric_label=None,
+                 lr_reduce_patience=None, min_learning_rate=None):
         self.recorder = recorder
         self.reg_lambda = float(reg_lambda)
         self.reg_alpha = float(reg_alpha)
@@ -1139,9 +1140,24 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
             if monitor_metric_label is not None
             else self.monitor_metric_key
         )
+        # Dynamic lr: when enabled, while current_lr > min_learning_rate the
+        # early-stopping counter is suppressed; after lr_reduce_patience
+        # consecutive stale rounds (no new best) lr halves (floored at
+        # min_learning_rate) and both counters reset. Early stopping only takes
+        # effect once current_lr has bottomed out at min_learning_rate.
+        if lr_reduce_patience is not None and int(lr_reduce_patience) > 0 \
+                and min_learning_rate is not None and float(min_learning_rate) > 0.0:
+            self.lr_reduce_patience = int(lr_reduce_patience)
+            self.min_learning_rate = float(min_learning_rate)
+            self._dynamic_lr = True
+        else:
+            self.lr_reduce_patience = 0
+            self.min_learning_rate = self.learning_rate
+            self._dynamic_lr = False
         self.best_iteration = None  # stage-local best iteration
         self.best_score = float("inf")
         self._stale_rounds = 0
+        self._lr_stale_rounds = 0
 
     def after_iteration(self, model, epoch, evals_log):
         local_epoch = int(epoch)
@@ -1161,19 +1177,45 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         current_score = _loss_value_at(
             self.recorder.history, "test", self.monitor_metric_key, local_epoch
         )
-        if np.isfinite(current_score) and (
+        improved = np.isfinite(current_score) and (
             self.best_iteration is None or current_score < self.best_score - 1e-12
-        ):
+        )
+        if improved:
             self.best_iteration = int(local_epoch)
             self.best_score = float(current_score)
             self._stale_rounds = 0
+            self._lr_stale_rounds = 0
             model.set_attr(
                 best_iteration=str(self.tree_offset + self.best_iteration),
                 best_score=str(self.best_score),
             )
-        else:
-            self._stale_rounds += 1
+            return False
 
+        # No new best this round.
+        if self._dynamic_lr and self.learning_rate > self.min_learning_rate + 1e-12:
+            # Still in the lr-reduction regime: early stopping is suppressed.
+            self._lr_stale_rounds += 1
+            if self._lr_stale_rounds >= self.lr_reduce_patience:
+                old_lr = self.learning_rate
+                new_lr = max(old_lr * 0.5, self.min_learning_rate)
+                try:
+                    model.set_param({"learning_rate": new_lr, "eta": new_lr})
+                except Exception:
+                    model.set_param("learning_rate", new_lr)
+                    model.set_param("eta", new_lr)
+                self.learning_rate = float(new_lr)
+                tag = f" ({self.stage_label})" if self.stage_label else ""
+                log_message(
+                    f"Info: lr reduced{tag} at epoch {local_epoch} "
+                    f"(old_lr={old_lr:.6g}, new_lr={new_lr:.6g}, "
+                    f"best_test_{self.monitor_metric_label}={self.best_score:.5f})"
+                )
+                self._lr_stale_rounds = 0
+                self._stale_rounds = 0
+            return False
+
+        # Either dynamic lr disabled, or already at min_learning_rate.
+        self._stale_rounds += 1
         if self._stale_rounds >= self.early_stopping_rounds:
             tag = f" ({self.stage_label})" if self.stage_label else ""
             log_message(
@@ -1260,6 +1302,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         )
     learning_rate = float(hp.get("learning_rate", 0.1))
     learning_rate_decorr = float(hp.get("learning_rate_decorr", 0.01))
+    lr_reduce_patience = int(hp.get("lr_reduce_patience", 0))
+    min_learning_rate = float(hp.get("min_learning_rate", 0.0))
     log_message(f"Thread mode: XGBoost, threads = {n_threads}")
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
@@ -1419,6 +1463,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             tree_offset=stage1_rounds,
             monitor_metric_key="total",
             monitor_metric_label="total_loss",
+            lr_reduce_patience=lr_reduce_patience,
+            min_learning_rate=min_learning_rate,
         )
         custom_obj = _make_multiclass_objective(
             NUM_CLASSES, train_decor_state, DECOR_LAMBDA, decor_scale
