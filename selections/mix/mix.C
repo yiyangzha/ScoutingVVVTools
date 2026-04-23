@@ -408,8 +408,7 @@ unique_ptr<TFile> openStructureFileWithTree(const vector<string>& inputFiles,
 
 void writeChunkTree(TFile& outFile,
                     TTree& structureTree,
-                    const string& treeName,
-                    TChain* chain) {
+                    const string& treeName) {
     outFile.cd();
 
     TTree* outTree = structureTree.CloneTree(0);
@@ -421,18 +420,8 @@ void writeChunkTree(TFile& outFile,
     outTree->SetAutoFlush(0);
     outTree->SetAutoSave(0);
 
-    if (chain != nullptr) {
-        // Route the chain's branches into outTree's buffers so sequential GetEntry calls
-        // followed by Fill() copy values without any per-branch bookkeeping.
-        outTree->CopyAddresses(chain);
-    }
-
     outFile.cd();
     outTree->Write("", TObject::kOverwrite);
-
-    if (chain != nullptr) {
-        chain->ResetBranchAddresses();
-    }
     outTree->ResetBranchAddresses();
 }
 
@@ -467,7 +456,7 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
             if (!outFile || outFile->IsZombie()) {
                 throw runtime_error("Cannot open output file: " + outPath.string());
             }
-            writeChunkTree(*outFile, *structureSrc, treeName, nullptr);
+            writeChunkTree(*outFile, *structureSrc, treeName);
             outFile->Close();
             logMessage("tree=" + treeName + " chunk " + to_string(i) +
                        " wrote 0 entries to " + outPath.string());
@@ -483,8 +472,9 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
                " block_range=[" + to_string(minBlockEntries) +
                "," + to_string(maxBlockEntries) + "]");
 
-    // Open TChain once over all input files. ROOT handles branch address re-binding across
-    // underlying tree boundaries when we call CopyAddresses on the output tree.
+    // Open TChain once over all input files. Each non-empty output chunk clones
+    // its tree from the chain itself so ROOT keeps the clone's branch addresses
+    // synced as the chain advances across input-file boundaries.
     TChain chain(treeName.c_str());
     for (const auto& p : inputFiles) chain.Add(p.c_str());
     chain.SetCacheSize(static_cast<Long64_t>(256) * 1024 * 1024);
@@ -534,15 +524,14 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
         }
         outFile->cd();
 
-        TTree* outTree = structureSrc->CloneTree(0);
+        TTree* outTree = chain.CloneTree(0);
+        if (outTree == nullptr) {
+            throw runtime_error("Failed to clone output tree from chain for " + treeName);
+        }
         outTree->SetDirectory(outFile.get());
         outTree->SetBasketSize("*", 32000);
         outTree->SetAutoFlush(0);
         outTree->SetAutoSave(0);
-
-        // Route the chain's branches into outTree's buffers so chain.GetEntry + outTree->Fill
-        // round-trips values without any per-branch bookkeeping.
-        outTree->CopyAddresses(&chain);
         return outTree;
     };
 
@@ -554,7 +543,7 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
             if (!emptyFile || emptyFile->IsZombie()) {
                 throw runtime_error("Cannot open output file: " + outPath.string());
             }
-            writeChunkTree(*emptyFile, *structureSrc, treeName, nullptr);
+            writeChunkTree(*emptyFile, *structureSrc, treeName);
             emptyFile->Close();
             logMessage("tree=" + treeName + " chunk " + to_string(chunkIndex) +
                        " wrote 0 entries to " + outPath.string());

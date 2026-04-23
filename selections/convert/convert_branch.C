@@ -2673,8 +2673,9 @@ vector<string> finalizeThreadTempFiles(vector<ThreadConvertResult>& threadResult
 }
 
 // Stream the combined per-thread trees into one or more output files. Each
-// chunk is a fresh TFile with both fat2/fat3 trees booked via CloneTree(0) and
-// filled from a TChain over the thread temp files. Basket size is fixed and
+// chunk is a fresh TFile with both fat2/fat3 trees cloned from a TChain over
+// the thread temp files, so ROOT keeps the clone's branch addresses synced as
+// the chain advances across file boundaries. Basket size is fixed and
 // auto-flush is disabled so that OptimizeBaskets cannot inflate a basket past
 // ROOT's 1GB TBufferFile serialization limit (the failure mode observed on the
 // large QCD samples when TTree::MergeTrees was used instead).
@@ -2733,11 +2734,62 @@ vector<string> writeOutputFilesStreaming(const fs::path& baseOutputPath,
                                    static_cast<Long64_t>(nChunks);
             const Long64_t last = (totalE * static_cast<Long64_t>(chunkIdx + 1)) /
                                   static_cast<Long64_t>(nChunks);
+            const Long64_t expectedEntries = last - first;
 
-            // Pick the first temp file containing this tree. Its tree provides
-            // the branch structure for CloneTree(0); it must stay open until
-            // outTree has been written and its addresses reset, because
-            // CloneTree shares branch buffer addresses with the source.
+            auto configureOutTree = [&](TTree& outTree) {
+                outTree.SetDirectory(outFile.get());
+                outTree.SetNameTitle(treeConfigs[i].name.c_str(),
+                                     treeConfigs[i].title.c_str());
+                // Explicit small basket + disabled auto-flush prevents ROOT's
+                // OptimizeBaskets from growing a single basket's uncompressed size
+                // past its 1GB TBufferFile serialization cap on highly-compressible
+                // branches (e.g. constant sample_ID / is_MC flags).
+                outTree.SetBasketSize("*", 32000);
+                outTree.SetAutoFlush(0);
+                outTree.SetAutoSave(0);
+            };
+
+            outFile->cd();
+            TTree* outTree = nullptr;
+            if (expectedEntries > 0) {
+                TChain chain(treeConfigs[i].name.c_str());
+                for (const auto& p : threadTempPaths) {
+                    chain.Add(p.c_str());
+                }
+                if (chain.LoadTree(first) < 0) {
+                    throw runtime_error("Failed to load entry " + to_string(first) +
+                                        " for tree " + treeConfigs[i].name);
+                }
+                outTree = chain.CloneTree(0);
+                if (outTree == nullptr) {
+                    throw runtime_error("Failed to clone output tree from chain for " +
+                                        treeConfigs[i].name);
+                }
+                configureOutTree(*outTree);
+                Long64_t written = 0;
+                for (Long64_t e = first; e < last; ++e) {
+                    if (chain.GetEntry(e) <= 0) {
+                        throw runtime_error("Failed to read entry " + to_string(e) +
+                                            " for tree " + treeConfigs[i].name);
+                    }
+                    outTree->Fill();
+                    ++written;
+                }
+                if (written != expectedEntries) {
+                    throw runtime_error("Output chunk entry count mismatch for tree " +
+                                        treeConfigs[i].name + ": expected " +
+                                        to_string(expectedEntries) + ", got " +
+                                        to_string(written));
+                }
+                outFile->cd();
+                outTree->Write("", TObject::kOverwrite);
+                chain.ResetBranchAddresses();
+                outTree->ResetBranchAddresses();
+                continue;
+            }
+
+            // No entries land in this chunk for this tree, but still create an
+            // empty tree so every output file keeps the full fat2/fat3 layout.
             unique_ptr<TFile> structureFile;
             TTree* structureSrc = nullptr;
             for (const auto& p : threadTempPaths) {
@@ -2752,49 +2804,17 @@ vector<string> writeOutputFilesStreaming(const fs::path& baseOutputPath,
                     break;
                 }
             }
-
-            outFile->cd();
-            TTree* outTree = nullptr;
             if (structureSrc != nullptr) {
                 outTree = structureSrc->CloneTree(0);
             }
             if (outTree == nullptr) {
-                outFile->cd();
                 outTree = new TTree(treeConfigs[i].name.c_str(),
                                     treeConfigs[i].title.c_str());
             }
-            outTree->SetDirectory(outFile.get());
-            outTree->SetNameTitle(treeConfigs[i].name.c_str(),
-                                  treeConfigs[i].title.c_str());
-            // Explicit small basket + disabled auto-flush prevents ROOT's
-            // OptimizeBaskets from growing a single basket's uncompressed size
-            // past its 1GB TBufferFile serialization cap on highly-compressible
-            // branches (e.g. constant sample_ID / is_MC flags).
-            outTree->SetBasketSize("*", 32000);
-            outTree->SetAutoFlush(0);
-            outTree->SetAutoSave(0);
-
-            if (last > first && structureSrc != nullptr) {
-                TChain chain(treeConfigs[i].name.c_str());
-                for (const auto& p : threadTempPaths) {
-                    chain.Add(p.c_str());
-                }
-                // Route the chain's branches into outTree's buffers so that
-                // chain.GetEntry(e) followed by outTree->Fill() copies values.
-                outTree->CopyAddresses(&chain);
-                for (Long64_t e = first; e < last; ++e) {
-                    if (chain.GetEntry(e) <= 0) {
-                        break;
-                    }
-                    outTree->Fill();
-                }
-                chain.ResetBranchAddresses();
-            }
+            configureOutTree(*outTree);
 
             outFile->cd();
             outTree->Write("", TObject::kOverwrite);
-            // Disconnect outTree's branch addresses from structureSrc's buffers
-            // before structureFile falls out of scope and destroys them.
             outTree->ResetBranchAddresses();
         }
         outFile->Close();
