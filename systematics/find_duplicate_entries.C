@@ -1,7 +1,9 @@
-// Summary: Scan a ROOT file and report duplicate (run, luminosityBlock, event) entries.
+// Summary: Scan one ROOT file or a directory of ROOT files and report duplicate
+// (run, luminosityBlock, event) entries, chaining matching trees together.
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -10,11 +12,13 @@
 #include <vector>
 
 #include "TClass.h"
+#include "TChain.h"
 #include "TFile.h"
 #include "TKey.h"
 #include "TTree.h"
 
 using namespace std;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -58,8 +62,8 @@ struct ScanSummary {
 };
 
 void printUsage(const char* argv0) {
-    cerr << "Usage: " << argv0 << " <file.root> [tree_name] [max_report]" << endl;
-    cerr << "  <file.root>   ROOT file to scan." << endl;
+    cerr << "Usage: " << argv0 << " <file.root|directory> [tree_name] [max_report]" << endl;
+    cerr << "  <file.root|directory>  ROOT file to scan, or a directory searched recursively for *.root." << endl;
     cerr << "  [tree_name]   Optional TTree name. If omitted, scan all top-level TTrees." << endl;
     cerr << "  [max_report]  Optional maximum number of duplicate keys to print (default: 20)." << endl;
 }
@@ -95,7 +99,98 @@ vector<string> discoverTreeNames(TFile& file, const string& requestedTree) {
     return treeNames;
 }
 
+bool isRootFilePath(const fs::path& path) {
+    return path.has_extension() && path.extension() == ".root";
+}
+
+vector<string> collectRootFiles(const string& inputPath) {
+    const fs::path path(inputPath);
+    if (!fs::exists(path)) {
+        throw runtime_error("Input path does not exist: " + inputPath);
+    }
+
+    vector<string> rootFiles;
+    if (fs::is_regular_file(path)) {
+        if (!isRootFilePath(path)) {
+            throw runtime_error("Input file is not a ROOT file: " + inputPath);
+        }
+        rootFiles.push_back(fs::absolute(path).lexically_normal().string());
+        return rootFiles;
+    }
+
+    if (!fs::is_directory(path)) {
+        throw runtime_error("Input path is neither a ROOT file nor a directory: " + inputPath);
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(path)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (!isRootFilePath(entry.path())) {
+            continue;
+        }
+        rootFiles.push_back(fs::absolute(entry.path()).lexically_normal().string());
+    }
+
+    sort(rootFiles.begin(), rootFiles.end());
+    rootFiles.erase(unique(rootFiles.begin(), rootFiles.end()), rootFiles.end());
+    if (rootFiles.empty()) {
+        throw runtime_error("No ROOT files found under directory: " + inputPath);
+    }
+    return rootFiles;
+}
+
+vector<string> discoverTreeNames(const vector<string>& rootFiles, const string& requestedTree) {
+    if (!requestedTree.empty()) {
+        return {requestedTree};
+    }
+
+    for (const string& rootFile : rootFiles) {
+        unique_ptr<TFile> file(TFile::Open(rootFile.c_str(), "READ"));
+        if (!file || file->IsZombie()) {
+            continue;
+        }
+        const vector<string> treeNames = discoverTreeNames(*file, "");
+        if (!treeNames.empty()) {
+            return treeNames;
+        }
+    }
+
+    throw runtime_error("No top-level TTrees found in the collected ROOT files");
+}
+
+unique_ptr<TChain> buildChain(const vector<string>& rootFiles,
+                              const string& treeName,
+                              size_t& addedFiles) {
+    unique_ptr<TChain> chain = make_unique<TChain>(treeName.c_str());
+    addedFiles = 0;
+
+    for (const string& rootFile : rootFiles) {
+        unique_ptr<TFile> file(TFile::Open(rootFile.c_str(), "READ"));
+        if (!file || file->IsZombie()) {
+            continue;
+        }
+        TObject* obj = file->Get(treeName.c_str());
+        if (obj == nullptr || !obj->InheritsFrom(TTree::Class())) {
+            continue;
+        }
+        chain->Add(rootFile.c_str());
+        ++addedFiles;
+    }
+
+    if (addedFiles == 0) {
+        throw runtime_error("Tree '" + treeName + "' was not found in any collected ROOT file");
+    }
+
+    return chain;
+}
+
 ScanSummary scanTree(TTree& tree) {
+    const Long64_t totalEntries = tree.GetEntries();
+    if (totalEntries > 0) {
+        tree.LoadTree(0);
+    }
+
     if (!hasEventIdBranches(tree)) {
         throw runtime_error("Tree '" + string(tree.GetName()) +
                             "' does not contain all of: run, luminosityBlock, event");
@@ -113,7 +208,6 @@ ScanSummary scanTree(TTree& tree) {
     tree.SetBranchAddress("luminosityBlock", &lumi);
     tree.SetBranchAddress("event", &event);
 
-    const Long64_t totalEntries = tree.GetEntries();
     unordered_map<EventKey, SeenInfo, EventKeyHash> seen;
     if (totalEntries > 0 && totalEntries < 50000000LL) {
         seen.reserve(static_cast<size_t>(totalEntries * 1.3));
@@ -164,8 +258,12 @@ ScanSummary scanTree(TTree& tree) {
     return summary;
 }
 
-void printSummary(const string& treeName, const ScanSummary& summary, size_t maxReport) {
+void printSummary(const string& treeName,
+                  size_t filesInChain,
+                  const ScanSummary& summary,
+                  size_t maxReport) {
     cout << "[TREE] " << treeName << endl;
+    cout << "  files_in_chain   = " << filesInChain << endl;
     cout << "  total_entries    = " << summary.totalEntries << endl;
     cout << "  unique_keys      = " << summary.uniqueKeys << endl;
     cout << "  duplicate_keys   = " << summary.duplicateKeys << endl;
@@ -195,43 +293,43 @@ void printSummary(const string& treeName, const ScanSummary& summary, size_t max
 }  // namespace
 
 int find_duplicate_entries() {
-    const string filePath = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/ScoutingVVVTools/dataset/signal/wplush.root";
+    const string filePath = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/ScoutingVVVTools/dataset/signal/";
     const string requestedTree = "fat2";
     const size_t maxReport = 20U;
 
     try {
-        unique_ptr<TFile> file(TFile::Open(filePath.c_str(), "READ"));
-        if (!file || file->IsZombie()) {
-            throw runtime_error("Cannot open ROOT file: " + filePath);
-        }
-
-        const vector<string> treeNames = discoverTreeNames(*file, requestedTree);
+        const vector<string> rootFiles = collectRootFiles(filePath);
+        const vector<string> treeNames = discoverTreeNames(rootFiles, requestedTree);
         if (treeNames.empty()) {
             throw runtime_error("No top-level TTrees found in " + filePath);
         }
 
-        cout << "Scanning file: " << filePath << endl;
+        cout << "Scanning input path: " << filePath << endl;
+        cout << "Collected ROOT files: " << rootFiles.size() << endl;
         cout << "Trees to scan: " << treeNames.size() << endl;
 
         bool scannedAnyTree = false;
         for (const string& treeName : treeNames) {
-            TTree* tree = dynamic_cast<TTree*>(file->Get(treeName.c_str()));
-            if (tree == nullptr) {
-                continue;
+            size_t addedFiles = 0;
+            unique_ptr<TChain> chain = buildChain(rootFiles, treeName, addedFiles);
+            const Long64_t chainEntries = chain->GetEntries();
+            if (chainEntries > 0) {
+                chain->LoadTree(0);
             }
 
-            if (!hasEventIdBranches(*tree)) {
+            if (!hasEventIdBranches(*chain)) {
                 if (!requestedTree.empty()) {
                     throw runtime_error("Tree '" + treeName +
                                         "' does not contain all of: run, luminosityBlock, event");
                 }
                 cout << "[TREE] " << treeName
+                     << "\n  files_in_chain   = " << addedFiles
                      << "\n  status           = skipped (missing run/luminosityBlock/event branches)" << endl;
                 continue;
             }
 
-            const ScanSummary summary = scanTree(*tree);
-            printSummary(treeName, summary, maxReport);
+            const ScanSummary summary = scanTree(*chain);
+            printSummary(treeName, addedFiles, summary, maxReport);
             scannedAnyTree = true;
         }
 

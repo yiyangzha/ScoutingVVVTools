@@ -119,7 +119,7 @@ The analysis runs in this order:
 8. **Data/MC plotting** — compare distributions of `fat2`/`fat3` variables in data vs MC (`plotting/`)
 9. **Systematics** — trigger efficiency studies (`systematics/`)
 
-`systematics/find_duplicate_entries.C` is a standalone ROOT diagnostic that scans one ROOT file, reads either a requested tree or every top-level TTree with `run` / `luminosityBlock` / `event`, and reports duplicated event keys plus their multiplicities and first/last entry indices.
+`systematics/find_duplicate_entries.C` is a standalone ROOT diagnostic macro that scans either one ROOT file or a directory searched recursively for `.root` files, chains the matching trees with `TChain`, and reports duplicated event keys (`run`, `luminosityBlock`, `event`) plus their multiplicities and first/last entry indices.
 
 ## Convert_branch.C output layout (consumed downstream)
 
@@ -209,14 +209,9 @@ PLOT_CONFIG_PATH=/path/to/config.json python3 plotting/data_mc.py
 
 ### Duplicate entry check
 ```bash
-# Compile
-c++ -O2 -std=c++17 $(root-config --cflags --libs) systematics/find_duplicate_entries.C -o systematics/find_duplicate_entries
-
-# Scan one tree
-./systematics/find_duplicate_entries /path/to/file.root fat2
-
-# Scan every top-level TTree in the file
-./systematics/find_duplicate_entries /path/to/file.root
+# Edit filePath / requestedTree inside systematics/find_duplicate_entries.C,
+# then run it as a ROOT macro.
+root -l -q systematics/find_duplicate_entries.C
 ```
 
 `plotting/data_mc.py` reads [plotting/config.json](plotting/config.json) and [plotting/branch.json](plotting/branch.json), then for every tree in `submit_trees`:
