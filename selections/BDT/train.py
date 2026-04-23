@@ -625,6 +625,102 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
+def _clip_only_X(X: pd.DataFrame, clip_ranges: dict) -> pd.DataFrame:
+    """Apply clip_ranges only (no log_transform); sentinel values (< -990) untouched."""
+    X = X.copy()
+    for col in X.columns:
+        arr = X[col].values.copy()
+        mask = arr < -990
+        valid = ~mask
+        if not valid.any():
+            continue
+        lo, hi = clip_ranges.get(col, (None, None))
+        if lo is not None:
+            arr[valid & (arr < lo)] = lo
+        if hi is not None:
+            arr[valid & (arr > hi)] = hi
+        X[col] = arr
+    return X
+
+
+# -------------------- Input branch distribution plots --------------------
+def plot_branch_distributions(output_root, branches, clip_ranges,
+                              X_train, y_train, w_train,
+                              X_test, y_test, w_test,
+                              n_bins=40):
+    """Plot normalized per-class distributions for each training branch (train+test combined).
+
+    Values are after thresholds and clip_ranges, but BEFORE log_transform.
+    Saves one PDF per branch under ``{output_root}/branches/``.
+    """
+    out_dir = os.path.join(output_root, "branches")
+    os.makedirs(out_dir, exist_ok=True)
+
+    X_train_c = _clip_only_X(X_train[list(branches)], clip_ranges)
+    X_test_c = _clip_only_X(X_test[list(branches)], clip_ranges)
+
+    y_all = np.concatenate([np.asarray(y_train, dtype=int),
+                            np.asarray(y_test, dtype=int)])
+    w_all = np.concatenate([np.asarray(w_train, dtype=float),
+                            np.asarray(w_test, dtype=float)])
+
+    palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
+
+    for col in branches:
+        v_all = np.concatenate([
+            X_train_c[col].to_numpy(dtype=float, copy=False),
+            X_test_c[col].to_numpy(dtype=float, copy=False),
+        ])
+        valid = v_all > -990
+        if not np.any(valid):
+            log_warning(f"branch '{col}' has no valid entries to plot, skipping")
+            continue
+
+        v_valid = v_all[valid]
+        lo = float(np.min(v_valid))
+        hi = float(np.max(v_valid))
+        if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+            log_warning(f"branch '{col}' has degenerate range ({lo}, {hi}), skipping")
+            continue
+        bins = np.linspace(lo, hi, n_bins + 1)
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        plotted_any = False
+        for cls_idx, cls_name in enumerate(CLASS_NAMES):
+            mask = valid & (y_all == cls_idx)
+            if not np.any(mask):
+                continue
+            w_cls = w_all[mask]
+            if float(np.sum(w_cls)) <= 0.0:
+                continue
+            ax.hist(
+                v_all[mask],
+                bins=bins,
+                weights=w_cls,
+                density=True,
+                histtype="step",
+                linewidth=2,
+                color=palette[cls_idx],
+                label=cls_name,
+            )
+            plotted_any = True
+
+        if not plotted_any:
+            plt.close(fig)
+            log_warning(f"branch '{col}' has no positive-weight entries, skipping")
+            continue
+
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel(col)
+        ax.set_ylabel("A.U.")
+        ax.legend()
+        path = os.path.join(out_dir, f"{col}.pdf")
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+        log_message(f"Wrote plot file: {path}")
+
+
 # -------------------- Score helpers --------------------
 def _reshape_multiclass_margin(predt, num_class, n_rows=None):
     predt = np.asarray(predt, dtype=float)
@@ -2107,6 +2203,13 @@ def main():
             X_train = X_train.drop(columns=drop_after_filter, errors="ignore")
             X_test = X_test.drop(columns=drop_after_filter, errors="ignore")
             X_test_ref = X_test_ref.drop(columns=drop_after_filter, errors="ignore")
+
+        log_message(f"Plotting input branch distributions for tree = {tree_name}")
+        plot_branch_distributions(
+            output_root, branches, clip_ranges,
+            X_train, y_train, w_train,
+            X_test, y_test, w_test,
+        )
 
         log_message(f"Standardising training split for tree = {tree_name}")
         X_train_std = standardize_X(X_train.copy(), clip_ranges, log_tf)
