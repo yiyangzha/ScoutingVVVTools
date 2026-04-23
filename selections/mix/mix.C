@@ -1,16 +1,20 @@
 // Summary: Shuffle all entries of a sample's trees across its ROOT chunk files, preserving the
 // per-chunk entry counts so that the output mirrors the input chunk layout. Intended to be run
 // after selections/convert so that downstream BDT train/test splits by entry index are drawn from
-// a randomised ordering rather than any intrinsic file ordering.
+// a randomised ordering rather than any intrinsic file ordering. The implementation favours
+// sequential ROOT reads by shuffling contiguous entry blocks rather than issuing a fully random
+// entry-by-entry read pattern.
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <regex>
 #include <stdexcept>
@@ -20,8 +24,11 @@
 
 #include <TChain.h>
 #include <TFile.h>
-#include <TROOT.h>
 #include <TTree.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "../../src/simple_json.h"
 
@@ -53,6 +60,12 @@ struct AppConfig {
     uint64_t randomState = 42;
     vector<SampleMeta> samples;  // indexed by name via sampleByName
     unordered_map<string, size_t> sampleByName;
+};
+
+struct ShuffleBlock {
+    Long64_t start = 0;
+    Long64_t count = 0;
+    Long64_t rotation = 0;
 };
 
 string timestamp() {
@@ -243,43 +256,207 @@ vector<string> makeOutputPaths(const vector<string>& inputFiles,
     return outPaths;
 }
 
-Long64_t entriesInFileTree(const string& filePath, const string& treeName) {
-    unique_ptr<TFile> f(TFile::Open(filePath.c_str(), "READ"));
+void scanSingleInputChunkEntries(const string& inputFile,
+                                 const vector<string>& treeNames,
+                                 vector<Long64_t>& counts) {
+    unique_ptr<TFile> f(TFile::Open(inputFile.c_str(), "READ"));
     if (!f || f->IsZombie()) {
-        throw runtime_error("Cannot open input file: " + filePath);
+        throw runtime_error("Cannot open input file: " + inputFile);
     }
-    TTree* t = dynamic_cast<TTree*>(f->Get(treeName.c_str()));
-    if (t == nullptr) {
-        throw runtime_error("Tree '" + treeName + "' not found in " + filePath);
+    for (size_t t = 0; t < treeNames.size(); ++t) {
+        TTree* tree = dynamic_cast<TTree*>(f->Get(treeNames[t].c_str()));
+        if (tree == nullptr) {
+            throw runtime_error("Tree '" + treeNames[t] + "' not found in " + inputFile);
+        }
+        counts[t] = tree->GetEntries();
     }
-    return t->GetEntries();
+}
+
+vector<vector<Long64_t>> scanInputChunkEntries(const vector<string>& inputFiles,
+                                               const vector<string>& treeNames) {
+    vector<vector<Long64_t>> counts(
+        inputFiles.size(), vector<Long64_t>(treeNames.size(), 0));
+    if (inputFiles.empty()) {
+        return counts;
+    }
+
+    // Warm up ROOT I/O serially before parallel file scans so that global startup work does not
+    // race across threads.
+    scanSingleInputChunkEntries(inputFiles.front(), treeNames, counts.front());
+    if (inputFiles.size() == 1) {
+        return counts;
+    }
+
+    exception_ptr firstError = nullptr;
+    mutex errorMutex;
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(inputFiles.size() > 2)
+#endif
+    for (int i = 1; i < static_cast<int>(inputFiles.size()); ++i) {
+        try {
+            scanSingleInputChunkEntries(
+                inputFiles[static_cast<size_t>(i)],
+                treeNames,
+                counts[static_cast<size_t>(i)]);
+        } catch (...) {
+            lock_guard<mutex> lock(errorMutex);
+            if (!firstError) {
+                firstError = current_exception();
+            }
+        }
+    }
+
+    if (firstError) {
+        rethrow_exception(firstError);
+    }
+    return counts;
+}
+
+Long64_t chooseShuffleBlockEntries(Long64_t totalEntries) {
+    const Long64_t kMinBlockEntries = 1024;
+    const Long64_t kMaxBlockEntries = 16384;
+    const Long64_t kTargetBlocks = 512;
+
+    if (totalEntries <= 0) {
+        return kMinBlockEntries;
+    }
+
+    Long64_t blockEntries = totalEntries / kTargetBlocks;
+    if (blockEntries < kMinBlockEntries) {
+        blockEntries = kMinBlockEntries;
+    }
+    if (blockEntries > kMaxBlockEntries) {
+        blockEntries = kMaxBlockEntries;
+    }
+    return blockEntries;
+}
+
+vector<ShuffleBlock> buildShuffleBlocks(Long64_t totalEntries, uint64_t seed) {
+    const Long64_t blockEntries = chooseShuffleBlockEntries(totalEntries);
+    vector<ShuffleBlock> blocks;
+    for (Long64_t start = 0; start < totalEntries; start += blockEntries) {
+        ShuffleBlock block;
+        block.start = start;
+        block.count = min(blockEntries, totalEntries - start);
+        blocks.push_back(block);
+    }
+
+    mt19937_64 rng(seed);
+    shuffle(blocks.begin(), blocks.end(), rng);
+    for (auto& block : blocks) {
+        if (block.count > 1) {
+            uniform_int_distribution<Long64_t> dist(0, block.count - 1);
+            block.rotation = dist(rng);
+        }
+    }
+    return blocks;
+}
+
+template <typename Func>
+void forEachRotatedBlockSegment(const ShuffleBlock& block, Func&& func) {
+    if (block.count <= 0) {
+        return;
+    }
+
+    const Long64_t rotation = block.rotation % block.count;
+    const Long64_t firstStart = block.start + rotation;
+    const Long64_t firstCount = block.count - rotation;
+    if (firstCount > 0) {
+        func(firstStart, firstCount);
+    }
+    if (rotation > 0) {
+        func(block.start, rotation);
+    }
+}
+
+unique_ptr<TFile> openStructureFileWithTree(const vector<string>& inputFiles,
+                                            const string& treeName,
+                                            TTree*& structureTree) {
+    for (const auto& inputFile : inputFiles) {
+        unique_ptr<TFile> structureFile(TFile::Open(inputFile.c_str(), "READ"));
+        if (!structureFile || structureFile->IsZombie()) {
+            continue;
+        }
+        TTree* tree = dynamic_cast<TTree*>(structureFile->Get(treeName.c_str()));
+        if (tree != nullptr) {
+            structureTree = tree;
+            return structureFile;
+        }
+    }
+    throw runtime_error("Failed to find structure tree '" + treeName + "' in input files");
+}
+
+void writeChunkTree(TFile& outFile,
+                    TTree& structureTree,
+                    const string& treeName,
+                    TChain* chain) {
+    outFile.cd();
+
+    TTree* outTree = structureTree.CloneTree(0);
+    if (outTree == nullptr) {
+        throw runtime_error("Failed to clone output tree structure for " + treeName);
+    }
+    outTree->SetDirectory(&outFile);
+    outTree->SetBasketSize("*", 32000);
+    outTree->SetAutoFlush(0);
+    outTree->SetAutoSave(0);
+
+    if (chain != nullptr) {
+        // Route the chain's branches into outTree's buffers so sequential GetEntry calls
+        // followed by Fill() copy values without any per-branch bookkeeping.
+        outTree->CopyAddresses(chain);
+    }
+
+    outFile.cd();
+    outTree->Write("", TObject::kOverwrite);
+
+    if (chain != nullptr) {
+        chain->ResetBranchAddresses();
+    }
+    outTree->ResetBranchAddresses();
 }
 
 void shuffleTreeIntoChunks(const vector<string>& inputFiles,
                            const vector<string>& outputFiles,
+                           const vector<Long64_t>& chunkCounts,
                            const string& treeName,
                            uint64_t seed,
                            const string& outputMode) {
     const size_t nChunks = inputFiles.size();
-    if (outputFiles.size() != nChunks) {
-        throw runtime_error("Output chunk count differs from input for tree " + treeName);
+    if (outputFiles.size() != nChunks || chunkCounts.size() != nChunks) {
+        throw runtime_error("Chunk metadata size mismatch for tree " + treeName);
     }
 
-    vector<Long64_t> chunkCounts(nChunks, 0);
     Long64_t total = 0;
-    for (size_t i = 0; i < nChunks; ++i) {
-        chunkCounts[i] = entriesInFileTree(inputFiles[i], treeName);
-        total += chunkCounts[i];
+    for (Long64_t count : chunkCounts) {
+        total += count;
     }
     logMessage("tree=" + treeName + ": total_entries=" + to_string(total) +
                " across " + to_string(nChunks) + " chunk(s)");
 
-    // Permutation: perm[out_pos] = src_idx. We iterate output chunks in order and for each output
-    // slot read the corresponding source entry from the TChain.
-    vector<Long64_t> perm(static_cast<size_t>(total));
-    for (Long64_t i = 0; i < total; ++i) perm[i] = i;
-    mt19937_64 rng(seed);
-    shuffle(perm.begin(), perm.end(), rng);
+    TTree* structureSrc = nullptr;
+    unique_ptr<TFile> structureFile = openStructureFileWithTree(inputFiles, treeName, structureSrc);
+
+    if (total == 0) {
+        for (size_t i = 0; i < nChunks; ++i) {
+            const fs::path outPath(outputFiles[i]);
+            fs::create_directories(outPath.parent_path());
+            unique_ptr<TFile> outFile(TFile::Open(outPath.c_str(), outputMode.c_str()));
+            if (!outFile || outFile->IsZombie()) {
+                throw runtime_error("Cannot open output file: " + outPath.string());
+            }
+            writeChunkTree(*outFile, *structureSrc, treeName, nullptr);
+            outFile->Close();
+            logMessage("tree=" + treeName + " chunk " + to_string(i) +
+                       " wrote 0 entries to " + outPath.string());
+        }
+        return;
+    }
+
+    const vector<ShuffleBlock> blocks = buildShuffleBlocks(total, seed);
+    logMessage("tree=" + treeName + ": shuffle_blocks=" + to_string(blocks.size()) +
+               " block_entries~" + to_string(chooseShuffleBlockEntries(total)));
 
     // Open TChain once over all input files. ROOT handles branch address re-binding across
     // underlying tree boundaries when we call CopyAddresses on the output tree.
@@ -287,31 +464,46 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
     for (const auto& p : inputFiles) chain.Add(p.c_str());
     chain.SetCacheSize(static_cast<Long64_t>(256) * 1024 * 1024);
     chain.AddBranchToCache("*", true);
+#if ROOT_VERSION_CODE >= ROOT_VERSION(6, 0, 0)
+    chain.SetClusterPrefetch(true);
+#endif
 
     if (chain.LoadTree(0) < 0) {
         throw runtime_error("Failed to load first tree of chain for " + treeName);
     }
 
-    Long64_t cursor = 0;
-    for (size_t i = 0; i < nChunks; ++i) {
-        const Long64_t count = chunkCounts[i];
-        const fs::path outPath(outputFiles[i]);
+    size_t chunkIndex = 0;
+    Long64_t writtenInChunk = 0;
+    Long64_t totalWritten = 0;
+    unique_ptr<TFile> outFile;
+    TTree* outTree = nullptr;
+
+    auto closeCurrentChunk = [&]() {
+        if (!outFile || outTree == nullptr) {
+            return;
+        }
+        outFile->cd();
+        outTree->Write("", TObject::kOverwrite);
+        chain.ResetBranchAddresses();
+        outTree->ResetBranchAddresses();
+        outFile->Close();
+        logMessage("tree=" + treeName + " chunk " + to_string(chunkIndex) +
+                   " wrote " + to_string(chunkCounts[chunkIndex]) +
+                   " entries to " + outputFiles[chunkIndex]);
+        outTree = nullptr;
+        outFile.reset();
+        ++chunkIndex;
+        writtenInChunk = 0;
+    };
+
+    auto openNextChunk = [&]() {
+        if (chunkIndex >= nChunks) {
+            throw runtime_error("Tried to open output chunk past the end for tree " + treeName);
+        }
+        const fs::path outPath(outputFiles[chunkIndex]);
         fs::create_directories(outPath.parent_path());
 
-        // Use a structure source (re-opened for this output chunk) because a TChain's current
-        // tree may change as we seek across files. Cloning from a stable standalone TTree yields
-        // a well-formed empty output skeleton, into which we then route the chain's branches via
-        // CopyAddresses — the same pattern used by selections/convert.
-        unique_ptr<TFile> structureFile(TFile::Open(inputFiles[i].c_str(), "READ"));
-        if (!structureFile || structureFile->IsZombie()) {
-            throw runtime_error("Cannot open structure file: " + inputFiles[i]);
-        }
-        TTree* structureSrc = dynamic_cast<TTree*>(structureFile->Get(treeName.c_str()));
-        if (structureSrc == nullptr) {
-            throw runtime_error("Tree '" + treeName + "' missing in structure file " + inputFiles[i]);
-        }
-
-        unique_ptr<TFile> outFile(TFile::Open(outPath.c_str(), outputMode.c_str()));
+        outFile.reset(TFile::Open(outPath.c_str(), outputMode.c_str()));
         if (!outFile || outFile->IsZombie()) {
             throw runtime_error("Cannot open output file: " + outPath.string());
         }
@@ -326,25 +518,66 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
         // Route the chain's branches into outTree's buffers so chain.GetEntry + outTree->Fill
         // round-trips values without any per-branch bookkeeping.
         outTree->CopyAddresses(&chain);
+        return outTree;
+    };
 
-        for (Long64_t k = 0; k < count; ++k) {
-            const Long64_t srcIdx = perm[static_cast<size_t>(cursor + k)];
-            if (chain.GetEntry(srcIdx) <= 0) {
-                throw runtime_error("Failed to read entry " + to_string(srcIdx) +
-                                    " of tree " + treeName);
+    auto ensureWritableChunk = [&]() {
+        while (chunkIndex < nChunks && chunkCounts[chunkIndex] == 0) {
+            const fs::path outPath(outputFiles[chunkIndex]);
+            fs::create_directories(outPath.parent_path());
+            unique_ptr<TFile> emptyFile(TFile::Open(outPath.c_str(), outputMode.c_str()));
+            if (!emptyFile || emptyFile->IsZombie()) {
+                throw runtime_error("Cannot open output file: " + outPath.string());
             }
-            outTree->Fill();
+            writeChunkTree(*emptyFile, *structureSrc, treeName, nullptr);
+            emptyFile->Close();
+            logMessage("tree=" + treeName + " chunk " + to_string(chunkIndex) +
+                       " wrote 0 entries to " + outPath.string());
+            ++chunkIndex;
         }
-        cursor += count;
+        if (chunkIndex < nChunks && outTree == nullptr) {
+            outTree = openNextChunk();
+        }
+    };
 
-        outFile->cd();
-        outTree->Write("", TObject::kOverwrite);
-        chain.ResetBranchAddresses();
-        outTree->ResetBranchAddresses();
-        outFile->Close();
+    ensureWritableChunk();
+    for (const auto& block : blocks) {
+        forEachRotatedBlockSegment(block, [&](Long64_t segmentStart, Long64_t segmentCount) {
+            for (Long64_t srcIdx = segmentStart; srcIdx < segmentStart + segmentCount; ++srcIdx) {
+                ensureWritableChunk();
+                if (chunkIndex >= nChunks || outTree == nullptr) {
+                    throw runtime_error("Ran out of output chunks while writing tree " + treeName);
+                }
+                if (chain.GetEntry(srcIdx) <= 0) {
+                    throw runtime_error("Failed to read entry " + to_string(srcIdx) +
+                                        " of tree " + treeName);
+                }
+                outTree->Fill();
+                ++writtenInChunk;
+                ++totalWritten;
+                if (writtenInChunk == chunkCounts[chunkIndex]) {
+                    closeCurrentChunk();
+                }
+            }
+        });
+    }
 
-        logMessage("tree=" + treeName + " chunk " + to_string(i) +
-                   " wrote " + to_string(count) + " entries to " + outPath.string());
+    if (outTree != nullptr) {
+        if (writtenInChunk != chunkCounts[chunkIndex]) {
+            throw runtime_error("Output chunk entry count mismatch for tree " + treeName);
+        }
+        closeCurrentChunk();
+    }
+    while (chunkIndex < nChunks) {
+        ensureWritableChunk();
+        if (chunkIndex < nChunks) {
+            throw runtime_error("Unwritten output chunk remains for tree " + treeName);
+        }
+    }
+    if (totalWritten != total) {
+        throw runtime_error("Total written entries mismatch for tree " + treeName +
+                            ": expected " + to_string(total) +
+                            ", got " + to_string(totalWritten));
     }
 }
 
@@ -361,6 +594,8 @@ void processSample(const AppConfig& config, const string& sampleName) {
     }
     const vector<string> outputFiles = makeOutputPaths(
         inputFiles, config.outputPattern, config.outputRoot, sampleGroup, sampleName);
+    const vector<vector<Long64_t>> inputChunkEntries =
+        scanInputChunkEntries(inputFiles, config.treeNames);
 
     logMessage("sample=" + sampleName + " is_MC=" + (meta.isMC ? "true" : "false") +
                " group=" + sampleGroup + " chunks=" + to_string(inputFiles.size()));
@@ -373,7 +608,11 @@ void processSample(const AppConfig& config, const string& sampleName) {
         const string& treeName = config.treeNames[t];
         const string mode = (t == 0) ? "RECREATE" : "UPDATE";
         const uint64_t seed = config.randomState + static_cast<uint64_t>(t) * 1315423911ULL;
-        shuffleTreeIntoChunks(inputFiles, outputFiles, treeName, seed, mode);
+        vector<Long64_t> chunkCounts(inputFiles.size(), 0);
+        for (size_t i = 0; i < inputFiles.size(); ++i) {
+            chunkCounts[i] = inputChunkEntries[i][t];
+        }
+        shuffleTreeIntoChunks(inputFiles, outputFiles, chunkCounts, treeName, seed, mode);
     }
 
     logMessage("sample=" + sampleName + " done");
@@ -385,9 +624,11 @@ int main(int argc, char** argv) {
     try {
         const AppConfig config = loadAppConfig();
 
-        if (config.maxThreads > 1) {
-            ROOT::EnableImplicitMT(static_cast<unsigned>(config.maxThreads));
+#ifdef _OPENMP
+        if (config.maxThreads > 0) {
+            omp_set_num_threads(config.maxThreads);
         }
+#endif
 
         string sampleName;
         if (argc >= 2 && argv[1] != nullptr && *argv[1] != '\0') {
