@@ -644,14 +644,29 @@ def _clip_only_X(X: pd.DataFrame, clip_ranges: dict) -> pd.DataFrame:
 
 
 # -------------------- Input branch distribution plots --------------------
-def plot_branch_distributions(output_root, branches, clip_ranges,
-                              X_train, y_train, w_train,
-                              X_test, y_test, w_test,
-                              n_bins=40):
-    """Plot normalized per-class distributions for each training branch (train+test combined).
+def _sample_color_palette(n):
+    """Return up to ``n`` reasonably distinct colors for per-sample plots."""
+    cmaps = ["tab20", "tab20b", "tab20c"]
+    colors = []
+    for cm in cmaps:
+        colors.extend(list(plt.cm.get_cmap(cm).colors))
+    if n <= 0:
+        return []
+    if n <= len(colors):
+        return colors[:n]
+    return [colors[i % len(colors)] for i in range(n)]
 
-    Values are after thresholds and clip_ranges, but BEFORE log_transform.
-    Saves one PDF per branch under ``{output_root}/branches/``.
+
+def plot_branch_distributions(output_root, branches, clip_ranges,
+                              X_train, y_train, w_train, sample_labels_train,
+                              X_test, y_test, w_test, sample_labels_test,
+                              n_bins=40):
+    """Plot normalized per-class and per-sample distributions for each training branch.
+
+    Uses train+test samples combined. Values are after thresholds and
+    clip_ranges, but BEFORE log_transform. For each branch, saves two PDFs
+    under ``{output_root}/branches/``: ``{branch}.pdf`` (one curve per class)
+    and ``{branch}_by_sample.pdf`` (one curve per sub-sample).
     """
     out_dir = os.path.join(output_root, "branches")
     os.makedirs(out_dir, exist_ok=True)
@@ -663,8 +678,15 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
                             np.asarray(y_test, dtype=int)])
     w_all = np.concatenate([np.asarray(w_train, dtype=float),
                             np.asarray(w_test, dtype=float)])
+    s_all = np.concatenate([np.asarray(sample_labels_train, dtype=object),
+                            np.asarray(sample_labels_test, dtype=object)])
 
-    palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
+    class_palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
+
+    # Keep TRAINING_SAMPLES ordering (which follows class_groups) so samples
+    # from the same class sit together in the legend and color palette.
+    sample_names_ordered = [s for s in TRAINING_SAMPLES if np.any(s_all == s)]
+    sample_palette = _sample_color_palette(len(sample_names_ordered))
 
     for col in branches:
         v_all = np.concatenate([
@@ -684,6 +706,7 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
             continue
         bins = np.linspace(lo, hi, n_bins + 1)
 
+        # -------- per-class view --------
         fig, ax = plt.subplots(figsize=(8, 6))
         plotted_any = False
         for cls_idx, cls_name in enumerate(CLASS_NAMES):
@@ -700,7 +723,7 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
                 density=True,
                 histtype="step",
                 linewidth=2,
-                color=palette[cls_idx],
+                color=class_palette[cls_idx],
                 label=cls_name,
             )
             plotted_any = True
@@ -718,6 +741,43 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
         fig.tight_layout()
         fig.savefig(path)
         plt.close(fig)
+        log_message(f"Wrote plot file: {path}")
+
+        # -------- per-sample view --------
+        fig, ax = plt.subplots(figsize=(9, 6))
+        plotted_any_sample = False
+        for i, sname in enumerate(sample_names_ordered):
+            mask = valid & (s_all == sname)
+            if not np.any(mask):
+                continue
+            w_s = w_all[mask]
+            if float(np.sum(w_s)) <= 0.0:
+                continue
+            ax.hist(
+                v_all[mask],
+                bins=bins,
+                weights=w_s,
+                density=True,
+                histtype="step",
+                linewidth=1.5,
+                color=sample_palette[i],
+                label=sname,
+            )
+            plotted_any_sample = True
+
+        if not plotted_any_sample:
+            plt.close(fig)
+            continue
+
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel(col)
+        ax.set_ylabel("A.U.")
+        ax.legend(fontsize=8, ncol=2, loc="best")
+        path = os.path.join(out_dir, f"{col}_by_sample.pdf")
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+        log_message(f"Wrote plot file: {path}")
         log_message(f"Wrote plot file: {path}")
 
 
@@ -2207,8 +2267,8 @@ def main():
         log_message(f"Plotting input branch distributions for tree = {tree_name}")
         plot_branch_distributions(
             output_root, branches, clip_ranges,
-            X_train, y_train, w_train,
-            X_test, y_test, w_test,
+            X_train, y_train, w_train, sample_labels_train,
+            X_test, y_test, w_test, sample_labels_test,
         )
 
         log_message(f"Standardising training split for tree = {tree_name}")
