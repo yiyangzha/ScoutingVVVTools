@@ -194,15 +194,10 @@ void printSummary(const string& treeName, const ScanSummary& summary, size_t max
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    if (argc < 2 || argc > 4) {
-        printUsage(argv[0]);
-        return 1;
-    }
-
-    const string filePath = argv[1];
-    const string requestedTree = (argc >= 3) ? argv[2] : "";
-    const size_t maxReport = (argc >= 4) ? static_cast<size_t>(strtoull(argv[3], nullptr, 10)) : 20U;
+int find_duplicate_entries() {
+    const string filePath = "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/ScoutingVVVTools/dataset/signal/wplush.root";
+    const string requestedTree = "fat2";
+    const size_t maxReport = 20U;
 
     try {
         unique_ptr<TFile> file(TFile::Open(filePath.c_str(), "READ"));
