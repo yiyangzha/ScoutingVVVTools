@@ -39,7 +39,7 @@
     "colsample_bytree": 0.75,
     "early_stopping_rounds": 10,
     "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "event_reweight_branches": ["weight_pu"]
+    "event_reweight_branches": []
   },
   "fat3": {
     "n_estimators": 1000,

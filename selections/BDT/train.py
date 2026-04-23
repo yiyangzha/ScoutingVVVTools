@@ -660,7 +660,7 @@ def _sample_color_palette(n):
 def plot_branch_distributions(output_root, branches, clip_ranges,
                               X_train, y_train, w_train, sample_labels_train,
                               X_test, y_test, w_test, sample_labels_test,
-                              n_bins=40):
+                              n_bins=200):
     """Plot normalized per-class and per-sample distributions for each training branch.
 
     Uses train+test samples combined. Values are after thresholds and
