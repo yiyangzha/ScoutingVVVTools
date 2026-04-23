@@ -1,9 +1,9 @@
 {
-  "lumi": 171.0,
-  "n_signal_regions": 4,
+  "lumi": 283.8,
+  "n_signal_regions": 3,
   "bdt_root": "../BDT/fat2",
   "output_dir": "./output/fat2",
-  "n_thresholds": 10,
+  "n_thresholds": 16,
   "min_bkg_weight": 5.0,
   "rounds": 5
 }
