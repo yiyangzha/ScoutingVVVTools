@@ -8,5 +8,7 @@
   "output_root": "../../dataset_mixed",
   "output_pattern": "{output_root}/{sample_group}/{sample}.root",
   "sample_config": "../../src/sample.json",
-  "random_state": 42
+  "random_state": 42,
+  "min_block_entries": 8,
+  "max_block_entries": 4096
 }

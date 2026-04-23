@@ -58,6 +58,8 @@ struct AppConfig {
     string outputPattern;
     string sampleConfigPath;
     uint64_t randomState = 42;
+    Long64_t minBlockEntries = 32;
+    Long64_t maxBlockEntries = 4096;
     vector<SampleMeta> samples;  // indexed by name via sampleByName
     unordered_map<string, size_t> sampleByName;
 };
@@ -163,6 +165,19 @@ AppConfig loadAppConfig() {
         "output_pattern", "{output_root}/{sample_group}/{sample}.root");
     config.randomState = static_cast<uint64_t>(
         payload.getNumberOr("random_state", 42.L));
+    config.minBlockEntries = static_cast<Long64_t>(
+        payload.getNumberOr("min_block_entries", 32.L));
+    config.maxBlockEntries = static_cast<Long64_t>(
+        payload.getNumberOr("max_block_entries", 4096.L));
+    if (config.minBlockEntries <= 0) {
+        throw runtime_error("min_block_entries must be positive");
+    }
+    if (config.maxBlockEntries <= 0) {
+        throw runtime_error("max_block_entries must be positive");
+    }
+    if (config.maxBlockEntries < config.minBlockEntries) {
+        throw runtime_error("max_block_entries must be >= min_block_entries");
+    }
 
     config.sampleConfigPath = resolveReferencedPath(
         appConfigPath,
@@ -313,27 +328,31 @@ vector<vector<Long64_t>> scanInputChunkEntries(const vector<string>& inputFiles,
     return counts;
 }
 
-Long64_t chooseShuffleBlockEntries(Long64_t totalEntries) {
-    const Long64_t kMinBlockEntries = 1024;
-    const Long64_t kMaxBlockEntries = 16384;
+Long64_t chooseShuffleBlockEntries(Long64_t totalEntries,
+                                   Long64_t minBlockEntries,
+                                   Long64_t maxBlockEntries) {
     const Long64_t kTargetBlocks = 512;
 
     if (totalEntries <= 0) {
-        return kMinBlockEntries;
+        return minBlockEntries;
     }
 
     Long64_t blockEntries = totalEntries / kTargetBlocks;
-    if (blockEntries < kMinBlockEntries) {
-        blockEntries = kMinBlockEntries;
+    if (blockEntries < minBlockEntries) {
+        blockEntries = minBlockEntries;
     }
-    if (blockEntries > kMaxBlockEntries) {
-        blockEntries = kMaxBlockEntries;
+    if (blockEntries > maxBlockEntries) {
+        blockEntries = maxBlockEntries;
     }
     return blockEntries;
 }
 
-vector<ShuffleBlock> buildShuffleBlocks(Long64_t totalEntries, uint64_t seed) {
-    const Long64_t blockEntries = chooseShuffleBlockEntries(totalEntries);
+vector<ShuffleBlock> buildShuffleBlocks(Long64_t totalEntries,
+                                        uint64_t seed,
+                                        Long64_t minBlockEntries,
+                                        Long64_t maxBlockEntries) {
+    const Long64_t blockEntries = chooseShuffleBlockEntries(
+        totalEntries, minBlockEntries, maxBlockEntries);
     vector<ShuffleBlock> blocks;
     for (Long64_t start = 0; start < totalEntries; start += blockEntries) {
         ShuffleBlock block;
@@ -422,7 +441,9 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
                            const vector<Long64_t>& chunkCounts,
                            const string& treeName,
                            uint64_t seed,
-                           const string& outputMode) {
+                           const string& outputMode,
+                           Long64_t minBlockEntries,
+                           Long64_t maxBlockEntries) {
     const size_t nChunks = inputFiles.size();
     if (outputFiles.size() != nChunks || chunkCounts.size() != nChunks) {
         throw runtime_error("Chunk metadata size mismatch for tree " + treeName);
@@ -454,9 +475,13 @@ void shuffleTreeIntoChunks(const vector<string>& inputFiles,
         return;
     }
 
-    const vector<ShuffleBlock> blocks = buildShuffleBlocks(total, seed);
+    const vector<ShuffleBlock> blocks = buildShuffleBlocks(
+        total, seed, minBlockEntries, maxBlockEntries);
     logMessage("tree=" + treeName + ": shuffle_blocks=" + to_string(blocks.size()) +
-               " block_entries~" + to_string(chooseShuffleBlockEntries(total)));
+               " block_entries~" + to_string(chooseShuffleBlockEntries(
+                   total, minBlockEntries, maxBlockEntries)) +
+               " block_range=[" + to_string(minBlockEntries) +
+               "," + to_string(maxBlockEntries) + "]");
 
     // Open TChain once over all input files. ROOT handles branch address re-binding across
     // underlying tree boundaries when we call CopyAddresses on the output tree.
@@ -612,7 +637,15 @@ void processSample(const AppConfig& config, const string& sampleName) {
         for (size_t i = 0; i < inputFiles.size(); ++i) {
             chunkCounts[i] = inputChunkEntries[i][t];
         }
-        shuffleTreeIntoChunks(inputFiles, outputFiles, chunkCounts, treeName, seed, mode);
+        shuffleTreeIntoChunks(
+            inputFiles,
+            outputFiles,
+            chunkCounts,
+            treeName,
+            seed,
+            mode,
+            config.minBlockEntries,
+            config.maxBlockEntries);
     }
 
     logMessage("sample=" + sampleName + " done");
@@ -643,6 +676,8 @@ int main(int argc, char** argv) {
 
         logMessage("mix starting: sample=" + sampleName +
                    " random_state=" + to_string(config.randomState) +
+                   " block_range=[" + to_string(config.minBlockEntries) +
+                   "," + to_string(config.maxBlockEntries) + "]" +
                    " max_threads=" + to_string(config.maxThreads));
         processSample(config, sampleName);
         return 0;
