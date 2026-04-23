@@ -1,7 +1,7 @@
 {
   "tree_name": ["fat2", "fat3"],
   "run_sample": "www",
-  "submit_samples": ["qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200", "qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000", "ttbar_had", "ttbar_semilep", "ww", "wz", "zz", "tbarwplus_had", "twminus_had"],
+  "submit_samples": [],
   "max_threads": 18,
   "input_root": "../../dataset",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
