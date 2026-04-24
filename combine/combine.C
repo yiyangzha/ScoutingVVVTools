@@ -697,6 +697,49 @@ double processIntegral(const std::vector<double>& values) {
     return sum;
 }
 
+bool isExactlyZeroProcess(const Process& proc) {
+    for (double y : proc.yields) {
+        if (y != 0.0) return false;
+    }
+    const int n = proc.cov.GetNrows();
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < proc.cov.GetNcols(); ++j) {
+            if (proc.cov(i, j) != 0.0) return false;
+        }
+    }
+    return true;
+}
+
+std::vector<Process> maybeDropZeroBackgroundProcesses(const AppConfig& cfg,
+                                                      std::vector<Process> processes,
+                                                      const Scenario& sc,
+                                                      const std::string& channel_name) {
+    if (!cfg.rescale_shape_modes_to_positive) return processes;
+
+    std::vector<Process> kept;
+    kept.reserve(processes.size());
+    for (auto& proc : processes) {
+        if (proc.name == "signal") {
+            if (isExactlyZeroProcess(proc)) {
+                throw std::runtime_error(
+                    "Signal process is identically zero for scenario '" + sc.scope + "/" +
+                    sc.name + "' in channel '" + channel_name + "'");
+            }
+            kept.push_back(std::move(proc));
+            continue;
+        }
+
+        if (isExactlyZeroProcess(proc)) {
+            logMessage("WARNING: Dropping zero-yield zero-covariance background process: "
+                       "channel=" + channel_name + " scenario=" + sc.scope + "/" + sc.name +
+                       " process=" + proc.name);
+            continue;
+        }
+        kept.push_back(std::move(proc));
+    }
+    return kept;
+}
+
 double computePositiveTemplateScaleLimit(const Process& proc, const EigenMode& mode,
                                          std::string& limiting_reason) {
     const double nominal_integral = processIntegral(proc.yields);
@@ -1040,6 +1083,7 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
         pc.name = ch.name;
         pc.n_sr = ch.n_sr;
         pc.processes = buildProcesses(ch, reg, sc, use_abcd);
+        pc.processes = maybeDropZeroBackgroundProcesses(cfg, std::move(pc.processes), sc, ch.name);
         pc.modes.reserve(pc.processes.size());
         for (const auto& p : pc.processes) {
             pc.modes.push_back(decomposeCov(p.cov, cfg.eigen_rel_cutoff));
