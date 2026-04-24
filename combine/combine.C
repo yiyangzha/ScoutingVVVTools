@@ -719,11 +719,6 @@ std::vector<Process> maybeDropZeroBackgroundProcesses(const AppConfig& cfg,
     kept.reserve(processes.size());
     for (auto& proc : processes) {
         if (proc.name == "signal") {
-            if (isExactlyZeroProcess(proc)) {
-                throw std::runtime_error(
-                    "Signal process is identically zero for scenario '" + sc.scope + "/" +
-                    sc.name + "' in channel '" + channel_name + "'");
-            }
             kept.push_back(std::move(proc));
             continue;
         }
@@ -737,6 +732,17 @@ std::vector<Process> maybeDropZeroBackgroundProcesses(const AppConfig& cfg,
         kept.push_back(std::move(proc));
     }
     return kept;
+}
+
+const Process& getRequiredProcess(const std::vector<Process>& processes,
+                                  const std::string& name,
+                                  const Scenario& sc,
+                                  const std::string& channel_name) {
+    for (const auto& proc : processes) {
+        if (proc.name == name) return proc;
+    }
+    throw std::runtime_error("Missing process '" + name + "' for scenario '" + sc.scope +
+                             "/" + sc.name + "' in channel '" + channel_name + "'");
 }
 
 double computePositiveTemplateScaleLimit(const Process& proc, const EigenMode& mode,
@@ -1096,12 +1102,27 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
 
     // Build per-channel cards + one shape file per channel.
     std::vector<std::string> card_tokens;  // for combineCards.py: chname=path
+    std::vector<std::string> skipped_zero_signal_channels;
     for (const auto& ch : channels) {
         PerChannelCard pc;
         pc.name = ch.name;
         pc.n_sr = ch.n_sr;
         pc.processes = buildProcesses(ch, reg, sc, use_abcd);
         pc.processes = maybeDropZeroBackgroundProcesses(cfg, std::move(pc.processes), sc, ch.name);
+        const Process& signal_proc = getRequiredProcess(pc.processes, "signal", sc, ch.name);
+        if (isExactlyZeroProcess(signal_proc)) {
+            if (sc.scope == "sample") {
+                logMessage("WARNING: Dropping zero-yield zero-covariance signal channel from "
+                           "sample scenario: channel=" + ch.name +
+                           " scenario=" + sc.scope + "/" + sc.name +
+                           " qcd_mode=" + mode_tag);
+                skipped_zero_signal_channels.push_back(ch.name);
+                continue;
+            }
+            throw std::runtime_error(
+                "Signal process is identically zero for scenario '" + sc.scope + "/" +
+                sc.name + "' in channel '" + ch.name + "'");
+        }
         pc.modes.reserve(pc.processes.size());
         for (const auto& p : pc.processes) {
             pc.modes.push_back(decomposeCov(p.cov, cfg.eigen_rel_cutoff));
@@ -1126,6 +1147,26 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
         // Use absolute shape paths so combineCards.py preserves them verbatim.
         writeChannelDatacard(pc, shape_path);
         card_tokens.push_back(ch.name + "=" + pc.datacard_path);
+    }
+
+    if (card_tokens.empty()) {
+        if (sc.scope == "sample") {
+            std::ostringstream channels_os;
+            for (size_t i = 0; i < skipped_zero_signal_channels.size(); ++i) {
+                if (i) channels_os << ",";
+                channels_os << skipped_zero_signal_channels[i];
+            }
+            logMessage("WARNING: Signal sample scenario is identically zero in all channels; "
+                       "storing significance=0 and infinite expected limits: scenario=" +
+                       sc.scope + "/" + sc.name +
+                       " qcd_mode=" + mode_tag +
+                       " skipped_channels=" + channels_os.str());
+            sig_out.significance = 0.0;
+            setInfiniteExpectedLimits(lim_out);
+            return;
+        }
+        throw std::runtime_error("No usable channels remain for scenario '" + sc.scope + "/" +
+                                 sc.name + "'");
     }
 
     // Combine per-channel cards. Run from the work directory so combineCards.py
