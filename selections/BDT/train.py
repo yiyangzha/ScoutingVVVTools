@@ -1462,7 +1462,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     )
 
     hp = cfg.get(tree_name, {})
-    n_threads = max(1, min(16, os.cpu_count() or 1))
+    n_threads = max(1, min(32, os.cpu_count() or 1))
     n_estimators = int(hp.get("n_estimators", 200))
     n_estimators_decorr = int(hp.get("n_estimators_decorr", 1000))
     early_stopping_rounds = int(hp.get("early_stopping_rounds", 10))
