@@ -243,10 +243,26 @@ ClassRegistry loadRegistry(const AppConfig& cfg) {
 struct YieldCov {
     std::vector<double> yields;
     TMatrixDSym cov;                // n x n
-    YieldCov() : cov(1) {}
+    YieldCov() = default;
     explicit YieldCov(int n) : yields(n, 0.0), cov(n) {
         for (int i = 0; i < n; ++i)
             for (int j = 0; j < n; ++j) cov(i, j) = 0.0;
+    }
+    YieldCov(const YieldCov&) = default;
+    YieldCov(YieldCov&&) noexcept = default;
+    YieldCov& operator=(const YieldCov& other) {
+        if (this == &other) return *this;
+        yields = other.yields;
+        cov.ResizeTo(other.cov);
+        cov = other.cov;
+        return *this;
+    }
+    YieldCov& operator=(YieldCov&& other) noexcept {
+        if (this == &other) return *this;
+        yields = std::move(other.yields);
+        cov.ResizeTo(other.cov);
+        cov = other.cov;
+        return *this;
     }
     int n() const { return static_cast<int>(yields.size()); }
 };
@@ -317,7 +333,10 @@ ChannelData loadChannel(const ChannelSpec& spec) {
         throw std::runtime_error("No samples/ entries in " + spec.root_file);
     }
     for (const auto& s : sample_names) {
-        data.sample[s] = readYieldCov(*f, "samples/" + s);
+        auto inserted = data.sample.emplace(s, readYieldCov(*f, "samples/" + s));
+        if (!inserted.second) {
+            throw std::runtime_error("Duplicate sample '" + s + "' in " + spec.root_file);
+        }
     }
     data.n_sr = data.sample.begin()->second.n();
     for (const auto& kv : data.sample) {
@@ -331,7 +350,13 @@ ChannelData loadChannel(const ChannelSpec& spec) {
         throw std::runtime_error("No groups/ entries in " + spec.root_file);
     }
     for (const auto& g : group_names) {
-        data.group[g] = readYieldCov(*f, "groups/" + g);
+        const std::string key = slugify(g);
+        auto inserted = data.group.emplace(key, readYieldCov(*f, "groups/" + g));
+        if (!inserted.second) {
+            throw std::runtime_error(
+                "Duplicate groups/ entries after case-insensitive matching: '" + g +
+                "' collides with another group in " + spec.root_file);
+        }
     }
     for (const auto& kv : data.group) {
         if (kv.second.n() != data.n_sr) {
@@ -448,6 +473,21 @@ const YieldCov& getRequiredYieldCov(const std::map<std::string, YieldCov>& bundl
     return it->second;
 }
 
+const YieldCov& getRequiredGroupYieldCov(const ChannelData& ch,
+                                         const std::string& class_name) {
+    const std::string lookup = slugify(class_name);
+    auto it = ch.group.find(lookup);
+    if (it == ch.group.end()) {
+        throw std::runtime_error(
+            "Missing required group '" + class_name + "' (matched as '" + lookup +
+            "') in channel '" + ch.name + "'");
+    }
+    validateYieldCov(
+        it->second,
+        "group '" + class_name + "' (matched as '" + lookup + "') in channel '" + ch.name + "'");
+    return it->second;
+}
+
 Process makeProcessFromYieldCov(const std::string& name, const YieldCov& yc,
                                 const std::string& label) {
     validateYieldCov(yc, label);
@@ -482,14 +522,14 @@ std::vector<Process> buildGroupProcesses(const ChannelData& ch, const ClassRegis
     if (sc.scope == "combined") {
         for (const auto& cls : reg.class_order) {
             if (!reg.signal_classes.count(cls)) continue;
-            const YieldCov& yc = getRequiredYieldCov(ch.group, cls, "group", ch.name);
+            const YieldCov& yc = getRequiredGroupYieldCov(ch, cls);
             addYieldCov(sig.yields, sig.cov, yc);
         }
     } else if (sc.scope == "class") {
         if (!reg.signal_classes.count(sc.name)) {
             throw std::runtime_error("Scenario class '" + sc.name + "' is not a signal class");
         }
-        const YieldCov& yc = getRequiredYieldCov(ch.group, sc.name, "group", ch.name);
+        const YieldCov& yc = getRequiredGroupYieldCov(ch, sc.name);
         addYieldCov(sig.yields, sig.cov, yc);
     } else {
         throw std::runtime_error("Group-based builder cannot handle scenario scope '" + sc.scope + "'");
@@ -519,7 +559,7 @@ std::vector<Process> buildGroupProcesses(const ChannelData& ch, const ClassRegis
             continue;
         }
 
-        const YieldCov& yc = getRequiredYieldCov(ch.group, cls, "group", ch.name);
+        const YieldCov& yc = getRequiredGroupYieldCov(ch, cls);
         appendProcess(out, process_names,
                       makeProcessFromYieldCov(
                           "bkg_" + slugify(cls),
@@ -585,7 +625,7 @@ std::vector<Process> buildProcesses(const ChannelData& ch, const ClassRegistry& 
 
 void validateChannelAgainstRegistry(const ChannelData& ch, const ClassRegistry& reg) {
     for (const auto& cls : reg.class_order) {
-        getRequiredYieldCov(ch.group, cls, "group", ch.name);
+        getRequiredGroupYieldCov(ch, cls);
     }
     for (const auto& sample_name : reg.signal_samples) {
         getRequiredYieldCov(ch.sample, sample_name, "signal sample", ch.name);
