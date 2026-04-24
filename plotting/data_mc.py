@@ -152,9 +152,22 @@ def _sample_group(info):
 def _input_files(sample_name, input_root, input_pattern):
     info = SAMPLE_INFO[sample_name]
     sg   = _sample_group(info)
-    base = input_pattern.format(input_root=input_root, sample_group=sg, sample=sample_name)
-    stem = base[:-5] if base.endswith(".root") else base
-    return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
+
+    def _glob_from_pattern(pattern):
+        base = pattern.format(input_root=input_root, sample_group=sg, sample=sample_name)
+        stem = base[:-5] if base.endswith(".root") else base
+        return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
+
+    files = _glob_from_pattern(input_pattern)
+    if files or info.get("is_MC", True):
+        return files
+
+    # BDT training may read MC from `{sample_group}_mixed`, while data stays in
+    # the original convert output under `data/`.
+    data_pattern = input_pattern.replace("{sample_group}_mixed", "{sample_group}")
+    if data_pattern != input_pattern:
+        return _glob_from_pattern(data_pattern)
+    return files
 
 
 def _tree_entries_total(files, tree_name):

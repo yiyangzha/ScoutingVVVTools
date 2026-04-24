@@ -10,6 +10,7 @@ import mplhep as hep
 import xgboost as xgb
 import gc
 
+from matplotlib.backends.backend_pdf import PdfPages
 from sklearn.metrics import roc_auc_score, roc_curve
 from typing import List
 
@@ -142,6 +143,20 @@ def _figure_path(output_root, stem):
 
 def _reference_path(output_root, stem):
     return os.path.join(output_root, f"{stem}.npz")
+
+
+def _decor_efficiencies_for_tree(tree_name):
+    values = cfg.get(tree_name, {}).get("decor_efficiencies", [1.0, 0.5, 0.1, 0.01])
+    effs = []
+    for value in values:
+        eff = float(value)
+        if not 0.0 < eff <= 1.0:
+            raise ValueError(
+                f"decor_efficiencies for tree '{tree_name}' must be fractions in (0, 1], got {eff}"
+            )
+        if not any(abs(eff - old) < 1e-12 for old in effs):
+            effs.append(eff)
+    return effs
 
 
 # -------------------- Data loading --------------------
@@ -1695,16 +1710,18 @@ def _predict_proba(model, Xlike):
 
 
 def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
-                 loss_history, stage_boundary, decorrelate_feature_names=None):
+                 loss_history, stage_boundary, decorrelate_feature_names=None,
+                 decor_plot_X_test=None, decor_efficiencies=None):
     """ROC curves, feature importance, score distributions, loss curves, and decorrelation checks.
 
-    Model-dependent plots (ROC, importance, score distributions, decor_corr)
-    are saved twice with ``_cls`` / ``_decorr`` suffixes (for the stage-1
-    baseline and stage-2 final model respectively). ``feature_corr.pdf`` and
-    the shared ``loss_mlogloss.pdf`` / ``loss_classification.pdf`` /
-    ``loss_decorrelation.pdf`` / ``loss_total.pdf`` files are saved once.
-    ``stage_boundary`` is the number of stage-1 iterations kept; it is drawn
-    as a dotted vertical line on the loss curves.
+    Model-dependent plots (ROC, importance, score distributions, decor_corr,
+    and decor diagnostic multipage PDFs) are saved twice with ``_cls`` /
+    ``_decorr`` suffixes (for the stage-1 baseline and stage-2 final model
+    respectively). ``feature_corr.pdf`` and the shared ``loss_mlogloss.pdf`` /
+    ``loss_classification.pdf`` / ``loss_decorrelation.pdf`` /
+    ``loss_total.pdf`` files are saved once. ``stage_boundary`` is the number
+    of stage-1 iterations kept; it is drawn as a dotted vertical line on the
+    loss curves.
     """
     X_train_full, X_test_full, y_train, y_test, w_train, w_test = splits
 
@@ -1861,6 +1878,222 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
         ]
 
     decor_var_names = [full_feature_names[i] for i in decor_idx_full]
+    if decor_efficiencies is None:
+        decor_efficiencies = [1.0, 0.5, 0.1, 0.01]
+    decor_efficiencies = [float(eff) for eff in decor_efficiencies if 0.0 < float(eff) <= 1.0]
+
+    decor_plot_names = []
+    decor_plot_df = None
+    if decor_plot_X_test is not None and decorrelate_feature_names:
+        if isinstance(decor_plot_X_test, pd.DataFrame):
+            decor_plot_names = [
+                name for name in decorrelate_feature_names
+                if not isinstance(name, int) and name in decor_plot_X_test.columns
+            ]
+            if decor_plot_names:
+                decor_plot_df = decor_plot_X_test[decor_plot_names].reset_index(drop=True)
+        else:
+            arr = np.asarray(decor_plot_X_test)
+            names = [name for name in decorrelate_feature_names if not isinstance(name, int)]
+            if arr.ndim == 2 and arr.shape[1] == len(names):
+                decor_plot_names = list(names)
+                decor_plot_df = pd.DataFrame(arr, columns=decor_plot_names)
+
+    def _weighted_bin_average(x, y_arr, wv, min_bins=200, max_bins=600):
+        x = np.asarray(x, dtype=float).ravel()
+        y_arr = np.asarray(y_arr, dtype=float).ravel()
+        wv = np.asarray(wv, dtype=float).ravel()
+        m = np.isfinite(x) & np.isfinite(y_arr) & np.isfinite(wv) & (wv > 0.0)
+        x, y_arr, wv = x[m], y_arr[m], wv[m]
+        if x.size < 2:
+            return np.array([]), np.array([])
+        lo, hi = float(np.min(x)), float(np.max(x))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return np.array([]), np.array([])
+        n_bins = min(max_bins, max(min_bins, int(np.sqrt(float(x.size)))))
+        n_bins = max(2, min(n_bins, max(2, x.size)))
+        edges = np.linspace(lo, hi, n_bins + 1)
+        sum_w, _ = np.histogram(x, bins=edges, weights=wv)
+        sum_wy, _ = np.histogram(x, bins=edges, weights=wv * y_arr)
+        valid = sum_w > 0.0
+        if not np.any(valid):
+            return np.array([]), np.array([])
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        avg = np.full_like(centers, np.nan, dtype=float)
+        avg[valid] = sum_wy[valid] / sum_w[valid]
+        return centers[valid], avg[valid]
+
+    def _hist_edges(x, n_bins=60):
+        x = np.asarray(x, dtype=float).ravel()
+        x = x[np.isfinite(x)]
+        if x.size < 2:
+            return None
+        lo, hi = float(np.min(x)), float(np.max(x))
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return None
+        return np.linspace(lo, hi, int(n_bins) + 1)
+
+    def _weighted_score_threshold(score, wv, efficiency):
+        score = np.asarray(score, dtype=float).ravel()
+        wv = np.asarray(wv, dtype=float).ravel()
+        m = np.isfinite(score) & np.isfinite(wv) & (wv > 0.0)
+        score, wv = score[m], wv[m]
+        if score.size == 0:
+            return float("nan")
+        if efficiency >= 1.0:
+            return -float("inf")
+        order = np.argsort(score)
+        score_s = score[order]
+        w_s = wv[order]
+        total_w = float(np.sum(w_s))
+        if total_w <= 0.0:
+            return float("nan")
+        target_below = max(0.0, min(1.0, 1.0 - float(efficiency))) * total_w
+        idx = int(np.searchsorted(np.cumsum(w_s), target_below, side="left"))
+        idx = max(0, min(idx, score_s.size - 1))
+        return float(score_s[idx])
+
+    def _format_eff(eff):
+        if eff >= 0.999999:
+            return "100%"
+        if eff >= 0.01:
+            return f"{100.0 * eff:.0f}%"
+        return f"{100.0 * eff:.2g}%"
+
+    def _save_pdf_page(pdf_state, path, fig):
+        if pdf_state["pdf"] is None:
+            pdf_state["pdf"] = PdfPages(path)
+        pdf_state["pdf"].savefig(fig, bbox_inches="tight")
+        pdf_state["pages"] += 1
+        plt.close(fig)
+
+    def _close_pdf(pdf_state, path):
+        if pdf_state["pdf"] is None:
+            return
+        pdf_state["pdf"].close()
+        log_message(f"Wrote plot file: {path}")
+
+    def _plot_score_vs_decor_pdf(scores, suffix, stage_tag):
+        if decor_plot_df is None or not decor_plot_names:
+            return
+        scores = np.asarray(scores, dtype=float)
+        y_true = np.asarray(y_test, dtype=int)
+        wv_all = np.asarray(w_test, dtype=float)
+        path = _figure_path(output_root, f"decor_score_vs_branch{suffix}")
+        pdf_state = {"pdf": None, "pages": 0}
+        for cls_idx, cls_name in enumerate(class_names):
+            class_mask = y_true == cls_idx
+            if not np.any(class_mask):
+                continue
+            for branch_name in decor_plot_names:
+                x = decor_plot_df[branch_name].to_numpy(dtype=float, copy=False)
+                s = scores[:, cls_idx]
+                mask = (
+                    class_mask
+                    & np.isfinite(x)
+                    & (x > -990.0)
+                    & np.isfinite(s)
+                    & np.isfinite(wv_all)
+                    & (wv_all > 0.0)
+                )
+                if not np.any(mask):
+                    continue
+                fig, ax = plt.subplots(figsize=(8.5, 6.2))
+                ax.scatter(
+                    x[mask],
+                    s[mask],
+                    s=2.0,
+                    alpha=0.12,
+                    color=palette[cls_idx],
+                    edgecolors="none",
+                    rasterized=True,
+                    label=f"Test {cls_name}",
+                )
+                centers, avg = _weighted_bin_average(x[mask], s[mask], wv_all[mask])
+                if centers.size > 0:
+                    ax.plot(
+                        centers,
+                        avg,
+                        color="black",
+                        linewidth=1.8,
+                        label="weighted average",
+                    )
+                ax.set_title(f"{tree_name} {stage_tag}: {cls_name}", fontsize=15)
+                ax.set_xlabel(branch_name)
+                ax.set_ylabel(f"p({cls_name})")
+                ax.set_ylim(0.0, 1.0)
+                ax.grid(True, linestyle="--", alpha=0.35)
+                ax.legend(loc="best", fontsize=10)
+                _save_pdf_page(pdf_state, path, fig)
+        _close_pdf(pdf_state, path)
+
+    def _plot_decor_shape_by_score_pdf(scores, suffix, stage_tag):
+        if decor_plot_df is None or not decor_plot_names or not SIGNAL_CLASS_INDICES:
+            return
+        scores = np.asarray(scores, dtype=float)
+        y_true = np.asarray(y_test, dtype=int)
+        wv_all = np.asarray(w_test, dtype=float)
+        path = _figure_path(output_root, f"decor_branch_shapes_by_signal_score{suffix}")
+        pdf_state = {"pdf": None, "pages": 0}
+        colors = plt.cm.get_cmap("viridis", max(len(decor_efficiencies), 2))(
+            np.arange(max(len(decor_efficiencies), 2))
+        )
+
+        for cls_idx, cls_name in enumerate(class_names):
+            class_mask = y_true == cls_idx
+            if not np.any(class_mask):
+                continue
+            for branch_name in decor_plot_names:
+                x = decor_plot_df[branch_name].to_numpy(dtype=float, copy=False)
+                base_x_mask = class_mask & np.isfinite(x) & (x > -990.0) & np.isfinite(wv_all) & (wv_all > 0.0)
+                edges = _hist_edges(x[base_x_mask])
+                if edges is None:
+                    continue
+                for sig_idx in SIGNAL_CLASS_INDICES:
+                    sig_name = class_names[sig_idx]
+                    sig_score = scores[:, sig_idx]
+                    base = base_x_mask & np.isfinite(sig_score)
+                    if not np.any(base):
+                        continue
+
+                    fig, ax = plt.subplots(figsize=(8.5, 6.2))
+                    plotted_any = False
+                    for eff_i, eff in enumerate(decor_efficiencies):
+                        if eff >= 0.999999:
+                            cut = base
+                            label = f"eff={_format_eff(eff)} (no cut)"
+                        else:
+                            thr = _weighted_score_threshold(sig_score[base], wv_all[base], eff)
+                            if not np.isfinite(thr):
+                                continue
+                            cut = base & (sig_score > thr)
+                            label = f"eff={_format_eff(eff)}, p({sig_name})>{thr:.3f}"
+                        if not np.any(cut) or float(np.sum(wv_all[cut])) <= 0.0:
+                            continue
+                        ax.hist(
+                            x[cut],
+                            bins=edges,
+                            weights=wv_all[cut],
+                            density=True,
+                            histtype="step",
+                            linewidth=2.0,
+                            color=colors[eff_i],
+                            label=label,
+                        )
+                        plotted_any = True
+                    if not plotted_any:
+                        plt.close(fig)
+                        continue
+                    ax.set_title(
+                        f"{tree_name} {stage_tag}: {cls_name}, cut on p({sig_name})",
+                        fontsize=15,
+                    )
+                    ax.set_xlabel(branch_name)
+                    ax.set_ylabel("A.U.")
+                    ax.grid(True, linestyle="--", alpha=0.35)
+                    ax.legend(loc="best", fontsize=9)
+                    _save_pdf_page(pdf_state, path, fig)
+        _close_pdf(pdf_state, path)
 
     def _plot_for_model(model, suffix, stage_tag):
         if model is None:
@@ -2049,6 +2282,9 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                         f"{decor_var_names[j]}={R[i, j]:+.3f}" for j in range(len(decor_var_names))
                     )
                     log_message(f"{tree_name} [{stage_tag}] {tag} decor corr [{cls_name}] {stats}")
+
+        _plot_score_vs_decor_pdf(probs_test, suffix, stage_tag)
+        _plot_decor_shape_by_score_pdf(probs_test, suffix, stage_tag)
 
     _plot_for_model(stage1_model, "_cls", "stage1")
     _plot_for_model(stage2_model, "_decorr", "stage2")
@@ -2259,6 +2495,12 @@ def main():
         check_weights(w_test, f"{tree_name}_test_weight_after_filter")
         check_weights(w_test_ref, f"{tree_name}_test_physics_weight_after_filter")
 
+        decor_plot_cols = [c for c in decorrelate if c in X_test.columns]
+        X_test_decor_plot = (
+            _clip_only_X(X_test[decor_plot_cols].copy(), clip_ranges)
+            if decor_plot_cols else None
+        )
+
         if drop_after_filter:
             X_train = X_train.drop(columns=drop_after_filter, errors="ignore")
             X_test = X_test.drop(columns=drop_after_filter, errors="ignore")
@@ -2349,6 +2591,8 @@ def main():
             loss_history,
             stage_boundary,
             decorrelate_feature_names=decorrelate,
+            decor_plot_X_test=X_test_decor_plot,
+            decor_efficiencies=_decor_efficiencies_for_tree(tree_name),
         )
         log_message(f"Finished train.py for tree = {tree_name}")
 

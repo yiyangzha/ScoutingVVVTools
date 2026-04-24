@@ -160,9 +160,9 @@ AppConfig loadAppConfig() {
     config.inputRoot = payload.at("input_root").asString();
     config.inputPattern = payload.getStringOr(
         "input_pattern", "{input_root}/{sample_group}/{sample}.root");
-    config.outputRoot = payload.getStringOr("output_root", config.inputRoot + "_mixed");
+    config.outputRoot = payload.getStringOr("output_root", config.inputRoot);
     config.outputPattern = payload.getStringOr(
-        "output_pattern", "{output_root}/{sample_group}/{sample}.root");
+        "output_pattern", "{output_root}/{sample_group}_mixed/{sample}.root");
     config.randomState = static_cast<uint64_t>(
         payload.getNumberOr("random_state", 42.L));
     config.minBlockEntries = static_cast<Long64_t>(

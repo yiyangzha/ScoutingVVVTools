@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 import xgboost as xgb
 from itertools import product as iproduct
+from matplotlib.lines import Line2D
 
 plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
@@ -483,35 +484,151 @@ def plot_score_distributions(proba, y, w):
 
 
 def plot_signal_regions_2d(result, proba, y, w):
-    """2D scatter of the first two BDT axes with signal region boxes overlaid."""
-    if proba.shape[1] < 3 or not result["top_bins"]:
+    """Regular-polygon projection of multiclass scores, with optional SR outlines."""
+    del w
+    n_classes = int(proba.shape[1])
+    if n_classes < 2:
         return
 
-    is_sig = np.isin(y, SIGNAL_CLASS_INDICES)
-    is_bkg = np.isin(y, BACKGROUND_CLASS_INDICES)
-    palette = plt.cm.get_cmap("Set1", max(len(result["top_bins"]), 1))
+    def _simplex_vertices(n):
+        angles = (np.pi / 2.0) + 2.0 * np.pi * np.arange(n, dtype=float) / float(n)
+        return np.column_stack([np.cos(angles), np.sin(angles)])
 
-    plt.figure(figsize=(8, 8))
-    plt.scatter(proba[is_bkg, 0], proba[is_bkg, 1],
-                s=1, alpha=0.2, c="steelblue", label="Background", rasterized=True)
-    plt.scatter(proba[is_sig, 0], proba[is_sig, 1],
-                s=2, alpha=0.5, c="tomato", label="Signal", rasterized=True)
+    def _convex_hull(points):
+        pts = sorted(set((float(x), float(y)) for x, y in np.asarray(points, dtype=float)))
+        if len(pts) <= 2:
+            return np.asarray(pts, dtype=float)
 
-    for i, b in enumerate(result["top_bins"]):
-        lo, hi = b["thr_low"], b["thr_high"]
-        rect = plt.Rectangle(
-            (lo[0], lo[1]), hi[0] - lo[0], hi[1] - lo[1],
-            linewidth=2, edgecolor=palette(i), facecolor="none",
-            label=f"Bin {b['bin_index']} (Z={b['significance']:.2f})"
+        def cross(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+        lower = []
+        for p in pts:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0.0:
+                lower.pop()
+            lower.append(p)
+        upper = []
+        for p in reversed(pts):
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0.0:
+                upper.pop()
+            upper.append(p)
+        return np.asarray(lower[:-1] + upper[:-1], dtype=float)
+
+    vertices = _simplex_vertices(n_classes)
+    coords = np.asarray(proba, dtype=float) @ vertices
+
+    def _project_region(bin_info):
+        D = len(bin_info["thr_low"])
+        if D != n_classes - 1:
+            return None
+        lo = np.clip(np.asarray(bin_info["thr_low"], dtype=float), 0.0, 1.0)
+        hi = np.clip(np.asarray(bin_info["thr_high"], dtype=float), 0.0, 1.0)
+        eps = 1e-12
+        candidates = []
+
+        def add_candidate(p_first):
+            p_first = np.asarray(p_first, dtype=float)
+            p_last = 1.0 - float(np.sum(p_first))
+            if p_last < -eps:
+                return
+            full = np.r_[p_first, max(0.0, p_last)]
+            if np.all(full >= -eps) and np.all(full <= 1.0 + eps):
+                candidates.append(np.clip(full, 0.0, 1.0))
+
+        for fixed in iproduct([0, 1], repeat=D):
+            p = np.array([hi[d] if fixed[d] else lo[d] for d in range(D)], dtype=float)
+            if float(np.sum(p)) <= 1.0 + eps:
+                add_candidate(p)
+
+        for free_dim in range(D):
+            fixed_dims = [d for d in range(D) if d != free_dim]
+            for fixed in iproduct([0, 1], repeat=max(0, D - 1)):
+                p = np.zeros(D, dtype=float)
+                for bit, dim in zip(fixed, fixed_dims):
+                    p[dim] = hi[dim] if bit else lo[dim]
+                p[free_dim] = 1.0 - float(np.sum(p[fixed_dims]))
+                if lo[free_dim] - eps <= p[free_dim] <= hi[free_dim] + eps:
+                    add_candidate(p)
+
+        if not candidates:
+            return None
+        projected = np.asarray(candidates, dtype=float) @ vertices
+        return _convex_hull(projected)
+
+    def _draw(show_regions, stem):
+        fig, ax = plt.subplots(figsize=(8.5, 8.5))
+        class_cmap = "tab10" if NUM_CLASSES <= 10 else "tab20"
+        class_palette = plt.cm.get_cmap(class_cmap, max(NUM_CLASSES, 3))(
+            np.arange(max(NUM_CLASSES, 3))
         )
-        plt.gca().add_patch(rect)
 
-    plt.xlabel(f"p({CLASS_NAMES[0]})")
-    plt.ylabel(f"p({CLASS_NAMES[1]})")
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.legend(fontsize=10, markerscale=5)
-    _savefig("sr_regions_2d")
+        for cls_i, cls_name in enumerate(CLASS_NAMES):
+            mask = y == cls_i
+            if not np.any(mask):
+                continue
+            ax.scatter(
+                coords[mask, 0],
+                coords[mask, 1],
+                s=0.8,
+                alpha=0.07,
+                color=class_palette[cls_i],
+                edgecolors="none",
+                rasterized=True,
+            )
+
+        closed_vertices = np.vstack([vertices, vertices[0]])
+        ax.plot(closed_vertices[:, 0], closed_vertices[:, 1],
+                color="0.45", linewidth=1.1, alpha=0.8)
+        ax.scatter(vertices[:, 0], vertices[:, 1], s=18, color="0.25", zorder=5)
+        for cls_i, cls_name in enumerate(CLASS_NAMES):
+            vx, vy = vertices[cls_i]
+            ax.text(1.12 * vx, 1.12 * vy, cls_name, ha="center", va="center", fontsize=11)
+
+        handles = [
+            Line2D(
+                [0], [0],
+                marker="o",
+                color="none",
+                markerfacecolor=class_palette[i],
+                markeredgecolor="none",
+                markersize=6,
+                label=CLASS_NAMES[i],
+            )
+            for i in range(NUM_CLASSES)
+        ]
+
+        if show_regions and result["top_bins"]:
+            sr_palette = plt.cm.get_cmap("Set1", max(len(result["top_bins"]), 3))
+            for i, b in enumerate(result["top_bins"]):
+                poly = _project_region(b)
+                if poly is None or len(poly) < 2:
+                    continue
+                color = sr_palette(i)
+                if len(poly) >= 3:
+                    poly_draw = np.vstack([poly, poly[0]])
+                    ax.plot(poly_draw[:, 0], poly_draw[:, 1], color=color, linewidth=2.0)
+                else:
+                    ax.plot(poly[:, 0], poly[:, 1], color=color, linewidth=2.0)
+                handles.append(
+                    Line2D(
+                        [0], [0],
+                        color=color,
+                        linewidth=2.0,
+                        label=f"SR{b['bin_index']} (Z={b['significance']:.2f})",
+                    )
+                )
+
+        ax.set_xlabel("simplex projection x")
+        ax.set_ylabel("simplex projection y")
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(-1.25, 1.25)
+        ax.set_ylim(-1.25, 1.25)
+        ax.grid(True, linestyle="--", alpha=0.25)
+        ax.legend(handles=handles, fontsize=9, loc="upper right", framealpha=0.95)
+        _savefig(stem)
+
+    _draw(False, "sr_regions_2d_no_regions")
+    _draw(True, "sr_regions_2d")
 
 
 # -------------------- Signal-region scan --------------------
