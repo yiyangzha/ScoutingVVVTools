@@ -49,6 +49,7 @@ namespace {
 
 const char* kAppConfigPath = "./config.json";
 const char* kAppConfigEnvVar = "COMBINE_CONFIG_PATH";
+constexpr double kWeakSignificanceForInfiniteLimit = 1e-3;
 
 std::string timestamp() {
     time_t now = time(nullptr);
@@ -1030,16 +1031,19 @@ double readSingleLimit(const std::string& root_path) {
     return limit;
 }
 
-void readLimitQuantiles(const std::string& root_path, CombineOutput& out) {
+bool tryReadLimitQuantiles(const std::string& root_path, CombineOutput& out,
+                           std::string& failure_reason) {
     TFile* f = TFile::Open(root_path.c_str(), "READ");
     if (f == nullptr || f->IsZombie()) {
         if (f != nullptr) delete f;
-        throw std::runtime_error("Cannot open combine output: " + root_path);
+        failure_reason = "Cannot open combine output: " + root_path;
+        return false;
     }
     TTree* t = dynamic_cast<TTree*>(f->Get("limit"));
     if (t == nullptr) {
         delete f;
-        throw std::runtime_error("Missing TTree 'limit' in " + root_path);
+        failure_reason = "Missing TTree 'limit' in " + root_path;
+        return false;
     }
     double limit = 0.0;
     float quantile = 0.0;
@@ -1060,8 +1064,24 @@ void readLimitQuantiles(const std::string& root_path, CombineOutput& out) {
     f->Close();
     delete f;
     if (!(got2p5 && got16 && got50 && got84 && got975)) {
-        throw std::runtime_error("Missing expected limit quantiles in " + root_path);
+        failure_reason = "Missing expected limit quantiles in " + root_path;
+        return false;
     }
+    return true;
+}
+
+void setInfiniteExpectedLimits(CombineOutput& out) {
+    const double inf = std::numeric_limits<double>::infinity();
+    out.exp_2p5 = inf;
+    out.exp_16 = inf;
+    out.exp_50 = inf;
+    out.exp_84 = inf;
+    out.exp_97p5 = inf;
+}
+
+std::string csvDouble(double value) {
+    if (std::isinf(value)) return "inf";
+    return formatDouble(value);
 }
 
 // -------------------- Driver --------------------
@@ -1155,7 +1175,20 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
         (work / ("higgsCombine" + combine_name_lim +
                  ".AsymptoticLimits.mH120.root"))
             .string();
-    readLimitQuantiles(lim_root, lim_out);
+    std::string limit_parse_failure;
+    if (!tryReadLimitQuantiles(lim_root, lim_out, limit_parse_failure)) {
+        if (sig_out.significance <= kWeakSignificanceForInfiniteLimit) {
+            logMessage("WARNING: AsymptoticLimits output is incomplete for a very weak signal; "
+                       "writing infinite expected limits: scenario=" + sc.scope + "/" + sc.name +
+                       " qcd_mode=" + mode_tag +
+                       " significance=" + formatDouble(sig_out.significance) +
+                       " threshold=" + formatDouble(kWeakSignificanceForInfiniteLimit) +
+                       " reason=" + limit_parse_failure);
+            setInfiniteExpectedLimits(lim_out);
+        } else {
+            throw std::runtime_error(limit_parse_failure);
+        }
+    }
 }
 
 void writeSignificanceCsv(const std::string& path,
@@ -1179,9 +1212,11 @@ void writeLimitsCsv(const std::string& path,
     ofs << "scope,name,exp_2p5,exp_16,exp_50,exp_84,exp_97p5\n";
     for (size_t i = 0; i < scenarios.size(); ++i) {
         ofs << scenarios[i].scope << "," << scenarios[i].name << ","
-            << results[i].exp_2p5 << "," << results[i].exp_16 << ","
-            << results[i].exp_50 << "," << results[i].exp_84 << ","
-            << results[i].exp_97p5 << "\n";
+            << csvDouble(results[i].exp_2p5) << ","
+            << csvDouble(results[i].exp_16) << ","
+            << csvDouble(results[i].exp_50) << ","
+            << csvDouble(results[i].exp_84) << ","
+            << csvDouble(results[i].exp_97p5) << "\n";
     }
     logMessage("Wrote " + path);
 }
