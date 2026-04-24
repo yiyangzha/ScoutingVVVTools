@@ -49,8 +49,6 @@ namespace {
 
 const char* kAppConfigPath = "./config.json";
 const char* kAppConfigEnvVar = "COMBINE_CONFIG_PATH";
-constexpr double kWeakSignificanceForInfiniteLimit = 1e-3;
-
 std::string timestamp() {
     time_t now = time(nullptr);
     char buf[32];
@@ -1177,13 +1175,14 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
             .string();
     std::string limit_parse_failure;
     if (!tryReadLimitQuantiles(lim_root, lim_out, limit_parse_failure)) {
-        if (sig_out.significance <= kWeakSignificanceForInfiniteLimit) {
-            logMessage("WARNING: AsymptoticLimits output is incomplete for a very weak signal; "
-                       "writing infinite expected limits: scenario=" + sc.scope + "/" + sc.name +
+        if (limit_parse_failure.find("Missing expected limit quantiles") != std::string::npos) {
+            logMessage("WARNING: AsymptoticLimits output is missing expected quantiles; "
+                       "storing significance=0 and infinite expected limits: scenario=" +
+                       sc.scope + "/" + sc.name +
                        " qcd_mode=" + mode_tag +
-                       " significance=" + formatDouble(sig_out.significance) +
-                       " threshold=" + formatDouble(kWeakSignificanceForInfiniteLimit) +
+                       " previous_significance=" + formatDouble(sig_out.significance) +
                        " reason=" + limit_parse_failure);
+            sig_out.significance = 0.0;
             setInfiniteExpectedLimits(lim_out);
         } else {
             throw std::runtime_error(limit_parse_failure);
