@@ -218,7 +218,7 @@
     },
     {
       "name": "ww",
-      "path": "/WW_TuneCP5_13p6TeV_pythia8/yiyangz-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v3/WW_TuneCP5_13p6TeV_pythia8",
       "sample_ID": 23,
       "is_MC": true,
       "is_signal": false,
@@ -228,7 +228,7 @@
     },
     {
       "name": "wz",
-      "path": "/WZ_TuneCP5_13p6TeV_pythia8/yiyangz-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v3/WZ_TuneCP5_13p6TeV_pythia8",
       "sample_ID": 24,
       "is_MC": true,
       "is_signal": false,
@@ -238,7 +238,7 @@
     },
     {
       "name": "zz",
-      "path": "/ZZ_TuneCP5_13p6TeV_pythia8/yiyangz-ScoutingNanoUPart_v3-00000000000000000000000000000000/USER",
+      "path": "/afs/ihep.ac.cn/users/y/yiyangzhao/Research/CMS_THU_Space/VVV/MC/ScoutingNano/v3/ZZ_TuneCP5_13p6TeV_pythia8",
       "sample_ID": 25,
       "is_MC": true,
       "is_signal": false,
