@@ -603,8 +603,7 @@ void processSample(const AppConfig& config, const string& sampleName) {
         config.inputPattern, config.inputRoot, sampleGroup, sampleName);
     const vector<string> inputFiles = listInputChunkFiles(basePath);
     if (inputFiles.empty()) {
-        logMessage("no input files for sample=" + sampleName + " (base=" + basePath + "), skipping");
-        return;
+        throw runtime_error("no input files for sample=" + sampleName + " (base=" + basePath + ")");
     }
     const vector<string> outputFiles = makeOutputPaths(
         inputFiles, config.outputPattern, config.outputRoot, sampleGroup, sampleName);

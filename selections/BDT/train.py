@@ -290,8 +290,7 @@ def _build_segments(file_infos, global_start, global_stop, max_entries=None):
 def _inspect_sample_tree(sample_name, tree_name):
     files = _input_files(sample_name)
     if not files:
-        log_warning(f"no files for '{sample_name}', skipping")
-        return None
+        raise RuntimeError(f"No ROOT files found for sample '{sample_name}' in tree '{tree_name}'")
 
     file_infos = []
     total_entries = 0
@@ -308,8 +307,7 @@ def _inspect_sample_tree(sample_name, tree_name):
             total_entries += n_entries
 
     if total_entries <= 0:
-        log_warning(f"zero entries found for '{sample_name}' in tree '{tree_name}', skipping")
-        return None
+        raise RuntimeError(f"Zero entries found for sample '{sample_name}' in tree '{tree_name}'")
 
     train_stop = int(total_entries * TRAIN_FRACTION)
     return {
@@ -384,7 +382,7 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
         info = SAMPLE_INFO[sample_name]
         raw_entries = int(info["raw_entries"])
         xsec = float(info["xsection"])
-        if xsec > 0.0 and raw_entries <= 0:
+        if raw_entries <= 0:
             raise RuntimeError(
                 f"Sample '{sample_name}' has raw_entries={raw_entries}; "
                 "fill src/sample.json before training."
@@ -402,8 +400,9 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle):
         split_total_entries = _sum_segment_lengths(full_segments)
         df, n_read = _load_segments(tree_name, load_branches, read_segments)
         if split_total_entries == 0 or n_read == 0 or df is None:
-            log_warning(f"zero entries read for '{sample_name}' in split '{split_name}' of tree '{tree_name}', skipping")
-            continue
+            raise RuntimeError(
+                f"Zero entries read for sample '{sample_name}' in split '{split_name}' of tree '{tree_name}'"
+            )
 
         # Raw per-event weight: product of the configured reweight branches.
         # Computed on raw values before any clip/log/threshold so ratios between
@@ -1594,13 +1593,11 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     )
     numerator = max(float(cls_loss_ref) + float(reg_loss_ref), _EPS)
     if not np.isfinite(decor_loss_ref_raw) or decor_loss_ref_raw <= _EPS:
-        log_warning(
+        raise RuntimeError(
             f"Stage-1 raw decorrelation loss is non-positive ({decor_loss_ref_raw:.6g}); "
-            "falling back to scale=1.0"
+            "cannot calibrate decorrelation scale"
         )
-        decor_scale = 1.0
-    else:
-        decor_scale = numerator / float(decor_loss_ref_raw)
+    decor_scale = numerator / float(decor_loss_ref_raw)
 
     log_message(
         f"Stage-1 end: best_iter={stage1_rounds - 1}, cls_loss={cls_loss_ref:.6g}, "
@@ -1898,6 +1895,8 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
             if arr.ndim == 2 and arr.shape[1] == len(names):
                 decor_plot_names = list(names)
                 decor_plot_df = pd.DataFrame(arr, columns=decor_plot_names)
+    if decorrelate_feature_names and (decor_plot_df is None or not decor_plot_names):
+        raise RuntimeError("No valid decorrelation plot data available for requested decorrelate branches.")
 
     def _weighted_bin_average(x, y_arr, wv, min_bins=200, max_bins=600):
         x = np.asarray(x, dtype=float).ravel()
@@ -1974,8 +1973,12 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
         log_message(f"Wrote plot file: {path}")
 
     def _plot_score_vs_decor_pdf(scores, suffix, stage_tag):
-        if decor_plot_df is None or not decor_plot_names:
+        if not decorrelate_feature_names:
             return
+        if decor_plot_df is None or not decor_plot_names:
+            raise RuntimeError(
+                f"{tree_name} [{stage_tag}] no valid decorrelation plot data for score-vs-branch PDF"
+            )
         scores = np.asarray(scores, dtype=float)
         y_true = np.asarray(y_test, dtype=int)
         wv_all = np.asarray(w_test, dtype=float)
@@ -1997,7 +2000,10 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                     & (wv_all > 0.0)
                 )
                 if not np.any(mask):
-                    continue
+                    raise RuntimeError(
+                        f"{tree_name} [{stage_tag}] no valid test events for "
+                        f"class '{cls_name}' and decorrelate branch '{branch_name}'"
+                    )
                 fig, ax = plt.subplots(figsize=(8.5, 6.2))
                 ax.scatter(
                     x[mask],
@@ -2025,11 +2031,21 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                 ax.grid(True, linestyle="--", alpha=0.35)
                 ax.legend(loc="best", fontsize=10)
                 _save_pdf_page(pdf_state, path, fig)
+        if pdf_state["pages"] == 0:
+            raise RuntimeError(f"{tree_name} [{stage_tag}] no pages written for score-vs-branch PDF")
         _close_pdf(pdf_state, path)
 
     def _plot_decor_shape_by_score_pdf(scores, suffix, stage_tag):
-        if decor_plot_df is None or not decor_plot_names or not SIGNAL_CLASS_INDICES:
+        if not decorrelate_feature_names:
             return
+        if decor_plot_df is None or not decor_plot_names:
+            raise RuntimeError(
+                f"{tree_name} [{stage_tag}] no valid decorrelation plot data for signal-score-shape PDF"
+            )
+        if not SIGNAL_CLASS_INDICES:
+            raise RuntimeError(
+                f"{tree_name} [{stage_tag}] cannot build signal-score-shape PDF without signal classes"
+            )
         scores = np.asarray(scores, dtype=float)
         y_true = np.asarray(y_test, dtype=int)
         wv_all = np.asarray(w_test, dtype=float)
@@ -2048,13 +2064,19 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                 base_x_mask = class_mask & np.isfinite(x) & (x > -990.0) & np.isfinite(wv_all) & (wv_all > 0.0)
                 edges = _hist_edges(x[base_x_mask])
                 if edges is None:
-                    continue
+                    raise RuntimeError(
+                        f"{tree_name} [{stage_tag}] no valid histogram range for "
+                        f"class '{cls_name}' and decorrelate branch '{branch_name}'"
+                    )
                 for sig_idx in SIGNAL_CLASS_INDICES:
                     sig_name = class_names[sig_idx]
                     sig_score = scores[:, sig_idx]
                     base = base_x_mask & np.isfinite(sig_score)
                     if not np.any(base):
-                        continue
+                        raise RuntimeError(
+                            f"{tree_name} [{stage_tag}] no valid events for class '{cls_name}', "
+                            f"decorrelate branch '{branch_name}', signal score '{sig_name}'"
+                        )
 
                     fig, ax = plt.subplots(figsize=(8.5, 6.2))
                     plotted_any = False
@@ -2065,11 +2087,20 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                         else:
                             thr = _weighted_score_threshold(sig_score[base], wv_all[base], eff)
                             if not np.isfinite(thr):
-                                continue
+                                plt.close(fig)
+                                raise RuntimeError(
+                                    f"{tree_name} [{stage_tag}] invalid weighted threshold for "
+                                    f"class '{cls_name}', signal score '{sig_name}', efficiency={eff}"
+                                )
                             cut = base & (sig_score > thr)
                             label = f"eff={_format_eff(eff)}, p({sig_name})>{thr:.3f}"
                         if not np.any(cut) or float(np.sum(wv_all[cut])) <= 0.0:
-                            continue
+                            plt.close(fig)
+                            raise RuntimeError(
+                                f"{tree_name} [{stage_tag}] no positive-weight events after "
+                                f"efficiency cut {eff} for class '{cls_name}', "
+                                f"decorrelate branch '{branch_name}', signal score '{sig_name}'"
+                            )
                         ax.hist(
                             x[cut],
                             bins=edges,
@@ -2083,7 +2114,10 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                         plotted_any = True
                     if not plotted_any:
                         plt.close(fig)
-                        continue
+                        raise RuntimeError(
+                            f"{tree_name} [{stage_tag}] no page data for class '{cls_name}', "
+                            f"decorrelate branch '{branch_name}', signal score '{sig_name}'"
+                        )
                     ax.set_title(
                         f"{tree_name} {stage_tag}: {cls_name}, cut on p({sig_name})",
                         fontsize=15,
@@ -2093,6 +2127,8 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                     ax.grid(True, linestyle="--", alpha=0.35)
                     ax.legend(loc="best", fontsize=9)
                     _save_pdf_page(pdf_state, path, fig)
+        if pdf_state["pages"] == 0:
+            raise RuntimeError(f"{tree_name} [{stage_tag}] no pages written for signal-score-shape PDF")
         _close_pdf(pdf_state, path)
 
     def _plot_for_model(model, suffix, stage_tag):

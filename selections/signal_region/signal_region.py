@@ -133,27 +133,27 @@ def load_test_data(branches):
     for sample_name, sample_meta in test_meta["samples"].items():
         info = SAMPLE_INFO.get(sample_name)
         if info is None:
-            log_warning(f"Sample '{sample_name}' not in sample config, skipping")
-            continue
+            raise RuntimeError(f"Sample '{sample_name}' not in sample config")
         if sample_name not in SAMPLE_TO_CLASS:
-            log_warning(f"Sample '{sample_name}' not in any class group, skipping")
-            continue
+            raise RuntimeError(f"Sample '{sample_name}' not in any class group")
 
         xsec          = float(info["xsection"])
         raw_entries   = int(info["raw_entries"])
         total_entries = int(sample_meta["total_entries"])
+        if raw_entries <= 0:
+            raise RuntimeError(
+                f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json"
+            )
 
         parts = []
         for seg in sample_meta["test_segments"]:
             fpath = seg["file"]
             if not os.path.exists(fpath):
-                log_warning(f"File not found: {fpath}, skipping segment")
-                continue
+                raise FileNotFoundError(f"Test split file not found: {fpath}")
             try:
                 with uproot.open(fpath) as uf:
                     if TREE_NAME not in uf:
-                        log_warning(f"Tree '{TREE_NAME}' not in {fpath}, skipping")
-                        continue
+                        raise KeyError(f"Tree '{TREE_NAME}' not in {fpath}")
                     tree = uf[TREE_NAME]
                     available = set(tree.keys())
                     missing = [b for b in load_branches if b not in available]
@@ -170,12 +170,10 @@ def load_test_data(branches):
                     )
                     parts.append(df_part)
             except Exception as exc:
-                log_warning(f"Failed to read {fpath}: {exc}, skipping")
-                continue
+                raise RuntimeError(f"Failed to read test split file {fpath}: {exc}") from exc
 
         if not parts:
-            log_warning(f"No data loaded for '{sample_name}', skipping")
-            continue
+            raise RuntimeError(f"No data loaded for sample '{sample_name}'")
 
         df      = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
@@ -188,11 +186,11 @@ def load_test_data(branches):
         else:
             raw_w = np.ones(n_loaded, dtype=float)
 
-        if xsec <= 0.0 or raw_entries <= 0:
+        if xsec <= 0.0:
             target_total = 0.0
             df["weight"] = 0.0
             log_warning(
-                f"  {sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
+                f"  {sample_name}: non-positive xsec={xsec}, zero weight"
             )
         else:
             # Normalize the sample total weight to lumi * xsec * total_tree_entries / raw_entries,
@@ -846,8 +844,7 @@ def find_signal_regions(proba, y, w):
                 break
 
         if chosen is None:
-            log_message(f"  No valid bin found for bin {k + 1}, stopping early")
-            break
+            raise RuntimeError(f"No valid signal region found for bin {k + 1}")
 
         thr_low_vec  = list(map(float, chosen["lows"]))
         thr_high_vec = list(map(float, chosen["highs"]))
