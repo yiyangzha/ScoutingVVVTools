@@ -18,7 +18,9 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -131,6 +133,7 @@ struct AppConfig {
     std::string combine_cmd = "combine";
     std::string combine_cards_cmd = "combineCards.py";
     double eigen_rel_cutoff = 1e-10;
+    bool rescale_shape_modes_to_positive = true;
     bool keep_work = true;
     std::string work_dir;  // resolved under output_dir
 };
@@ -162,6 +165,8 @@ AppConfig loadAppConfig() {
     cfg.combine_cards_cmd = payload.getStringOr("combine_cards_cmd", "combineCards.py");
     cfg.eigen_rel_cutoff = static_cast<double>(
         payload.getNumberOr("eigen_rel_cutoff", 1e-10L));
+    cfg.rescale_shape_modes_to_positive =
+        payload.getBoolOr("rescale_shape_modes_to_positive", true);
     cfg.keep_work = payload.getBoolOr("keep_work", true);
 
     cfg.work_dir = (fs::path(cfg.output_dir) / "work").string();
@@ -637,6 +642,7 @@ void validateChannelAgainstRegistry(const ChannelData& ch, const ClassRegistry& 
 struct EigenMode {
     double scale;              // sqrt(lambda_k)
     std::vector<double> v;     // eigenvector entries
+    double template_scale = 1.0;  // a in the datacard explanation
 };
 
 std::vector<EigenMode> decomposeCov(const TMatrixDSym& cov, double rel_cutoff) {
@@ -673,6 +679,111 @@ std::vector<EigenMode> decomposeCov(const TMatrixDSym& cov, double rel_cutoff) {
     return modes;
 }
 
+std::string formatDouble(double value) {
+    std::ostringstream os;
+    os << std::setprecision(17) << value;
+    return os.str();
+}
+
+double modeIntegralDelta(const EigenMode& mode) {
+    double sum = 0.0;
+    for (double x : mode.v) sum += mode.scale * mode.template_scale * x;
+    return sum;
+}
+
+double processIntegral(const std::vector<double>& values) {
+    double sum = 0.0;
+    for (double x : values) sum += x;
+    return sum;
+}
+
+double computePositiveTemplateScaleLimit(const Process& proc, const EigenMode& mode,
+                                         std::string& limiting_reason) {
+    const double nominal_integral = processIntegral(proc.yields);
+    double max_a = std::numeric_limits<double>::infinity();
+    bool has_bound = false;
+    limiting_reason = "none";
+
+    auto tighten = [&](double bound, const std::string& reason) {
+        has_bound = true;
+        if (bound < max_a) {
+            max_a = bound;
+            limiting_reason = reason;
+        }
+    };
+
+    for (size_t i = 0; i < proc.yields.size(); ++i) {
+        const double y = proc.yields[i];
+        const double delta = mode.scale * mode.v[i];
+        if (delta > 0.0) {
+            tighten(y / delta, "down_bin_sr" + std::to_string(i + 1));
+        } else if (delta < 0.0) {
+            tighten(y / (-delta), "up_bin_sr" + std::to_string(i + 1));
+        }
+    }
+
+    const double integral_delta = modeIntegralDelta(mode);
+    if (integral_delta > 0.0) {
+        tighten(nominal_integral / integral_delta, "down_integral");
+    } else if (integral_delta < 0.0) {
+        tighten(nominal_integral / (-integral_delta), "up_integral");
+    }
+
+    if (!has_bound) return std::numeric_limits<double>::infinity();
+    return max_a;
+}
+
+void regularizeModeTemplateScale(const AppConfig& cfg, const Process& proc,
+                                 EigenMode& mode, const std::string& channel_name,
+                                 const std::string& nuisance_name) {
+    std::string limiting_reason;
+    const double max_a = computePositiveTemplateScaleLimit(proc, mode, limiting_reason);
+    if (!std::isfinite(max_a)) {
+        throw std::runtime_error("Non-finite template scale bound for process '" + proc.name +
+                                 "' in channel '" + channel_name + "'");
+    }
+    if (max_a <= 0.0) {
+        throw std::runtime_error(
+            "No positive template scale keeps process '" + proc.name + "' nuisance '" +
+            nuisance_name + "' strictly positive in channel '" + channel_name + "'");
+    }
+    if (max_a > 1.0) return;
+    if (!cfg.rescale_shape_modes_to_positive) {
+        throw std::runtime_error(
+            "Shape nuisance '" + nuisance_name + "' for process '" + proc.name +
+            "' in channel '" + channel_name +
+            "' needs template-step rescaling to stay positive, but "
+            "rescale_shape_modes_to_positive=false");
+    }
+
+    const double a_used = std::min(1.0, max_a * 0.999999);
+    if (!(a_used > 0.0)) {
+        throw std::runtime_error(
+            "Failed to build a positive template scale for process '" + proc.name +
+            "' nuisance '" + nuisance_name + "' in channel '" + channel_name + "'");
+    }
+    mode.template_scale = a_used;
+
+    const double nominal_integral = processIntegral(proc.yields);
+    double up_integral = 0.0;
+    double down_integral = 0.0;
+    for (size_t i = 0; i < proc.yields.size(); ++i) {
+        const double delta = mode.scale * mode.template_scale * mode.v[i];
+        up_integral += proc.yields[i] + delta;
+        down_integral += proc.yields[i] - delta;
+    }
+
+    logMessage("WARNING: Rescaled shape nuisance to keep templates positive: channel=" +
+               channel_name + " process=" + proc.name + " syst=" + nuisance_name +
+               " a_max=" + formatDouble(max_a) +
+               " a_used=" + formatDouble(mode.template_scale) +
+               " shape_effect=" + formatDouble(1.0 / mode.template_scale) +
+               " nominal_integral=" + formatDouble(nominal_integral) +
+               " up_integral=" + formatDouble(up_integral) +
+               " down_integral=" + formatDouble(down_integral) +
+               " limiting_reason=" + limiting_reason);
+}
+
 // -------------------- Shape ROOT + datacard --------------------
 struct PerChannelCard {
     std::string name;              // channel name
@@ -699,20 +810,30 @@ void validateProcessShapes(const Process& proc, const std::vector<EigenMode>& mo
         }
     }
     for (size_t k = 0; k < modes.size(); ++k) {
+        double up_integral = 0.0;
+        double down_integral = 0.0;
         for (int i = 0; i < n; ++i) {
-            const double delta = modes[k].scale * modes[k].v[i];
+            const double delta = modes[k].scale * modes[k].template_scale * modes[k].v[i];
             const double up = proc.yields[i] + delta;
             const double down = proc.yields[i] - delta;
             if (!std::isfinite(up) || !std::isfinite(down)) {
                 throw std::runtime_error("Non-finite shape variation for process '" + proc.name +
                                          "' in channel '" + channel_name + "'");
             }
-            if (up < 0.0 || down < 0.0) {
+            if (up <= 0.0 || down <= 0.0) {
                 throw std::runtime_error(
-                    "Negative shape variation for process '" + proc.name +
+                    "Non-positive shape variation for process '" + proc.name +
                     "' in channel '" + channel_name +
                     "'; refusing to modify the input yields/covariance");
             }
+            up_integral += up;
+            down_integral += down;
+        }
+        if (!(up_integral > 0.0) || !(down_integral > 0.0)) {
+            throw std::runtime_error(
+                "Non-positive template integral for process '" + proc.name +
+                "' in channel '" + channel_name +
+                "'; combine shape interpolation requires strictly positive norms");
         }
     }
 }
@@ -754,7 +875,7 @@ void writeChannelShape(const PerChannelCard& pc, const std::string& shape_path) 
         for (size_t k = 0; k < modes.size(); ++k) {
             std::vector<double> up(pc.n_sr), down(pc.n_sr);
             for (int i = 0; i < pc.n_sr; ++i) {
-                const double d = modes[k].scale * modes[k].v[i];
+                const double d = modes[k].scale * modes[k].template_scale * modes[k].v[i];
                 up[i] = proc.yields[i] + d;
                 down[i] = proc.yields[i] - d;
             }
@@ -810,7 +931,7 @@ void writeChannelDatacard(const PerChannelCard& pc, const std::string& shape_fil
                                      "_eig" + std::to_string(k);
             ofs << nuis << " shape";
             for (size_t q = 0; q < pc.processes.size(); ++q) {
-                ofs << " " << (q == p ? "1" : "-");
+                ofs << " " << (q == p ? formatDouble(1.0 / pc.modes[p][k].template_scale) : "-");
             }
             ofs << "\n";
         }
@@ -913,6 +1034,12 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
         pc.modes.reserve(pc.processes.size());
         for (const auto& p : pc.processes) {
             pc.modes.push_back(decomposeCov(p.cov, cfg.eigen_rel_cutoff));
+            for (size_t k = 0; k < pc.modes.back().size(); ++k) {
+                const std::string nuis = "cov_" + ch.name + "_" + p.name +
+                                         "_eig" + std::to_string(k);
+                regularizeModeTemplateScale(
+                    cfg, p, pc.modes.back()[k], ch.name, nuis);
+            }
         }
         // Asimov data_obs: sum of all processes (signal+background).
         pc.data_obs.assign(pc.n_sr, 0.0);

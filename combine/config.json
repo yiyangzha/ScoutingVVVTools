@@ -10,5 +10,6 @@
   "combine_cmd": "combine",
   "combine_cards_cmd": "combineCards.py",
   "eigen_rel_cutoff": 1e-10,
+  "rescale_shape_modes_to_positive": true,
   "keep_work": true
 }
