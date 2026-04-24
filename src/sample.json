@@ -224,7 +224,7 @@
       "is_signal": false,
       "xsection": 75950,
       "lumi": -1,
-      "raw_entries": 57177748
+      "raw_entries": 63994208
     },
     {
       "name": "wz",
@@ -244,7 +244,7 @@
       "is_signal": false,
       "xsection": 12170,
       "lumi": -1,
-      "raw_entries": 4807250
+      "raw_entries": 4800000
     },
     {
       "name": "tbarwplus_had",
