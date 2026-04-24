@@ -795,7 +795,8 @@ struct PerChannelCard {
     std::vector<double> data_obs;
 };
 
-void validateProcessShapes(const Process& proc, const std::vector<EigenMode>& modes,
+void validateProcessShapes(const AppConfig& cfg, const Process& proc,
+                           const std::vector<EigenMode>& modes,
                            const std::string& channel_name) {
     const int n = static_cast<int>(proc.yields.size());
     for (int i = 0; i < n; ++i) {
@@ -820,11 +821,18 @@ void validateProcessShapes(const Process& proc, const std::vector<EigenMode>& mo
                 throw std::runtime_error("Non-finite shape variation for process '" + proc.name +
                                          "' in channel '" + channel_name + "'");
             }
-            if (up <= 0.0 || down <= 0.0) {
+            if (up < 0.0 || down < 0.0) {
                 throw std::runtime_error(
-                    "Non-positive shape variation for process '" + proc.name +
+                    "Negative shape variation for process '" + proc.name +
                     "' in channel '" + channel_name +
                     "'; refusing to modify the input yields/covariance");
+            }
+            if (!cfg.rescale_shape_modes_to_positive && (up == 0.0 || down == 0.0)) {
+                throw std::runtime_error(
+                    "Zero-valued shape variation for process '" + proc.name +
+                    "' in channel '" + channel_name +
+                    "'; set rescale_shape_modes_to_positive=true to allow zero bins "
+                    "while still enforcing positive template norms");
             }
             up_integral += up;
             down_integral += down;
@@ -838,7 +846,8 @@ void validateProcessShapes(const Process& proc, const std::vector<EigenMode>& mo
     }
 }
 
-void writeChannelShape(const PerChannelCard& pc, const std::string& shape_path) {
+void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
+                       const std::string& shape_path) {
     TFile* f = TFile::Open(shape_path.c_str(), "RECREATE");
     if (f == nullptr || f->IsZombie()) {
         if (f != nullptr) delete f;
@@ -868,7 +877,7 @@ void writeChannelShape(const PerChannelCard& pc, const std::string& shape_path) 
 
     for (size_t p = 0; p < pc.processes.size(); ++p) {
         const Process& proc = pc.processes[p];
-        validateProcessShapes(proc, pc.modes[p], pc.name);
+        validateProcessShapes(cfg, proc, pc.modes[p], pc.name);
         makeHist(proc.name, proc.yields);
 
         const auto& modes = pc.modes[p];
@@ -1049,7 +1058,7 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
 
         const std::string shape_path =
             (work / ("shapes_" + ch.name + ".root")).string();
-        writeChannelShape(pc, shape_path);
+        writeChannelShape(cfg, pc, shape_path);
 
         pc.datacard_path = (work / ("card_" + ch.name + ".txt")).string();
         // Use absolute shape paths so combineCards.py preserves them verbatim.
