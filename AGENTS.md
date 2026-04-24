@@ -117,7 +117,8 @@ The analysis runs in this order:
 6. **BDT training** — train `fat2`/`fat3` classifiers (`selections/BDT/`)
 7. **Background estimation** — QCD ABCD validation on the MC test split (`background_estimation/`)
 8. **Data/MC plotting** — compare distributions of `fat2`/`fat3` variables in data vs MC (`plotting/`)
-9. **Systematics** — trigger efficiency studies (`systematics/`)
+9. **Combine** — wrap CMS `combine` to compute expected significance and `AsymptoticLimits` from the `mode=5` ROOT output (`combine/`)
+10. **Systematics** — trigger efficiency studies (`systematics/`)
 
 `systematics/find_duplicate_entries.C` is a standalone ROOT diagnostic macro that scans either one ROOT file or a directory searched recursively for `.root` files, chains the matching trees with `TChain`, and reports duplicated event keys (`run`, `luminosityBlock`, `event`) plus their multiplicities and first/last entry indices.
 
@@ -200,6 +201,23 @@ QCD_EST_CONFIG_PATH=/path/to/config.json python3 background_estimation/qcd_est.p
 
 `background_estimation/qcd_est.py` reads [background_estimation/config.json](background_estimation/config.json), then reuses the trained `bdt_root` output in the same way as `signal_region.py`: it loads the saved `config.json`, `model`, `branch.json`, `selection.json`, and `test_ranges.json`, reads the full test split with the same per-event weight definition (loading `model_branches ∪ thresholds.keys() ∪ decorrelate` from each ROOT file so every branch needed for filtering, mass pass/fail, and decorrelation is available even when it is not in `branch.json`), removes only the non-mass thresholds before BDT inference, applies the same clip/log preprocessing, converts the stored reference weights to the local physical scale by multiplying them with the configured `lumi`, validates that the reconstructed `qcd_est.py` test-split prediction matches `test_reference_qcd_est.npz` within the stored tolerances, and uses the `signal_region.csv` produced by `signal_region.py` as the set of A-region score bins. It defines `A` as the union of those score bins with mass-pass, `B` as outside that union with mass-pass, `C` as inside that union with mass-fail, and `D` as outside that union with mass-fail, where mass-pass requires all `ScoutingFatPFJetRecluster_msoftdrop_*` thresholds to pass and mass-fail requires all of them to fail. A single QCD ABCD scale from the union-level `B/C/D` totals is then applied to all individual signal regions. The predicted QCD uncertainty in each SR is split into two pieces: an uncorrelated `stat_error` term from the SR fraction inside the A-union, and a fully correlated `scale_error` term from the global ABCD QCD scale. The ROOT output stores `yield`, `stat_error`, `scale_error`, and a full `covariance_total` matrix for every saved category, with the covariance matrix dimension matching the number of signal regions.
 
+### CMS combine wrapper
+```bash
+./run.sh 7
+./run.sh 7 combine/config.json
+```
+
+`combine/combine.C` wraps CMS `combine` to compute expected significance and expected `AsymptoticLimits` (CLs) from the ROOT output of `qcd_est.py`. It reads [combine/config.json](combine/config.json), which lists one or more channels (each pointing to a `qcd_abcd_yields.root` written by `mode=5`) plus a `bdt_root` directory written by `train.py`. `combine.C` loads `class_groups` from `bdt_root/config.json`, then resolves that copied config's `sample_config` the same way as `qcd_est.py` so the signal/background-class decision still comes from `sample.json`. It must be run inside a CMSSW area that has `HiggsAnalysis/CombinedLimit` built, so that `combine` and `combineCards.py` are on `$PATH`.
+
+For every channel it loads the full stored covariance blocks from `samples/{sample}/{yield,covariance_total}`, `groups/{group}/{yield,covariance_total}`, and `qcd_predict/{yield,covariance_total}`. It then iterates over scenarios:
+- `combined`: signal = the sum of all signal groups from `groups/`; backgrounds = the remaining groups.
+- `class`: one row per signal class; signal = that class's `groups/` block; backgrounds = every other group.
+- `sample`: one row per signal sample; signal = that sample's `samples/` block; backgrounds = the remaining available sample blocks.
+
+For each scenario combine is run twice: once using the MC-true group/sample blocks directly from the ROOT file, once replacing the QCD contribution with `qcd_predict` while keeping the other backgrounds on their MC-true group/sample blocks. Every channel is validated before running: all configured groups must exist, every configured signal sample must exist, and the code refuses to regularize, clamp, or synthesize missing/zero-rate inputs. If any required signal sample is absent, any covariance block is invalid, or any shape nuisance derived from the covariance would require modifying the input yields, the program aborts instead of patching the model.
+
+To preserve the full per-process SR-to-SR covariance inside combine, each process's `covariance_total` is eigen-decomposed and every retained eigenmode (eigenvalue `> eigen_rel_cutoff × max(diag(cov))`) becomes one Gaussian shape nuisance with `Up_i = rate_i + √λ_k · V_{i,k}` and `Down_i = rate_i − √λ_k · V_{i,k}`. Per-channel datacards and shape ROOT files are written under `output_dir/work/<qcd_mode>_<scope>_<name>/` and stitched together with `combineCards.py`. `combine` is then invoked as `-M Significance -t -1 --expectSignal 1` and `-M AsymptoticLimits -t -1 --run expected`, and the resulting `higgsCombine*.root` files are parsed to fill four CSVs in `output_dir`: `significance.csv`, `limits.csv`, `significance_abcd_mc.csv`, and `limits_abcd_mc.csv`. The MC-true and ABCD CSVs share the same row order (scope, name). When `keep_work: true` (default) the generated datacards, shape ROOT files, and combine outputs are left in place for inspection; with `keep_work: false` the work directory is removed after the final CSV is written.
+
 ### Data vs MC plotting
 ```bash
 python3 plotting/data_mc.py
@@ -239,6 +257,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - **[background_estimation/config.json](background_estimation/config.json)** — controls qcd_est.py: `lumi` (fb⁻¹), `bdt_root` (trained tree output directory to read from), `signal_region_csv` (path to the `signal_region.csv` written by `signal_region.py`), `output_dir` (directory for PDFs and ROOT outputs), and `root_file_name` (summary ROOT filename).
 - **[plotting/config.json](plotting/config.json)** — controls data_mc.py: `submit_trees`, `sample_config`, `convert_branch_config`, `bdt_root` (per-tree path pattern, points at the BDT tree output dir that already contains the copied `config.json` / `selection.json`), `output_root` (per-tree output dir pattern), `data_samples` (list of data sample names whose entries must exist in `src/sample.json`), `default_bins` (default histogram bin count), and `event_reweight_branches` (per-tree dict `{tree_name: [branch, ...]}` of reweight branches multiplied into each MC event's weight; default `{"fat2": ["weight_pu"], "fat3": ["weight_pu"]}`; data samples are unaffected).
 - **[plotting/branch.json](plotting/branch.json)** — plotting config split by tree (`fat2` / `fat3`). Each tree can define `skip_branches` and a `branches` map. Inside `branches`, each branch override can set `bins`, `x_range`, `y_range`, `logx`, `logy`; unset fields fall back to defaults. The file is intended to hold a few explicit examples that can be copied when adding new plot formatting rules later.
+- **[combine/config.json](combine/config.json)** — `combine.C` settings: `channels` (list of `{name, root_file}` — each `root_file` is the `qcd_abcd_yields.root` output of `mode=5` for one channel), `bdt_root` (trained tree output directory; `combine.C` reads `class_groups` from its copied `config.json` and resolves that config's `sample_config`), `output_dir`, optional `combine_cmd` and `combine_cards_cmd` (defaults `combine` / `combineCards.py`), `eigen_rel_cutoff` (drop eigenmodes with `λ ≤ cutoff × max(diag(cov))`; default `1e-10`), and `keep_work` (keep the generated datacards under `output_dir/work/`; default `true`).
 
 ## BDT Training Details
 
@@ -286,7 +305,7 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 
 ## `run.sh` Behavior
 
-[run.sh](run.sh) supports seven modes:
+[run.sh](run.sh) supports eight modes:
 
 - `mode=0` compiles and runs `selections/convert/convert_branch.C`.
 - `mode=1` compiles and runs `selections/weight/weight.C`.
@@ -295,8 +314,9 @@ All tools are driven by JSON config files. Sample definitions live centrally in 
 - `mode=4` runs `plotting/data_mc.py` with `PLOT_CONFIG_PATH` pointing to the chosen config file.
 - `mode=5` runs `background_estimation/qcd_est.py` with `QCD_EST_CONFIG_PATH` pointing to the chosen config file.
 - `mode=6` compiles and runs `selections/mix/mix.C` with `MIX_CONFIG_PATH` pointing to the chosen config file.
+- `mode=7` compiles and runs `combine/combine.C` with `COMBINE_CONFIG_PATH` pointing to the chosen config file. It does not take sample arguments and runs once per invocation.
 
-For `mode=0`, `mode=1`, and `mode=6`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, `selections/signal_region/log.txt`, `plotting/log.txt`, `background_estimation/log.txt`, or `selections/mix/log.txt` depending on mode. All seven modes use the same timestamped run-log style in `run.sh`; the C++ modes log per-sample `started` / `finished` records, while `mode=2`, `mode=3`, `mode=4`, and `mode=5` log one `started` / `finished` record for the whole Python job with an explicit exit `status=`. Inside `selections/BDT/train.py`, `selections/signal_region/signal_region.py`, `plotting/data_mc.py`, and `background_estimation/qcd_est.py`, the script output follows the same concise stage-by-stage `Running ...`, `Wrote ...`, and `Runtime error: ...` style. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
+For `mode=0`, `mode=1`, and `mode=6`, the script resolves the sample list from JSON configs, then runs jobs with `MAX_CONCURRENT_JOBS` parallelism (default 1). Log output goes to `selections/convert/log.txt`, `selections/weight/log.txt`, `selections/BDT/log.txt`, `selections/signal_region/log.txt`, `plotting/log.txt`, `background_estimation/log.txt`, `selections/mix/log.txt`, or `combine/log.txt` depending on mode. All eight modes use the same timestamped run-log style in `run.sh`; `mode=0`, `mode=1`, and `mode=6` log per-sample `started` / `finished` records, while `mode=2`, `mode=3`, `mode=4`, `mode=5`, and `mode=7` log one `started` / `finished` record for the whole job with an explicit exit `status=`. Inside `selections/BDT/train.py`, `selections/signal_region/signal_region.py`, `plotting/data_mc.py`, and `background_estimation/qcd_est.py`, the script output follows the same concise stage-by-stage `Running ...`, `Wrote ...`, and `Runtime error: ...` style. The compiled binary is removed on exit for the C++ modes. OpenMP is auto-detected for intra-job parallelism when compiling the C++ tools.
 
 ## C++ Expression Engine (convert_branch.C)
 

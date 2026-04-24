@@ -17,6 +17,7 @@ Modes:
   mode=4  Run plotting/data_mc.py.
   mode=5  Run background_estimation/qcd_est.py.
   mode=6  Run selections/mix/mix.C (shuffle sample entries across chunks).
+  mode=7  Run combine/combine.C (CMS combine wrapper for MC-true and ABCD QCD).
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
@@ -86,6 +87,14 @@ case "${MODE}" in
     DEFAULT_CONFIG="${WORK_DIR}/config.json"
     CONFIG_ENV_VAR="MIX_CONFIG_PATH"
     MODE_LABEL="mix"
+    ;;
+  7)
+    WORK_DIR="${ROOT_DIR}/combine"
+    SOURCE_FILE="combine.C"
+    BIN_NAME="combine_run"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="COMBINE_CONFIG_PATH"
+    MODE_LABEL="combine"
     ;;
   *)
     echo "Unknown mode: ${MODE}" >&2
@@ -226,6 +235,21 @@ COMPILE_CMD="c++ -O3 -DNDEBUG -std=c++17 ${ROOT_CFLAGS} ${OMP_CFLAGS} ./${SOURCE
 echo "[$(timestamp)] compile: ${COMPILE_CMD}"
 eval "${COMPILE_CMD}"
 echo "[$(timestamp)] compile finished"
+
+if [ "${MODE}" = "7" ]; then
+  if [ "$#" -gt 0 ]; then
+    echo "mode=${MODE} does not accept sample arguments: $*" >&2
+    exit 1
+  fi
+  echo "[$(timestamp)] started job=${MODE_LABEL} pid=$$"
+  echo "[$(timestamp)] run: env ${CONFIG_ENV_VAR}=${CONFIG_PATH} ${BIN_PATH}"
+  set +e
+  env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" "${BIN_PATH}"
+  status=$?
+  set -e
+  echo "[$(timestamp)] finished job=${MODE_LABEL} pid=$$ status=${status}"
+  exit "${status}"
+fi
 
 samples=()
 while IFS= read -r sample; do

@@ -1,6 +1,6 @@
 # ScoutingVVVTools
 
-CMS scouting VVV analysis workflow for pileup reweighting, branch conversion, optional sample-entry mixing, BDT training, signal-region optimization, QCD ABCD estimation, and data/MC plotting.
+CMS scouting VVV analysis workflow for pileup reweighting, branch conversion, optional sample-entry mixing, BDT training, signal-region optimization, QCD ABCD estimation, data/MC plotting, and CMS combine significance/limits.
 
 ## Pipeline order
 
@@ -11,6 +11,7 @@ CMS scouting VVV analysis workflow for pileup reweighting, branch conversion, op
 5. `mode=3`: scan the test split and write `signal_region.csv`.
 6. `mode=5`: run the QCD ABCD validation on the MC test split.
 7. `mode=4`: make data/MC comparison plots.
+8. `mode=7`: run the CMS combine wrapper to compute expected significance and AsymptoticLimits per signal class / signal sample / combined, both with the MC-true QCD yields and with the ABCD QCD prediction.
 
 `selections/b_veto/` and `systematics/` are separate studies and are not launched through `run.sh`.
 
@@ -34,6 +35,7 @@ Examples:
 ./run.sh 3 selections/signal_region/config.json
 ./run.sh 5 background_estimation/config.json
 ./run.sh 4 plotting/config.json
+./run.sh 7 combine/config.json
 ```
 
 Modes:
@@ -59,6 +61,9 @@ Modes:
 - `mode=5`: run `background_estimation/qcd_est.py`.
   Input: `background_estimation/config.json`, one trained BDT directory from `mode=2`, and the `signal_region.csv` written by `mode=3`.
   Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`. The ROOT file stores `yield`, `stat_error`, `scale_error`, and `covariance_total` for each saved category. Before building the ABCD regions, the script reloads the saved model, reproduces the test-split prediction used for the `qcd_est.py` preprocessing chain, and aborts if it does not match `test_reference_qcd_est.npz` within the stored tolerances.
+- `mode=7`: compile and run `combine/combine.C`.
+  Input: `combine/config.json` (lists one or more channels, each pointing to a `qcd_abcd_yields.root` from `mode=5`) plus one trained `bdt_root` directory from `mode=2`. `combine.C` reads `class_groups` from `bdt_root/config.json`, then resolves that copied config's `sample_config` the same way as `qcd_est.py` so the signal/background-class split still comes from `sample.json`. Must be executed inside a CMSSW area that has `HiggsAnalysis/CombinedLimit` built, so that `combine` and `combineCards.py` are on `$PATH`.
+  Output: `significance.csv`, `limits.csv`, `significance_abcd_mc.csv`, and `limits_abcd_mc.csv` under the configured `output_dir`, plus `combine/log.txt`. Each CSV has one row per signal scenario (combined / per-signal-class / per-signal-sample). The combined and class scenarios read the stored `groups/*` covariance blocks directly; the per-sample scenarios read the stored `samples/*` covariance blocks directly. The `_abcd_mc.csv` CSVs replace the QCD contribution with the stored `qcd_predict` block while keeping the non-QCD processes on their MC-true group/sample blocks. The full per-process covariance between signal regions is injected into combine via an eigen-decomposition of each process's `covariance_total`, one Gaussian shape nuisance per retained eigenmode, so arbitrary SR-to-SR correlations are preserved. The wrapper validates every required signal sample/group and aborts on missing inputs or invalid shape variations instead of regularizing the yields. A temporary work directory is kept under `output_dir/work/` with the generated datacards, shape ROOT files, and combine outputs.
 
 Sample arguments:
 
@@ -79,6 +84,7 @@ Sample arguments:
 - `background_estimation/config.json`: `qcd_est.py` settings, including `bdt_root`, `signal_region_csv`, `output_dir`, and `root_file_name`.
 - `plotting/config.json`: `data_mc.py` settings, including `bdt_root`, `output_root`, `data_samples`, and per-tree `event_reweight_branches` (applied to MC events only; data weights stay 1.0).
 - `plotting/branch.json`: per-tree plot overrides such as `skip_branches`, `bins`, `x_range`, `y_range`, `logx`, and `logy`.
+- `combine/config.json`: `combine.C` settings: `channels` (list of `{name, root_file}` — each ROOT file is the `qcd_abcd_yields.root` output of `mode=5` for one channel), `bdt_root` (trained tree output directory; `combine.C` reads `class_groups` from its copied `config.json` and resolves that config's `sample_config`), `output_dir`, optional `combine_cmd` / `combine_cards_cmd`, `eigen_rel_cutoff` (drop eigenmodes with `λ_k ≤ cutoff × max(diag(cov))`; default `1e-10`), and `keep_work` (keep the generated datacards under `output_dir/work/`; default `true`).
 
 ## Step-by-step file flow
 
@@ -89,3 +95,4 @@ Sample arguments:
 - `mode=3` writes `signal_region.csv`, which defines the A-region score bins for `mode=5`.
 - `mode=5` writes the ABCD validation ROOT file and PDFs for the chosen tree.
 - `mode=4` writes one data/MC comparison PDF per branch.
+- `mode=7` reads one or more `mode=5` ROOT files (one per channel) plus the BDT and sample configs, generates per-scenario datacards with the full per-process SR covariance encoded as eigen-decomposed shape nuisances, and calls `combine` to fill `significance.csv`, `limits.csv`, `significance_abcd_mc.csv`, and `limits_abcd_mc.csv` under its `output_dir`. Combined/per-class scenarios use the stored `groups/*` blocks, per-sample scenarios use the stored `samples/*` blocks, and the program aborts on missing required signal samples/groups or on any attempt to regularize the exact input yields/covariances.

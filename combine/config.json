@@ -1,0 +1,14 @@
+{
+  "channels": [
+    {
+      "name": "fat2",
+      "root_file": "../background_estimation/output/fat2/qcd_abcd_yields.root"
+    }
+  ],
+  "bdt_root": "../selections/BDT/fat2",
+  "output_dir": "./fat2",
+  "combine_cmd": "combine",
+  "combine_cards_cmd": "combineCards.py",
+  "eigen_rel_cutoff": 1e-10,
+  "keep_work": true
+}
