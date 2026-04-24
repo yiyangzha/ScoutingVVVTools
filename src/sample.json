@@ -181,7 +181,7 @@
       "is_signal": false,
       "xsection": 125200,
       "lumi": -1,
-      "raw_entries": 14027570
+      "raw_entries": 17416036
     },
     {
       "name": "qcd_ht2000",
@@ -194,7 +194,7 @@
       "is_signal": false,
       "xsection": 26490,
       "lumi": -1,
-      "raw_entries": 14772494
+      "raw_entries": 19146618
     },
     {
       "name": "ttbar_had",
