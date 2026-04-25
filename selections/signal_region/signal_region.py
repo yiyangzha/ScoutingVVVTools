@@ -2,6 +2,7 @@ import os
 import json
 import gc
 import pickle
+import time
 import uproot
 import pandas as pd
 import numpy as np
@@ -48,9 +49,21 @@ LUMI             = float(scan_cfg["lumi"])
 N_SIGNAL_REGIONS = int(scan_cfg.get("n_signal_regions", scan_cfg.get("N", 4)))
 BDT_ROOT         = scan_cfg.get("bdt_root", scan_cfg.get("output_root"))
 OUTPUT_DIR       = scan_cfg.get("output_dir", BDT_ROOT)
-N_THRESHOLDS     = int(scan_cfg.get("n_thresholds", 10))
 MIN_BKG_WEIGHT   = float(scan_cfg.get("min_bkg_weight", 5.0))
-ROUNDS           = int(scan_cfg.get("rounds", 5))
+MAX_EDGE_CANDIDATES_PER_AXIS = max(8, int(scan_cfg.get("max_edge_candidates_per_axis", 120)))
+BEAM_WIDTH = max(1, int(scan_cfg.get("beam_width", 48)))
+TOP_INTERVALS_PER_AXIS = max(1, int(scan_cfg.get("top_intervals_per_axis", 8)))
+COORDINATE_ROUNDS = max(1, int(scan_cfg.get("coordinate_rounds", 8)))
+LOCAL_REFINE_ROUNDS = max(0, int(scan_cfg.get("local_refine_rounds", 3)))
+LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edges", 48)))
+LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
+CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_limit", 20000)))
+PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
+SEED_QUANTILES = [
+    float(q) for q in scan_cfg.get(
+        "seed_quantiles", [0.5, 0.75, 0.9, 0.95, 0.98, 0.99]
+    )
+]
 
 if BDT_ROOT is None:
     raise KeyError("signal_region config requires 'bdt_root'")
@@ -631,28 +644,52 @@ def plot_signal_regions_2d(result, proba, y, w):
 
 # -------------------- Signal-region scan --------------------
 def find_signal_regions(proba, y, w):
-    """Find N non-overlapping signal regions maximising Z = sqrt(2[(S+B)ln(1+S/B) - S]).
+    """Find N non-overlapping general high-D score rectangles.
 
-    Scan dimensions D = NUM_CLASSES - 1; axes are proba[:,0] … proba[:,D-1].
-    Generalised from find_optimal_significance_combine in train.ipynb.
+    The search is exact over the constructed candidate-edge set: each coordinate
+    update scans every [edge[a], edge[b]) interval on that axis with all other
+    axes fixed, and final region selection is an exact branch-and-bound set
+    packing over the candidate pool. The edge set is deliberately dense: it
+    combines total/signal/background weighted quantiles, tail-heavy quantiles,
+    beam coordinate search, and a local pass that injects nearby real event
+    score thresholds around the best candidate boundaries.
     """
     n_events, n_cls = proba.shape
     D = max(1, n_cls - 1)
 
-    score_axes = [proba[:, d] for d in range(D)]
+    score_axes = np.column_stack([proba[:, d] for d in range(D)])  # (N, D)
     axis_names = [CLASS_NAMES[d] for d in range(D)]
 
     is_sig = np.isin(y, SIGNAL_CLASS_INDICES)
     is_bkg = np.isin(y, BACKGROUND_CLASS_INDICES)
+    w_sig = np.where(is_sig, w, 0.0)
+    w_bkg = np.where(is_bkg, w, 0.0)
 
-    S_total = float(w[is_sig].sum())
-    B_total = float(w[is_bkg].sum())
+    S_total = float(w_sig.sum())
+    B_total = float(w_bkg.sum())
 
     log_message(f"  S_total={S_total:.4g}, B_total={B_total:.4g}")
     log_message(f"  Scan dimensions D={D}, axes={axis_names}")
+    log_message(
+        "  Optimizer: "
+        f"max_edges={MAX_EDGE_CANDIDATES_PER_AXIS}, "
+        f"beam_width={BEAM_WIDTH}, top_intervals={TOP_INTERVALS_PER_AXIS}, "
+        f"rounds={COORDINATE_ROUNDS}, local_refine_rounds={LOCAL_REFINE_ROUNDS}"
+    )
+
+    scan_t0 = time.monotonic()
+    last_progress = [scan_t0]
+
+    def _elapsed():
+        return time.monotonic() - scan_t0
+
+    def _progress(message, force=False):
+        now = time.monotonic()
+        if force or PROGRESS_EVERY_SECONDS <= 0.0 or now - last_progress[0] >= PROGRESS_EVERY_SECONDS:
+            log_message(f"  [{_elapsed():.1f}s] {message}")
+            last_progress[0] = now
 
     def _calc_Z(S, B, sS, sB):
-        """Profile-likelihood significance Z = sqrt(2[(S+B)ln(1+S/B) - S]) with propagated error."""
         if S <= 0.0 or B <= 0.0:
             return 0.0, 0.0
         f = (S + B) * np.log(1.0 + S / B) - S
@@ -666,228 +703,555 @@ def find_signal_regions(proba, y, w):
         return Z, sZ
 
     def _calc_Z_val(S, B):
-        """Fast significance for scan ranking."""
         if S <= 0.0 or B <= 0.0:
             return 0.0
         f = (S + B) * np.log(1.0 + S / B) - S
         return float(np.sqrt(2.0 * max(0.0, f)))
 
-    # One-dimensional tail scan for reference efficiencies only.
-    p_exp = 0.005
-    thr_1d = np.clip(np.linspace(0.0, 1.0, max(2, N_THRESHOLDS)) ** p_exp, 0.0, 1.0)
-    T = len(thr_1d)
-    S_tail_by_dim = np.zeros((D, T))
-    B_tail_by_dim = np.zeros((D, T))
-    for d in range(D):
-        s = score_axes[d]
-        for it, thr in enumerate(thr_1d):
-            m = s >= thr
-            S_tail_by_dim[d, it] = float(w[m & is_sig].sum())
-            B_tail_by_dim[d, it] = float(w[m & is_bkg].sum())
+    EPS = 1e-12
 
-    def _overlap(lo1, hi1, lo2, hi2, eps=1e-12):
-        for dim in range(len(lo1)):
-            if not (lo1[dim] < hi2[dim] - eps and lo2[dim] < hi1[dim] - eps):
+    def _hi_to_open(h):
+        return float(h) >= 1.0 - EPS
+
+    def _rect_mask(lo, hi):
+        m = np.ones(n_events, dtype=bool)
+        for d in range(D):
+            v = score_axes[:, d]
+            if _hi_to_open(hi[d]):
+                m &= v >= lo[d]
+            else:
+                m &= (v >= lo[d]) & (v < hi[d])
+        return m
+
+    def _rect_SB(lo, hi):
+        m = _rect_mask(lo, hi)
+        return float(w_sig[m].sum()), float(w_bkg[m].sum())
+
+    def _overlap(lo1, hi1, lo2, hi2):
+        for d in range(D):
+            if not (lo1[d] < hi2[d] - EPS and lo2[d] < hi1[d] - EPS):
                 return False
         return True
 
-    def _build_tail(mask_sel, edges_):
-        """Cumulative-sum tail tensor: tail[i,j,...] = weight for score[d] >= base[d][i]."""
-        arrs  = tuple(score_axes[dim][mask_sel] for dim in range(D))
-        Hw    = np.histogramdd(arrs, bins=edges_, weights=w[mask_sel])[0]
-        T_arr = Hw.copy()
-        for ax in range(D):
-            T_arr = np.flip(T_arr, axis=ax)
-            T_arr = np.cumsum(T_arr, axis=ax)
-            T_arr = np.flip(T_arr, axis=ax)
-        return T_arr
+    def _region_key(lo, hi):
+        return (tuple(round(float(v), 10) for v in lo),
+                tuple(round(float(v), 10) for v in hi))
 
-    def _rect_sum(tail, lows_idx, highs_idx_vec):
-        """Inclusion-exclusion weighted sum over a rectangular bin."""
-        tot = 0.0
-        for bits in range(1 << D):
-            idx = []
-            pop = 0
-            for dim in range(D):
-                if (bits >> dim) & 1:
-                    idx.append(int(highs_idx_vec[dim]))
-                    pop += 1
-                else:
-                    idx.append(int(lows_idx[dim]))
-            tot += (-1.0 if (pop & 1) else 1.0) * tail[tuple(idx)]
-        return float(tot)
+    def _valid_region(lo, hi):
+        return all(float(lo[d]) < float(hi[d]) - EPS for d in range(D))
 
-    selected_bins = []
-    top_bins      = []
+    def _quantile_levels(n_levels):
+        n_levels = max(4, int(n_levels))
+        n_uniform = max(4, n_levels // 2)
+        n_tail = max(2, n_levels // 4)
+        tail = np.geomspace(1.0e-4, 0.25, n_tail)
+        qs = np.unique(np.r_[0.0, 1.0, np.linspace(0.0, 1.0, n_uniform), tail, 1.0 - tail])
+        if qs.size > n_levels:
+            keep = np.unique(np.rint(np.linspace(0, qs.size - 1, n_levels)).astype(int))
+            qs = qs[keep]
+        return np.clip(qs, 0.0, 1.0)
 
-    for k in range(N_SIGNAL_REGIONS):
-        log_message(f"  Scanning bin {k + 1}/{N_SIGNAL_REGIONS}")
-        accum_map = {}
-        unit_high = [1.0] * D
+    def _weighted_quantiles(values, weights, qs):
+        values = np.asarray(values, dtype=float)
+        weights = np.asarray(weights, dtype=float)
+        mask = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+        if not np.any(mask):
+            return np.array([], dtype=float)
+        values = values[mask]
+        weights = weights[mask]
+        order = np.argsort(values)
+        values = values[order]
+        weights = weights[order]
+        cw = np.cumsum(weights)
+        if cw[-1] <= 0.0:
+            return np.array([], dtype=float)
+        return np.interp(np.clip(qs, 0.0, 1.0), cw / cw[-1], values)
 
-        cand_vals = [
-            list(np.linspace(0.0, unit_high[d], max(2, N_THRESHOLDS), endpoint=False))
-            for d in range(D)
-        ]
+    def _cap_edges(edge_values, max_count):
+        edges = np.unique(np.clip(np.asarray(edge_values, dtype=float), 0.0, 1.0))
+        edges = edges[np.isfinite(edges)]
+        edges = np.unique(np.r_[0.0, edges, 1.0])
+        if edges.size <= max_count:
+            return edges.astype(float)
+        keep = np.unique(np.rint(np.linspace(0, edges.size - 1, max_count)).astype(int))
+        return edges[keep].astype(float)
 
-        for r in range(ROUNDS):
-            # Build the per-axis grids for this refinement round.
-            base_lists = []
-            val2idx    = []
-            highs_idx  = []
-            edges_r    = []
-            for d in range(D):
-                base = np.unique(np.r_[cand_vals[d], unit_high[d]])
-                base_lists.append(base)
-                val2idx.append({float(v): i for i, v in enumerate(base)})
-                highs_idx.append(int(val2idx[-1][float(unit_high[d])]))
-                edges_r.append(np.r_[base, base[-1] + 1e-9])
+    # One-dimensional tail scan for reference efficiencies only.
+    T_REF = 200
+    p_exp = 0.005
+    thr_1d = np.clip(np.linspace(0.0, 1.0, T_REF) ** p_exp, 0.0, 1.0)
+    S_tail_by_dim = np.zeros((D, T_REF))
+    B_tail_by_dim = np.zeros((D, T_REF))
+    for d in range(D):
+        s = score_axes[:, d]
+        order = np.argsort(s)
+        s_sorted = s[order]
+        cw_sig = np.cumsum(w_sig[order])
+        cw_bkg = np.cumsum(w_bkg[order])
+        idx = np.searchsorted(s_sorted, thr_1d, side="left")
+        S_tail_by_dim[d] = (cw_sig[-1] if cw_sig.size else 0.0) - np.where(
+            idx > 0, cw_sig[np.clip(idx - 1, 0, cw_sig.size - 1)], 0.0
+        )
+        B_tail_by_dim[d] = (cw_bkg[-1] if cw_bkg.size else 0.0) - np.where(
+            idx > 0, cw_bkg[np.clip(idx - 1, 0, cw_bkg.size - 1)], 0.0
+        )
 
-            S_tailD = _build_tail(is_sig, edges_r)
-            B_tailD = _build_tail(is_bkg, edges_r)
+    # Dense but bounded per-axis edge candidates.
+    max_edges = max(8, MAX_EDGE_CANDIDATES_PER_AXIS)
+    total_q = _quantile_levels(max(8, max_edges // 2))
+    sig_q = _quantile_levels(max(8, max_edges // 3))
+    bkg_q = _quantile_levels(max(8, max_edges // 3))
+    all_q = _quantile_levels(max(6, max_edges // 6))
+    edges_per_axis = []
+    for d in range(D):
+        v = score_axes[:, d]
+        edge_values = [0.0, 1.0]
+        edge_values.extend(_weighted_quantiles(v, w_sig + w_bkg, total_q))
+        edge_values.extend(_weighted_quantiles(v, w_sig, sig_q))
+        edge_values.extend(_weighted_quantiles(v, w_bkg, bkg_q))
+        finite_v = v[np.isfinite(v)]
+        if finite_v.size:
+            edge_values.extend(np.quantile(finite_v, all_q))
+        edges_per_axis.append(_cap_edges(edge_values, max_edges))
+    axis_unique_values = [
+        np.unique(score_axes[np.isfinite(score_axes[:, d]), d])
+        for d in range(D)
+    ]
 
-            low_idx_lists = []
-            for d in range(D):
-                idxs = [val2idx[d].get(float(v)) for v in cand_vals[d]]
-                idxs = [int(i) for i in idxs if i is not None and i < highs_idx[d]]
-                if not idxs:
-                    idxs = [0]
-                low_idx_lists.append(sorted(set(idxs)))
+    log_message(
+        f"  Edges per axis: " +
+        ", ".join(f"{axis_names[d]}={len(edges_per_axis[d])}" for d in range(D))
+    )
 
-            combos_round = []
-            for slice_dim in range(D):
-                for lows in iproduct(*low_idx_lists):
-                    lows = list(lows)
-                    hi_idx_vec = []
-                    valid = True
-                    for d in range(D):
-                        if d == slice_dim:
-                            li = lows[d]
-                            if li + 1 <= highs_idx[d]:
-                                hi_idx_vec.append(li + 1)
-                            else:
-                                valid = False
-                                break
-                        else:
-                            hi_idx_vec.append(highs_idx[d])
-                    if not valid:
-                        continue
+    pool = {}  # key -> {"lo", "hi", "S", "B", "Z"}
 
-                    S_bin = _rect_sum(S_tailD, lows, hi_idx_vec)
-                    B_bin = _rect_sum(B_tailD, lows, hi_idx_vec)
-                    Z     = _calc_Z_val(S_bin, B_bin)
+    def _add_to_pool(lo, hi, S_v=None, B_v=None):
+        lo = [float(v) for v in lo]
+        hi = [float(v) for v in hi]
+        if not _valid_region(lo, hi):
+            return None
+        key = _region_key(lo, hi)
+        if key in pool:
+            return pool[key]
+        if S_v is None or B_v is None:
+            S_v, B_v = _rect_SB(lo, hi)
+        else:
+            S_v, B_v = float(S_v), float(B_v)
+        if B_v < MIN_BKG_WEIGHT or S_v <= 0.0:
+            return None
+        Z = _calc_Z_val(S_v, B_v)
+        if Z <= 0.0:
+            return None
+        pool[key] = {"lo": [float(v) for v in lo],
+                     "hi": [float(v) for v in hi],
+                     "S": S_v, "B": B_v, "Z": Z}
+        return pool[key]
 
-                    thr_low_vals  = [float(base_lists[d][lows[d]]) for d in range(D)]
-                    thr_high_vals = []
-                    for d in range(D):
-                        if d == slice_dim:
-                            thr_high_vals.append(float(base_lists[d][lows[d] + 1]))
-                        else:
-                            thr_high_vals.append(float(unit_high[d]))
+    def _trim_pool():
+        if len(pool) <= CANDIDATE_POOL_LIMIT:
+            return
+        before = len(pool)
+        keep = sorted(pool.items(), key=lambda kv: -kv[1]["Z"])[:CANDIDATE_POOL_LIMIT]
+        pool.clear()
+        pool.update(keep)
+        log_warning(
+            f"Candidate pool trimmed from {before} to {len(pool)} by Z; "
+            "increase candidate_pool_limit for a wider final search"
+        )
 
-                    non_overlap = all(
-                        not _overlap(thr_low_vals, thr_high_vals, lo_s, hi_s)
-                        for (lo_s, hi_s) in selected_bins
-                    )
-                    if not non_overlap:
-                        continue
+    def _top_intervals_on_axis(d, lo, hi, edges, top_n):
+        """Top [edges[a], edges[b]) intervals on axis d with other axes fixed."""
+        m = np.ones(n_events, dtype=bool)
+        for dd in range(D):
+            if dd == d:
+                continue
+            v = score_axes[:, dd]
+            if _hi_to_open(hi[dd]):
+                m &= v >= lo[dd]
+            else:
+                m &= (v >= lo[dd]) & (v < hi[dd])
+        if not m.any():
+            return []
+        edges = _cap_edges(edges, max(2, len(edges)))
+        if edges.size < 2:
+            return []
+        v_d = score_axes[:, d]
+        hS, _ = np.histogram(v_d[m], bins=edges, weights=w_sig[m])
+        hB, _ = np.histogram(v_d[m], bins=edges, weights=w_bkg[m])
+        pS = np.r_[0.0, np.cumsum(hS)]
+        pB = np.r_[0.0, np.cumsum(hB)]
+        K = pS.size
+        a_idx = np.arange(K).reshape(-1, 1)
+        b_idx = np.arange(K).reshape(1, -1)
+        mask = b_idx > a_idx
+        S_mat = pS[b_idx] - pS[a_idx]
+        B_mat = pB[b_idx] - pB[a_idx]
+        valid = mask & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > 0.0)
+        if not valid.any():
+            return []
+        Bsafe = np.where(valid, B_mat, 1.0)
+        Ssafe = np.where(valid, S_mat, 0.0)
+        f = (Ssafe + Bsafe) * np.log1p(Ssafe / Bsafe) - Ssafe
+        f = np.where(valid & (f > 0.0), f, 0.0)
+        Z2 = np.where(valid, 2.0 * f, -np.inf)
+        valid_count = int(np.count_nonzero(np.isfinite(Z2) & (Z2 > 0.0)))
+        if valid_count == 0:
+            return []
+        take = min(max(1, int(top_n)), valid_count)
+        flat_scores = Z2.ravel()
+        if take >= flat_scores.size:
+            flat_idx = np.argsort(flat_scores)[::-1]
+        else:
+            flat_idx = np.argpartition(flat_scores, -take)[-take:]
+            flat_idx = flat_idx[np.argsort(flat_scores[flat_idx])[::-1]]
 
-                    combos_round.append((Z, thr_low_vals, thr_high_vals, S_bin, B_bin))
-
-            combos_round.sort(key=lambda x: x[0], reverse=True)
-
-            for Z, lows_vals, highs_vals, S_est, B_est in combos_round:
-                key = (tuple(round(v, 12) for v in lows_vals),
-                       tuple(round(v, 12) for v in highs_vals))
-                if key not in accum_map or Z > accum_map[key]["Z"]:
-                    accum_map[key] = {
-                        "Z": Z, "S": S_est, "B": B_est,
-                        "lows": tuple(lows_vals), "highs": tuple(highs_vals),
-                    }
-
-            # Keep the top three thresholds per axis for the next round.
-            accum_sorted = sorted(accum_map.values(), key=lambda d: d["Z"], reverse=True)
-            pick_per_dim = [[] for _ in range(D)]
-            seen_per_dim = [set() for _ in range(D)]
-            for item in accum_sorted:
-                for d in range(D):
-                    v = float(item["lows"][d])
-                    if v not in seen_per_dim[d]:
-                        seen_per_dim[d].add(v)
-                        pick_per_dim[d].append(v)
-                if all(len(pick_per_dim[d]) >= 3 for d in range(D)):
-                    break
-
-            new_cands = []
-            for d in range(D):
-                picks = sorted(pick_per_dim[d]) if pick_per_dim[d] else [0.0, unit_high[d]]
-                lo_d  = float(max(0.0, min(picks)))
-                hi_d  = float(min(unit_high[d], max(picks)))
-                if hi_d <= lo_d + 1e-12:
-                    span = max(1e-3, 0.1 * unit_high[d])
-                    lo_d = max(0.0, unit_high[d] - span)
-                    hi_d = unit_high[d]
-                new_cands.append(
-                    list(np.linspace(lo_d, hi_d, max(2, N_THRESHOLDS), endpoint=False))
-                )
-            cand_vals = new_cands
-
-        # Select the best valid bin from the accumulated candidates.
-        accum_sorted = sorted(accum_map.values(), key=lambda d: d["Z"], reverse=True)
-        chosen = None
-        for item in accum_sorted:
-            if item["B"] >= MIN_BKG_WEIGHT and all(
-                not _overlap(item["lows"], item["highs"], lo_s, hi_s)
-                for (lo_s, hi_s) in selected_bins
-            ):
-                chosen = item
+        intervals = []
+        seen = set()
+        for flat in flat_idx:
+            if not np.isfinite(flat_scores[flat]) or flat_scores[flat] <= 0.0:
+                continue
+            a_best = int(flat // K)
+            b_best = int(flat % K)
+            if not valid[a_best, b_best]:
+                continue
+            key = (a_best, b_best)
+            if key in seen:
+                continue
+            seen.add(key)
+            intervals.append((
+                float(edges[a_best]),
+                float(edges[b_best]),
+                float(S_mat[a_best, b_best]),
+                float(B_mat[a_best, b_best]),
+                float(np.sqrt(Z2[a_best, b_best])),
+            ))
+            if len(intervals) >= take:
                 break
+        return intervals
 
-        if chosen is None:
-            raise RuntimeError(f"No valid signal region found for bin {k + 1}")
+    def _select_beam(candidates):
+        unique = {}
+        for item in candidates:
+            if item is None:
+                continue
+            key = _region_key(item["lo"], item["hi"])
+            if key not in unique or item["Z"] > unique[key]["Z"]:
+                unique[key] = item
+        ordered = sorted(unique.values(), key=lambda item: -item["Z"])
+        if len(ordered) <= BEAM_WIDTH:
+            return ordered
 
-        thr_low_vec  = list(map(float, chosen["lows"]))
-        thr_high_vec = list(map(float, chosen["highs"]))
+        selected = []
+        selected_keys = set()
+        diverse_target = max(1, BEAM_WIDTH // 2)
+        for item in ordered:
+            if len(selected) >= diverse_target:
+                break
+            if all(not _overlap(item["lo"], item["hi"], prev["lo"], prev["hi"]) for prev in selected):
+                selected.append(item)
+                selected_keys.add(_region_key(item["lo"], item["hi"]))
 
-        # Compute exact event-level statistics for the chosen bin.
-        def _mask_dim(dim_, lo_, hi_):
-            s_ = score_axes[dim_]
-            return (s_ >= lo_) & (s_ < hi_) if hi_ < 1.0 - 1e-12 else s_ >= lo_
+        for item in ordered:
+            if len(selected) >= BEAM_WIDTH:
+                break
+            key = _region_key(item["lo"], item["hi"])
+            if key not in selected_keys:
+                selected.append(item)
+                selected_keys.add(key)
+        return selected
 
-        m_bin = np.ones(n_events, dtype=bool)
-        for d in range(D):
-            m_bin &= _mask_dim(d, thr_low_vec[d], thr_high_vec[d])
+    # ---- Build seeds ----
+    seeds = []
+    seeds.append(([0.0] * D, [1.0] * D))  # full box
+    for d in range(D):
+        edges = edges_per_axis[d]
+        for q in SEED_QUANTILES:
+            qc = float(np.clip(q, 0.0, 1.0))
+            idx = int(np.clip(round(qc * (len(edges) - 1)), 0, len(edges) - 1))
+            lo = [0.0] * D
+            hi = [1.0] * D
+            lo[d] = float(edges[idx])
+            seeds.append((lo, hi))
+            if 0 < idx < len(edges) - 1:
+                lo2 = [0.0] * D
+                hi2 = [1.0] * D
+                hi2[d] = float(edges[idx])
+                seeds.append((lo2, hi2))
 
+    initial = []
+    for seed_lo, seed_hi in seeds:
+        item = _add_to_pool(seed_lo, seed_hi)
+        if item is not None:
+            initial.append(item)
+
+    if not initial:
+        raise RuntimeError(
+            "No seed signal region passed min_bkg_weight; "
+            "lower min_bkg_weight or check inputs"
+        )
+
+    beam = _select_beam(initial)
+    _progress(
+        f"Beam search start: seeds={len(seeds)}, valid_seeds={len(initial)}, "
+        f"beam={len(beam)}, pool={len(pool)}, best_Z={beam[0]['Z']:.4f}",
+        force=True,
+    )
+
+    for r in range(COORDINATE_ROUNDS):
+        before_pool = len(pool)
+        produced = []
+        for ib, item in enumerate(beam):
+            for d in range(D):
+                intervals = _top_intervals_on_axis(
+                    d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
+                )
+                for low_d, high_d, S_v, B_v, _Z in intervals:
+                    lo = list(item["lo"])
+                    hi = list(item["hi"])
+                    lo[d] = low_d
+                    hi[d] = high_d
+                    new_item = _add_to_pool(lo, hi, S_v, B_v)
+                    if new_item is not None:
+                        produced.append(new_item)
+            _progress(
+                f"Beam round {r + 1}/{COORDINATE_ROUNDS}: "
+                f"processed {ib + 1}/{len(beam)} beam states, pool={len(pool)}"
+            )
+        _trim_pool()
+        pool_top = sorted(pool.values(), key=lambda item: -item["Z"])[:BEAM_WIDTH]
+        beam = _select_beam(beam + produced + pool_top)
+        best_Z = beam[0]["Z"] if beam else 0.0
+        _progress(
+            f"Beam round {r + 1}/{COORDINATE_ROUNDS} done: "
+            f"new={len(pool) - before_pool}, produced={len(produced)}, "
+            f"pool={len(pool)}, beam={len(beam)}, best_Z={best_Z:.4f}",
+            force=True,
+        )
+        if len(pool) == before_pool:
+            break
+
+    if not pool:
+        raise RuntimeError(
+            "No candidate signal region passed min_bkg_weight; "
+            "lower min_bkg_weight or check inputs"
+        )
+
+    def _local_edges_for_axis(d, lo, hi):
+        edge_values = [0.0, 1.0, lo[d], hi[d]]
+        edge_values.extend(edges_per_axis[d])
+        vals = axis_unique_values[d]
+        if vals.size:
+            for boundary in (lo[d], hi[d]):
+                idx = int(np.searchsorted(vals, boundary, side="left"))
+                left = max(0, idx - LOCAL_REFINE_NEIGHBOR_EDGES)
+                right = min(vals.size, idx + LOCAL_REFINE_NEIGHBOR_EDGES + 1)
+                edge_values.extend(vals[left:right])
+        return np.unique(np.clip(np.asarray(edge_values, dtype=float), 0.0, 1.0))
+
+    if LOCAL_REFINE_ROUNDS > 0 and LOCAL_REFINE_TOP_CANDIDATES > 0:
+        ordered_for_refine = sorted(pool.values(), key=lambda x: -x["Z"])
+        refine_items = ordered_for_refine[:LOCAL_REFINE_TOP_CANDIDATES]
+        _progress(
+            f"Local event-threshold refinement start: candidates={len(refine_items)}, "
+            f"rounds={LOCAL_REFINE_ROUNDS}",
+            force=True,
+        )
+        for ic, item in enumerate(refine_items):
+            lo = list(item["lo"])
+            hi = list(item["hi"])
+            prev_Z = item["Z"]
+            for rr in range(LOCAL_REFINE_ROUNDS):
+                changed = False
+                for d in range(D):
+                    local_edges = _local_edges_for_axis(d, lo, hi)
+                    intervals = _top_intervals_on_axis(
+                        d, lo, hi, local_edges, max(1, min(TOP_INTERVALS_PER_AXIS, 4))
+                    )
+                    if not intervals:
+                        continue
+                    for low_d, high_d, S_v, B_v, _Z in intervals:
+                        lo_alt = list(lo)
+                        hi_alt = list(hi)
+                        lo_alt[d] = low_d
+                        hi_alt[d] = high_d
+                        _add_to_pool(lo_alt, hi_alt, S_v, B_v)
+                    low_d, high_d, S_v, B_v, Z_axis = intervals[0]
+                    boundary_changed = (
+                        abs(low_d - lo[d]) > 1e-12 or abs(high_d - hi[d]) > 1e-12
+                    )
+                    if boundary_changed and Z_axis >= prev_Z - 1e-10:
+                        lo[d] = low_d
+                        hi[d] = high_d
+                        prev_Z = Z_axis
+                        changed = True
+                refined = _add_to_pool(lo, hi)
+                if refined is not None:
+                    prev_Z = refined["Z"]
+                if not changed:
+                    break
+            _progress(
+                f"Local refinement: processed {ic + 1}/{len(refine_items)}, "
+                f"pool={len(pool)}"
+            )
+        _trim_pool()
+        _progress(f"Local refinement done: pool={len(pool)}", force=True)
+
+    items = sorted(pool.values(), key=lambda x: -x["Z"])
+    log_message(f"  Candidate pool size: {len(items)}")
+    n_items = len(items)
+    Z_arr = np.array([it["Z"] for it in items], dtype=float)
+    Z2 = Z_arr ** 2
+    los = [it["lo"] for it in items]
+    his = [it["hi"] for it in items]
+
+    def _compatible_with_picks(i, picks):
+        return all(not _overlap(los[i], his[i], los[j], his[j]) for j in picks)
+
+    def _top_compatible_sum(start, picks, k):
+        if k <= 0:
+            return 0.0, 0
+        total = 0.0
+        count = 0
+        for idx in range(start, n_items):
+            if _compatible_with_picks(idx, picks):
+                total += Z2[idx]
+                count += 1
+                if count >= k:
+                    break
+        return float(total), count
+
+    # ---- Greedy initial exact-N bound. ----
+    greedy_exact = []
+    for i in range(n_items):
+        if len(greedy_exact) >= N_SIGNAL_REGIONS:
+            break
+        if _compatible_with_picks(i, greedy_exact):
+            greedy_exact.append(i)
+
+    best_exact_picks = list(greedy_exact) if len(greedy_exact) == N_SIGNAL_REGIONS else []
+    best_exact_score = float(np.sum(Z2[best_exact_picks])) if best_exact_picks else -np.inf
+    best_any_picks = list(greedy_exact)
+    best_any_score = float(np.sum(Z2[best_any_picks])) if best_any_picks else 0.0
+
+    # ---- Branch-and-bound exact selection over the pool. ----
+    target_n = N_SIGNAL_REGIONS
+    dfs_seen = 0
+    dfs_pruned = 0
+
+    _progress(
+        f"Final non-overlap selection start: candidates={n_items}, target_bins={target_n}, "
+        f"initial_exact={'yes' if best_exact_picks else 'no'}",
+        force=True,
+    )
+
+    def _dfs(start, picks, current_sum):
+        nonlocal best_exact_score, best_exact_picks, best_any_score, best_any_picks
+        nonlocal dfs_seen, dfs_pruned
+        dfs_seen += 1
+        if picks and (
+            len(picks) > len(best_any_picks) or
+            (len(picks) == len(best_any_picks) and current_sum > best_any_score)
+        ):
+            best_any_score = current_sum
+            best_any_picks = list(picks)
+        remaining = target_n - len(picks)
+        if remaining == 0:
+            if current_sum > best_exact_score:
+                best_exact_score = current_sum
+                best_exact_picks = list(picks)
+                _progress(
+                    f"Final selection improved: Z_comb={np.sqrt(best_exact_score):.4f}, "
+                    f"visited={dfs_seen}, pruned={dfs_pruned}",
+                    force=True,
+                )
+            return
+        if start >= n_items:
+            return
+
+        ub_extra, compatible_count = _top_compatible_sum(start, picks, remaining)
+        if compatible_count < remaining:
+            dfs_pruned += 1
+            return
+        if best_exact_picks and current_sum + ub_extra <= best_exact_score + 1e-12:
+            dfs_pruned += 1
+            return
+
+        for i in range(start, n_items):
+            if not _compatible_with_picks(i, picks):
+                continue
+            child_extra, child_count = _top_compatible_sum(i + 1, picks + [i], remaining - 1)
+            if child_count < remaining - 1:
+                dfs_pruned += 1
+                continue
+            if best_exact_picks and current_sum + Z2[i] + child_extra <= best_exact_score + 1e-12:
+                dfs_pruned += 1
+                continue
+            picks.append(i)
+            _dfs(i + 1, picks, current_sum + Z2[i])
+            picks.pop()
+            _progress(
+                f"Final selection DFS: visited={dfs_seen}, pruned={dfs_pruned}, "
+                f"best_Z_comb={np.sqrt(best_exact_score):.4f}" if best_exact_picks
+                else f"Final selection DFS: visited={dfs_seen}, pruned={dfs_pruned}, no exact-N set yet"
+            )
+
+    _dfs(0, [], 0.0)
+
+    if best_exact_picks:
+        best_picks = best_exact_picks
+        best_score = best_exact_score
+    else:
+        best_picks = best_any_picks
+        best_score = best_any_score
+
+    if not best_picks:
+        raise RuntimeError("Branch-and-bound found no valid selection")
+    if len(best_picks) < N_SIGNAL_REGIONS:
+        log_warning(
+            f"No exact {N_SIGNAL_REGIONS}-region non-overlapping set exists in the "
+            f"candidate pool; returning the best {len(best_picks)}-region subset"
+        )
+
+    log_message(
+        f"  Selected {len(best_picks)} signal regions, "
+        f"sum(Z^2)={best_score:.6g}, Z_comb={float(np.sqrt(best_score)):.4f}, "
+        f"DFS visited={dfs_seen}, pruned={dfs_pruned}"
+    )
+
+    # ---- Build per-bin reports for the chosen rectangles. ----
+    top_bins = []
+    for k, idx in enumerate(best_picks):
+        thr_low_vec = list(map(float, los[idx]))
+        thr_high_vec = list(map(float, his[idx]))
+
+        m_bin = _rect_mask(thr_low_vec, thr_high_vec)
         wS = w[m_bin & is_sig]
         wB = w[m_bin & is_bkg]
-        S_bin  = float(wS.sum())
-        B_bin  = float(wB.sum())
+        S_bin = float(wS.sum())
+        B_bin = float(wB.sum())
         sS_bin = float(np.sqrt((wS ** 2).sum()))
         sB_bin = float(np.sqrt((wB ** 2).sum()))
-        S_e    = int((m_bin & is_sig).sum())
-        B_e    = int((m_bin & is_bkg).sum())
+        S_e = int((m_bin & is_sig).sum())
+        B_e = int((m_bin & is_bkg).sum())
         Z_bin, sZ_bin = _calc_Z(S_bin, B_bin, sS_bin, sB_bin)
 
-        selected_bins.append((thr_low_vec[:], thr_high_vec[:]))
-
-        # Break down the chosen bin by class, treating each class as signal in turn.
-        W_bin  = S_bin + B_bin
+        # Per-class break-down.
+        W_bin = S_bin + B_bin
         w2_bin = sS_bin ** 2 + sB_bin ** 2
-
         cat_data = []
         for cls_i, cls_name in enumerate(CLASS_NAMES):
-            mC   = (y == cls_i) & m_bin
-            wC   = w[mC]
-            S_j  = float(wC.sum())
+            mC = (y == cls_i) & m_bin
+            wC = w[mC]
+            S_j = float(wC.sum())
             sS_j = float(np.sqrt((wC ** 2).sum()))
-            B_j  = W_bin - S_j
+            B_j = W_bin - S_j
             sB_j = float(np.sqrt(max(0.0, w2_bin - sS_j ** 2)))
             Z_j, sZ_j = _calc_Z(S_j, B_j, sS_j, sB_j)
             cat_data.append({
-                "name":  cls_name,
-                "S":     S_j,  "S_err": sS_j,
-                "B":     B_j,  "B_err": sB_j,
-                "Z":     Z_j,  "Z_err": sZ_j,
+                "name": cls_name,
+                "S": S_j, "S_err": sS_j,
+                "B": B_j, "B_err": sB_j,
+                "Z": Z_j, "Z_err": sZ_j,
             })
 
         bkg_data = []
@@ -895,8 +1259,8 @@ def find_signal_regions(proba, y, w):
             mC = (y == bkg_i) & m_bin
             wC = w[mC]
             bkg_data.append({
-                "name":  CLASS_NAMES[bkg_i],
-                "B":     float(wC.sum()),
+                "name": CLASS_NAMES[bkg_i],
+                "B": float(wC.sum()),
                 "B_err": float(np.sqrt((wC ** 2).sum())),
             })
 
@@ -905,14 +1269,15 @@ def find_signal_regions(proba, y, w):
 
         tail_sig_eff, tail_bkg_eff = [], []
         for d in range(D):
-            idx = max(0, min(
-                int(np.searchsorted(thr_1d, thr_low_vec[d], side="right") - 1), T - 1
+            tidx = max(0, min(
+                int(np.searchsorted(thr_1d, thr_low_vec[d], side="right") - 1),
+                T_REF - 1,
             ))
             tail_sig_eff.append(
-                (S_tail_by_dim[d, idx] / S_total) if S_total > 0 else float("nan")
+                (S_tail_by_dim[d, tidx] / S_total) if S_total > 0 else float("nan")
             )
             tail_bkg_eff.append(
-                (B_tail_by_dim[d, idx] / B_total) if B_total > 0 else float("nan")
+                (B_tail_by_dim[d, tidx] / B_total) if B_total > 0 else float("nan")
             )
 
         top_bins.append({

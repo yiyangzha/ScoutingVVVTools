@@ -3,7 +3,15 @@
   "n_signal_regions": 4,
   "bdt_root": "../BDT/fat2",
   "output_dir": "./output/fat2",
-  "n_thresholds": 6,
   "min_bkg_weight": 3.0,
-  "rounds": 10
+  "max_edge_candidates_per_axis": 120,
+  "beam_width": 48,
+  "top_intervals_per_axis": 8,
+  "coordinate_rounds": 8,
+  "local_refine_rounds": 3,
+  "local_refine_neighbor_edges": 48,
+  "local_refine_top_candidates": 512,
+  "candidate_pool_limit": 20000,
+  "progress_every_seconds": 30,
+  "seed_quantiles": [0.5, 0.75, 0.9, 0.95, 0.98, 0.99]
 }
