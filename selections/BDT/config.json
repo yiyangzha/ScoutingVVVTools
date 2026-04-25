@@ -12,20 +12,20 @@
   "decor_loss_mode": "smooth_cvm",
   "decor_n_bins": 5,
   "decor_n_thresholds": 31,
-  "decor_score_tau": 0.15,
+  "decor_score_tau": 0.1,
   "decor_bin_tau_scale": 0.25,
   "class_groups": {
     "VVV": ["www", "wwz", "wzz", "zzz"],
     "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
     "Top": ["ttbar_had", "ttbar_semilep", "tbarwplus_had", "twminus_had"],
     "VV":  ["ww", "wz", "zz"],
-    "QCD": ["qcd_ht100to200", "qcd_ht200to400", "qcd_ht400to600",
-            "qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200",
-            "qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
+    "QCD_HTLOW": ["qcd_ht100to200", "qcd_ht200to400", "qcd_ht400to600"],
+    "QCD_HTMID": ["qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200"],
+    "QCD_HTHIGH": ["qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
   },
   "fat2": {
     "n_estimators": 2000,
-    "n_estimators_decorr": 1500,
+    "n_estimators_decorr": 500,
     "max_depth": 10,
     "gamma": 3,
     "learning_rate": 0.01,
