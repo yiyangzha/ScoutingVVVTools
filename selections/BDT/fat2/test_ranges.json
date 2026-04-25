@@ -1,0 +1,415 @@
+{
+  "tree_name": "fat2",
+  "train_fraction": 0.7,
+  "test_fraction": 0.30000000000000004,
+  "samples": {
+    "www": {
+      "total_entries": 244236,
+      "train_entries_total": 170965,
+      "train_entries_used": 170965,
+      "test_entries_total": 73271,
+      "test_global_range": [
+        170965,
+        244236
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/www.root",
+          "entry_start": 170965,
+          "entry_stop": 244236
+        }
+      ]
+    },
+    "wwz": {
+      "total_entries": 1348270,
+      "train_entries_total": 943788,
+      "train_entries_used": 943788,
+      "test_entries_total": 404482,
+      "test_global_range": [
+        943788,
+        1348270
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/wwz.root",
+          "entry_start": 943788,
+          "entry_stop": 1348270
+        }
+      ]
+    },
+    "wzz": {
+      "total_entries": 1230983,
+      "train_entries_total": 861688,
+      "train_entries_used": 861688,
+      "test_entries_total": 369295,
+      "test_global_range": [
+        861688,
+        1230983
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/wzz.root",
+          "entry_start": 861688,
+          "entry_stop": 1230983
+        }
+      ]
+    },
+    "zzz": {
+      "total_entries": 593400,
+      "train_entries_total": 415380,
+      "train_entries_used": 415380,
+      "test_entries_total": 178020,
+      "test_global_range": [
+        415380,
+        593400
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/zzz.root",
+          "entry_start": 415380,
+          "entry_stop": 593400
+        }
+      ]
+    },
+    "zh_had": {
+      "total_entries": 117864,
+      "train_entries_total": 82504,
+      "train_entries_used": 82504,
+      "test_entries_total": 35360,
+      "test_global_range": [
+        82504,
+        117864
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/zh_had.root",
+          "entry_start": 82504,
+          "entry_stop": 117864
+        }
+      ]
+    },
+    "ggzh_had": {
+      "total_entries": 526413,
+      "train_entries_total": 368489,
+      "train_entries_used": 368489,
+      "test_entries_total": 157924,
+      "test_global_range": [
+        368489,
+        526413
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/ggzh_had.root",
+          "entry_start": 368489,
+          "entry_stop": 526413
+        }
+      ]
+    },
+    "wplush": {
+      "total_entries": 60737,
+      "train_entries_total": 42515,
+      "train_entries_used": 42515,
+      "test_entries_total": 18222,
+      "test_global_range": [
+        42515,
+        60737
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/wplush.root",
+          "entry_start": 42515,
+          "entry_stop": 60737
+        }
+      ]
+    },
+    "wminush": {
+      "total_entries": 53167,
+      "train_entries_total": 37216,
+      "train_entries_used": 37216,
+      "test_entries_total": 15951,
+      "test_global_range": [
+        37216,
+        53167
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/signal_mixed/wminush.root",
+          "entry_start": 37216,
+          "entry_stop": 53167
+        }
+      ]
+    },
+    "qcd_ht100to200": {
+      "total_entries": 2599,
+      "train_entries_total": 1819,
+      "train_entries_used": 1819,
+      "test_entries_total": 780,
+      "test_global_range": [
+        1819,
+        2599
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht100to200.root",
+          "entry_start": 1819,
+          "entry_stop": 2599
+        }
+      ]
+    },
+    "qcd_ht200to400": {
+      "total_entries": 38744,
+      "train_entries_total": 27120,
+      "train_entries_used": 27120,
+      "test_entries_total": 11624,
+      "test_global_range": [
+        27120,
+        38744
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht200to400.root",
+          "entry_start": 27120,
+          "entry_stop": 38744
+        }
+      ]
+    },
+    "qcd_ht400to600": {
+      "total_entries": 2024302,
+      "train_entries_total": 1417011,
+      "train_entries_used": 1417011,
+      "test_entries_total": 607291,
+      "test_global_range": [
+        1417011,
+        2024302
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht400to600.root",
+          "entry_start": 1417011,
+          "entry_stop": 2024302
+        }
+      ]
+    },
+    "qcd_ht600to800": {
+      "total_entries": 7664196,
+      "train_entries_total": 5364937,
+      "train_entries_used": 5364937,
+      "test_entries_total": 2299259,
+      "test_global_range": [
+        5364937,
+        7664196
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht600to800.root",
+          "entry_start": 5364937,
+          "entry_stop": 7664196
+        }
+      ]
+    },
+    "qcd_ht800to1000": {
+      "total_entries": 9081687,
+      "train_entries_total": 6357180,
+      "train_entries_used": 6357180,
+      "test_entries_total": 2724507,
+      "test_global_range": [
+        6357180,
+        9081687
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht800to1000.root",
+          "entry_start": 6357180,
+          "entry_stop": 9081687
+        }
+      ]
+    },
+    "qcd_ht1000to1200": {
+      "total_entries": 3800964,
+      "train_entries_total": 2660674,
+      "train_entries_used": 2660674,
+      "test_entries_total": 1140290,
+      "test_global_range": [
+        2660674,
+        3800964
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht1000to1200.root",
+          "entry_start": 2660674,
+          "entry_stop": 3800964
+        }
+      ]
+    },
+    "qcd_ht1200to1500": {
+      "total_entries": 1098672,
+      "train_entries_total": 769070,
+      "train_entries_used": 769070,
+      "test_entries_total": 329602,
+      "test_global_range": [
+        769070,
+        1098672
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht1200to1500.root",
+          "entry_start": 769070,
+          "entry_stop": 1098672
+        }
+      ]
+    },
+    "qcd_ht1500to2000": {
+      "total_entries": 2641187,
+      "train_entries_total": 1848830,
+      "train_entries_used": 1848830,
+      "test_entries_total": 792357,
+      "test_global_range": [
+        1848830,
+        2641187
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht1500to2000.root",
+          "entry_start": 1848830,
+          "entry_stop": 2641187
+        }
+      ]
+    },
+    "qcd_ht2000": {
+      "total_entries": 2516212,
+      "train_entries_total": 1761348,
+      "train_entries_used": 1761348,
+      "test_entries_total": 754864,
+      "test_global_range": [
+        1761348,
+        2516212
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/qcd_ht2000.root",
+          "entry_start": 1761348,
+          "entry_stop": 2516212
+        }
+      ]
+    },
+    "ttbar_had": {
+      "total_entries": 1728382,
+      "train_entries_total": 1209867,
+      "train_entries_used": 1209867,
+      "test_entries_total": 518515,
+      "test_global_range": [
+        1209867,
+        1728382
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/ttbar_had.root",
+          "entry_start": 1209867,
+          "entry_stop": 1728382
+        }
+      ]
+    },
+    "ttbar_semilep": {
+      "total_entries": 19239563,
+      "train_entries_total": 13467694,
+      "train_entries_used": 10000000,
+      "test_entries_total": 5771869,
+      "test_global_range": [
+        13467694,
+        19239563
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/ttbar_semilep.root",
+          "entry_start": 13467694,
+          "entry_stop": 19239563
+        }
+      ]
+    },
+    "ww": {
+      "total_entries": 266046,
+      "train_entries_total": 186232,
+      "train_entries_used": 186232,
+      "test_entries_total": 79814,
+      "test_global_range": [
+        186232,
+        266046
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/ww.root",
+          "entry_start": 186232,
+          "entry_stop": 266046
+        }
+      ]
+    },
+    "wz": {
+      "total_entries": 162635,
+      "train_entries_total": 113844,
+      "train_entries_used": 113844,
+      "test_entries_total": 48791,
+      "test_global_range": [
+        113844,
+        162635
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/wz.root",
+          "entry_start": 113844,
+          "entry_stop": 162635
+        }
+      ]
+    },
+    "zz": {
+      "total_entries": 24034,
+      "train_entries_total": 16823,
+      "train_entries_used": 16823,
+      "test_entries_total": 7211,
+      "test_global_range": [
+        16823,
+        24034
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/zz.root",
+          "entry_start": 16823,
+          "entry_stop": 24034
+        }
+      ]
+    },
+    "tbarwplus_had": {
+      "total_entries": 1069998,
+      "train_entries_total": 748998,
+      "train_entries_used": 748998,
+      "test_entries_total": 321000,
+      "test_global_range": [
+        748998,
+        1069998
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/tbarwplus_had.root",
+          "entry_start": 748998,
+          "entry_stop": 1069998
+        }
+      ]
+    },
+    "twminus_had": {
+      "total_entries": 1071683,
+      "train_entries_total": 750178,
+      "train_entries_used": 750178,
+      "test_entries_total": 321505,
+      "test_global_range": [
+        750178,
+        1071683
+      ],
+      "test_segments": [
+        {
+          "file": "/ihepfs/cms_thu/yiyangzhao/Research/VVV/ScoutingVVVTools_new/dataset/bkg_mixed/twminus_had.root",
+          "entry_start": 750178,
+          "entry_stop": 1071683
+        }
+      ]
+    }
+  }
+}

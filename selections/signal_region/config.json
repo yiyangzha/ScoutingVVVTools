@@ -3,7 +3,7 @@
   "n_signal_regions": 4,
   "bdt_root": "../BDT/fat2",
   "output_dir": "./output/fat2",
-  "n_thresholds": 16,
+  "n_thresholds": 8,
   "min_bkg_weight": 5.0,
-  "rounds": 5
+  "rounds": 8
 }
