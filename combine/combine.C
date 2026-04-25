@@ -185,7 +185,8 @@ struct ClassRegistry {
     std::unordered_map<std::string, std::string> sample_to_class;
     std::set<std::string> signal_classes;
     std::vector<std::string> signal_samples;
-    std::string qcd_class;
+    std::vector<std::string> qcd_classes;
+    std::set<std::string> qcd_class_set;
     std::unordered_map<std::string, SampleInfo> samples;
 };
 
@@ -229,10 +230,13 @@ ClassRegistry loadRegistry(const AppConfig& cfg) {
         }
         reg.class_members[kv.first] = std::move(members);
         if (any && all_signal) reg.signal_classes.insert(kv.first);
-        if (slugify(kv.first) == "qcd") reg.qcd_class = kv.first;
+        if (slugify(kv.first).find("qcd") != std::string::npos) {
+            reg.qcd_classes.push_back(kv.first);
+            reg.qcd_class_set.insert(kv.first);
+        }
     }
-    if (reg.qcd_class.empty()) {
-        throw std::runtime_error("class_groups must contain a QCD class");
+    if (reg.qcd_classes.empty()) {
+        throw std::runtime_error("class_groups must contain at least one QCD class");
     }
 
     for (const auto& c : reg.class_order) {
@@ -276,7 +280,7 @@ struct ChannelData {
     int n_sr = 0;
     std::map<std::string, YieldCov> sample;       // per MC sample (MC true)
     std::map<std::string, YieldCov> group;        // per BDT class (MC true)
-    YieldCov qcd_predict;                         // ABCD prediction (with full cov)
+    YieldCov qcd_predict;                         // merged ABCD QCD prediction
 };
 
 YieldCov readYieldCov(TFile& f, const std::string& prefix) {
@@ -425,6 +429,10 @@ struct Process {
     Process() : cov(1) {}
 };
 
+bool isQcdClass(const ClassRegistry& reg, const std::string& class_name) {
+    return reg.qcd_class_set.count(class_name) != 0u;
+}
+
 void addYieldCov(std::vector<double>& yields, TMatrixDSym& cov, const YieldCov& src) {
     if (yields.empty()) {
         yields = std::vector<double>(src.n(), 0.0);
@@ -519,6 +527,7 @@ std::vector<Process> buildGroupProcesses(const ChannelData& ch, const ClassRegis
                                          const Scenario& sc, bool use_abcd) {
     std::vector<Process> out;
     std::set<std::string> process_names;
+    bool qcd_predict_added = false;
 
     Process sig;
     sig.name = "signal";
@@ -552,14 +561,17 @@ std::vector<Process> buildGroupProcesses(const ChannelData& ch, const ClassRegis
         if (sc.scope == "combined" && reg.signal_classes.count(cls)) continue;
         if (sc.scope == "class" && cls == sc.name) continue;
 
-        if (cls == reg.qcd_class && use_abcd) {
-            appendProcess(out, process_names,
-                          makeProcessFromYieldCov(
-                              "bkg_" + slugify(cls),
-                              ch.qcd_predict,
-                              "qcd_predict in channel '" + ch.name + "'"),
-                          "grouped scenario '" + sc.scope + "/" + sc.name +
-                          "' in channel '" + ch.name + "'");
+        if (use_abcd && isQcdClass(reg, cls)) {
+            if (!qcd_predict_added) {
+                appendProcess(out, process_names,
+                              makeProcessFromYieldCov(
+                                  "bkg_qcd",
+                                  ch.qcd_predict,
+                                  "qcd_predict in channel '" + ch.name + "'"),
+                              "grouped scenario '" + sc.scope + "/" + sc.name +
+                              "' in channel '" + ch.name + "'");
+                qcd_predict_added = true;
+            }
             continue;
         }
 
@@ -593,14 +605,18 @@ std::vector<Process> buildSampleProcesses(const ChannelData& ch, const ClassRegi
                       "signal sample '" + signal_sample + "' in channel '" + ch.name + "'"),
                   "sample scenario '" + signal_sample + "' in channel '" + ch.name + "'");
 
+    bool qcd_predict_added = false;
     for (const auto& cls : reg.class_order) {
-        if (cls == reg.qcd_class && use_abcd) {
-            appendProcess(out, process_names,
-                          makeProcessFromYieldCov(
-                              "bkg_" + slugify(cls),
-                              ch.qcd_predict,
-                              "qcd_predict in channel '" + ch.name + "'"),
-                          "sample scenario '" + signal_sample + "' in channel '" + ch.name + "'");
+        if (use_abcd && isQcdClass(reg, cls)) {
+            if (!qcd_predict_added) {
+                appendProcess(out, process_names,
+                              makeProcessFromYieldCov(
+                                  "bkg_qcd",
+                                  ch.qcd_predict,
+                                  "qcd_predict in channel '" + ch.name + "'"),
+                              "sample scenario '" + signal_sample + "' in channel '" + ch.name + "'");
+                qcd_predict_added = true;
+            }
             continue;
         }
 
@@ -1272,7 +1288,8 @@ int runMain() {
     ClassRegistry reg = loadRegistry(cfg);
     logMessage("Loaded registry: classes=" + std::to_string(reg.class_order.size()) +
                ", signal_classes=" + std::to_string(reg.signal_classes.size()) +
-               ", signal_samples=" + std::to_string(reg.signal_samples.size()));
+               ", signal_samples=" + std::to_string(reg.signal_samples.size()) +
+               ", qcd_classes=" + std::to_string(reg.qcd_classes.size()));
 
     std::vector<ChannelData> channels;
     for (const auto& ch : cfg.channels) {

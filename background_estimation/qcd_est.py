@@ -89,13 +89,11 @@ CLASS_NAMES = list(CLASS_GROUPS.keys())
 NUM_CLASSES = len(CLASS_NAMES)
 AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
 
-QCD_CLASS_NAME = None
-for class_name in CLASS_NAMES:
-    if class_name.lower() == "qcd":
-        QCD_CLASS_NAME = class_name
-        break
-if QCD_CLASS_NAME is None:
-    raise RuntimeError("BDT class_groups must contain a QCD class")
+QCD_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if "qcd" in class_name.lower()]
+if not QCD_CLASS_NAMES:
+    raise RuntimeError("BDT class_groups must contain at least one QCD class")
+QCD_CLASS_SET = set(QCD_CLASS_NAMES)
+QCD_PREDICT_GROUP_NAME = "QCD"
 
 
 # -------------------- Sample registry --------------------
@@ -116,7 +114,9 @@ for class_idx, (class_name, members) in enumerate(CLASS_GROUPS.items()):
         SAMPLE_TO_CLASS[sample_name] = class_idx
         SAMPLE_TO_GROUP[sample_name] = class_name
 
-QCD_SAMPLES = set(CLASS_GROUPS[QCD_CLASS_NAME])
+QCD_SAMPLES = set()
+for class_name in QCD_CLASS_NAMES:
+    QCD_SAMPLES.update(CLASS_GROUPS[class_name])
 
 
 # -------------------- Threshold filtering --------------------
@@ -841,6 +841,11 @@ def main() -> None:
         f"load_branches={len(load_branches)}, signal_regions={len(region_labels)}, "
         f"non_mass_thresholds={len(bdt_thresholds)}, mass_thresholds={len(mass_thresholds)}"
     )
+    log_message(
+        "QCD classes for ABCD merge: "
+        + ", ".join(QCD_CLASS_NAMES)
+        + f" ({len(QCD_SAMPLES)} samples)"
+    )
     log_message(f"Output directory: {OUTPUT_DIR}")
 
     df_all = load_test_data(load_branches)
@@ -921,7 +926,7 @@ def main() -> None:
         f"D={int(np.count_nonzero(d_mask))}"
     )
 
-    qcd_mask = np.isin(sample_labels, list(QCD_SAMPLES))
+    qcd_mask = np.isin(sample_labels, sorted(QCD_SAMPLES))
     weights = w
 
     def _sum_weight(mask):
@@ -1001,22 +1006,26 @@ def main() -> None:
     )
     pred_qcd_vars = np.diag(pred_qcd_cov).astype(float)
 
-    pred_group_yields = {group: group_yields[group].copy() for group in CLASS_NAMES}
-    pred_group_vars = {group: group_vars[group].copy() for group in CLASS_NAMES}
-    pred_group_yields[QCD_CLASS_NAME] = pred_qcd_vals.copy()
-    pred_group_vars[QCD_CLASS_NAME] = pred_qcd_vars.copy()
+    non_qcd_groups = [group for group in CLASS_NAMES if group not in QCD_CLASS_SET]
+    pred_group_yields = {group: group_yields[group].copy() for group in non_qcd_groups}
+    pred_group_vars = {group: group_vars[group].copy() for group in non_qcd_groups}
+    pred_group_yields[QCD_PREDICT_GROUP_NAME] = pred_qcd_vals.copy()
+    pred_group_vars[QCD_PREDICT_GROUP_NAME] = pred_qcd_vars.copy()
+    pred_group_order = non_qcd_groups + [QCD_PREDICT_GROUP_NAME]
 
     true_total_vals = np.zeros(len(region_labels), dtype=float)
     true_total_vars = np.zeros(len(region_labels), dtype=float)
     pred_total_vals = np.zeros(len(region_labels), dtype=float)
-    pred_total_vars = np.zeros(len(region_labels), dtype=float)
     for group_name in CLASS_NAMES:
         true_total_vals += group_yields[group_name]
         true_total_vars += group_vars[group_name]
+    pred_total_stat_vars = np.zeros(len(region_labels), dtype=float)
+    for group_name in non_qcd_groups:
         pred_total_vals += pred_group_yields[group_name]
-        pred_total_vars += pred_group_vars[group_name]
+        pred_total_stat_vars += pred_group_vars[group_name]
+    pred_total_vals += pred_qcd_vals
 
-    pred_total_stat_vars = true_total_vars - group_vars[QCD_CLASS_NAME] + pred_qcd_stat_vars
+    pred_total_stat_vars += pred_qcd_stat_vars
     pred_total_scale_vars = pred_qcd_scale_vars.copy()
     pred_total_cov = np.diag(pred_total_stat_vars) + np.outer(
         np.sqrt(np.maximum(pred_total_scale_vars, 0.0)),
@@ -1080,18 +1089,18 @@ def main() -> None:
         true_total_vals,
         true_total_vars,
         os.path.join(OUTPUT_DIR, "qcd_abcd_signal_regions_total.pdf"),
-        CLASS_NAMES,
+        pred_group_order,
         "Events",
     )
     plot_signal_region_prediction(
         region_labels,
-        {QCD_CLASS_NAME: pred_qcd_vals.copy()},
+        {QCD_PREDICT_GROUP_NAME: pred_qcd_vals.copy()},
         pred_qcd_vals,
         pred_qcd_vars,
         true_qcd_vals,
         true_qcd_vars,
         os.path.join(OUTPUT_DIR, "qcd_abcd_signal_regions_qcd.pdf"),
-        [QCD_CLASS_NAME],
+        [QCD_PREDICT_GROUP_NAME],
         "QCD Events",
     )
 
