@@ -1,5 +1,5 @@
 {
-  "submit_trees": ["fat2"],
+  "submit_trees": ["fat3"],
   "sample_config": "../../src/sample.json",
   "input_root": "../../dataset",
   "input_pattern": "{input_root}/{sample_group}_mixed/{sample}.root",
@@ -25,7 +25,7 @@
   },
   "fat2": {
     "n_estimators": 2000,
-    "n_estimators_decorr": 500,
+    "n_estimators_decorr": 1500,
     "max_depth": 10,
     "gamma": 3,
     "learning_rate": 0.01,
@@ -43,8 +43,8 @@
     "event_reweight_branches": ["weight_pu"]
   },
   "fat3": {
-    "n_estimators": 1500,
-    "n_estimators_decorr": 500,
+    "n_estimators": 2000,
+    "n_estimators_decorr": 1500,
     "max_depth": 8,
     "gamma": 5,
     "learning_rate": 0.01,
