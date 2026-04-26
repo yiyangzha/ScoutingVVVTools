@@ -3,6 +3,8 @@ import json
 import gc
 import pickle
 import time
+import ctypes
+import subprocess
 import uproot
 import pandas as pd
 import numpy as np
@@ -59,6 +61,9 @@ LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edg
 LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
 CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_limit", 20000)))
 PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
+FINAL_SELECTION_CANDIDATES = max(N_SIGNAL_REGIONS, int(scan_cfg.get("final_selection_candidates", 5000)))
+SELECTION_BEAM_WIDTH = max(1, int(scan_cfg.get("selection_beam_width", 512)))
+MAX_THREADS = max(1, int(scan_cfg.get("max_threads", 8)))
 SEED_QUANTILES = [
     float(q) for q in scan_cfg.get(
         "seed_quantiles", [0.5, 0.75, 0.9, 0.95, 0.98, 0.99]
@@ -1107,115 +1112,169 @@ def find_signal_regions(proba, y, w):
     def _compatible_with_picks(i, picks):
         return all(not _overlap(los[i], his[i], los[j], his[j]) for j in picks)
 
-    def _top_compatible_sum(start, picks, k):
-        if k <= 0:
-            return 0.0, 0
-        total = 0.0
-        count = 0
-        for idx in range(start, n_items):
-            if _compatible_with_picks(idx, picks):
-                total += Z2[idx]
-                count += 1
-                if count >= k:
+    def _prune_state_bucket(bucket):
+        bucket.sort(key=lambda state: (-state[0], state[1]))
+        if len(bucket) > SELECTION_BEAM_WIDTH:
+            del bucket[SELECTION_BEAM_WIDTH:]
+
+    def _select_regions_beam_python(n_select):
+        states = [[] for _ in range(target_n + 1)]
+        states[0] = [(0.0, tuple())]
+        for i in range(n_select):
+            max_count = min(i, target_n - 1)
+            for count in range(max_count, -1, -1):
+                additions = []
+                for score, picks in states[count]:
+                    if _compatible_with_picks(i, picks):
+                        additions.append((score + Z2[i], picks + (i,)))
+                if additions:
+                    states[count + 1].extend(additions)
+                    _prune_state_bucket(states[count + 1])
+            _progress(
+                f"Final selection beam: processed {i + 1}/{n_select}, "
+                f"best_count={max(c for c, bucket in enumerate(states) if bucket)}"
+            )
+        for count in range(target_n, 0, -1):
+            if states[count]:
+                _prune_state_bucket(states[count])
+                return list(states[count][0][1])
+        return []
+
+    def _build_openmp_selector():
+        src = os.path.join(_SCRIPT_DIR, "openmp_region_select.cpp")
+        if not os.path.exists(src):
+            return None
+        build_dir = os.path.join(OUTPUT_DIR, ".openmp")
+        os.makedirs(build_dir, exist_ok=True)
+        lib = os.path.join(build_dir, "openmp_region_select.so")
+        needs_build = (
+            not os.path.exists(lib) or
+            os.path.getmtime(lib) < os.path.getmtime(src)
+        )
+        if needs_build:
+            base_cmd = ["c++", "-O3", "-std=c++17", "-fPIC", "-shared"]
+            attempts = [
+                (
+                    "Homebrew libomp",
+                    [
+                        "-Xpreprocessor", "-fopenmp", "-D_OPENMP=201511",
+                        "-I/opt/homebrew/opt/libomp/include",
+                    ],
+                    ["-L/opt/homebrew/opt/libomp/lib", "-lomp"],
+                ),
+                (
+                    "Homebrew libomp (/usr/local)",
+                    [
+                        "-Xpreprocessor", "-fopenmp", "-D_OPENMP=201511",
+                        "-I/usr/local/opt/libomp/include",
+                    ],
+                    ["-L/usr/local/opt/libomp/lib", "-lomp"],
+                ),
+                ("generic -fopenmp", ["-fopenmp"], []),
+            ]
+            errors = []
+            built = False
+            for label, cflags, ldflags in attempts:
+                cmd = base_cmd + cflags + [src, "-o", lib] + ldflags
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True)
+                except OSError as exc:
+                    errors.append(f"{label}: {exc}")
+                    continue
+                if proc.returncode == 0:
+                    log_message(f"  OpenMP selector built with {label}")
+                    built = True
                     break
-        return float(total), count
+                detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                if detail:
+                    errors.append(f"{label}: {detail[-1]}")
+                else:
+                    errors.append(f"{label}: compiler returned {proc.returncode}")
+            if not built:
+                log_warning(
+                    "OpenMP selector build failed; falling back to Python beam. "
+                    + " | ".join(errors)
+                )
+                return None
+        try:
+            helper = ctypes.CDLL(lib)
+            fn = helper.select_regions_beam_openmp
+            fn.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.c_int,
+            ]
+            fn.restype = ctypes.c_int
+            return fn
+        except Exception as exc:
+            log_warning(f"OpenMP selector load failed; falling back to Python beam: {exc}")
+            return None
 
-    # ---- Greedy initial exact-N bound. ----
-    greedy_exact = []
-    for i in range(n_items):
-        if len(greedy_exact) >= N_SIGNAL_REGIONS:
-            break
-        if _compatible_with_picks(i, greedy_exact):
-            greedy_exact.append(i)
+    def _select_regions_beam_openmp(n_select):
+        if MAX_THREADS <= 1 or target_n > 16:
+            return None
+        fn = _build_openmp_selector()
+        if fn is None:
+            return None
+        lows_arr = np.ascontiguousarray(np.asarray(los[:n_select], dtype=np.float64))
+        highs_arr = np.ascontiguousarray(np.asarray(his[:n_select], dtype=np.float64))
+        z2_arr = np.ascontiguousarray(np.asarray(Z2[:n_select], dtype=np.float64))
+        out = np.full(target_n, -1, dtype=np.int32)
+        ret = fn(
+            ctypes.c_int(n_select),
+            ctypes.c_int(D),
+            ctypes.c_int(target_n),
+            ctypes.c_int(SELECTION_BEAM_WIDTH),
+            lows_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            highs_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            z2_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            out.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+            ctypes.c_int(MAX_THREADS),
+        )
+        if ret <= 0:
+            log_warning(f"OpenMP selector returned {ret}; falling back to Python beam")
+            return None
+        return [int(v) for v in out[:ret] if int(v) >= 0]
 
-    best_exact_picks = list(greedy_exact) if len(greedy_exact) == N_SIGNAL_REGIONS else []
-    best_exact_score = float(np.sum(Z2[best_exact_picks])) if best_exact_picks else -np.inf
-    best_any_picks = list(greedy_exact)
-    best_any_score = float(np.sum(Z2[best_any_picks])) if best_any_picks else 0.0
-
-    # ---- Branch-and-bound exact selection over the pool. ----
+    # ---- Fast bounded set-packing over the candidate pool. ----
     target_n = N_SIGNAL_REGIONS
-    dfs_seen = 0
-    dfs_pruned = 0
-
+    n_select = min(n_items, FINAL_SELECTION_CANDIDATES)
+    if n_select < n_items:
+        log_warning(
+            f"Final selection uses top {n_select} of {n_items} candidates for speed; "
+            "increase final_selection_candidates for a wider search"
+        )
     _progress(
-        f"Final non-overlap selection start: candidates={n_items}, target_bins={target_n}, "
-        f"initial_exact={'yes' if best_exact_picks else 'no'}",
+        f"Final beam selection start: candidates={n_select}, target_bins={target_n}, "
+        f"selection_beam_width={SELECTION_BEAM_WIDTH}, max_threads={MAX_THREADS}",
         force=True,
     )
 
-    def _dfs(start, picks, current_sum):
-        nonlocal best_exact_score, best_exact_picks, best_any_score, best_any_picks
-        nonlocal dfs_seen, dfs_pruned
-        dfs_seen += 1
-        if picks and (
-            len(picks) > len(best_any_picks) or
-            (len(picks) == len(best_any_picks) and current_sum > best_any_score)
-        ):
-            best_any_score = current_sum
-            best_any_picks = list(picks)
-        remaining = target_n - len(picks)
-        if remaining == 0:
-            if current_sum > best_exact_score:
-                best_exact_score = current_sum
-                best_exact_picks = list(picks)
-                _progress(
-                    f"Final selection improved: Z_comb={np.sqrt(best_exact_score):.4f}, "
-                    f"visited={dfs_seen}, pruned={dfs_pruned}",
-                    force=True,
-                )
-            return
-        if start >= n_items:
-            return
-
-        ub_extra, compatible_count = _top_compatible_sum(start, picks, remaining)
-        if compatible_count < remaining:
-            dfs_pruned += 1
-            return
-        if best_exact_picks and current_sum + ub_extra <= best_exact_score + 1e-12:
-            dfs_pruned += 1
-            return
-
-        for i in range(start, n_items):
-            if not _compatible_with_picks(i, picks):
-                continue
-            child_extra, child_count = _top_compatible_sum(i + 1, picks + [i], remaining - 1)
-            if child_count < remaining - 1:
-                dfs_pruned += 1
-                continue
-            if best_exact_picks and current_sum + Z2[i] + child_extra <= best_exact_score + 1e-12:
-                dfs_pruned += 1
-                continue
-            picks.append(i)
-            _dfs(i + 1, picks, current_sum + Z2[i])
-            picks.pop()
-            _progress(
-                f"Final selection DFS: visited={dfs_seen}, pruned={dfs_pruned}, "
-                f"best_Z_comb={np.sqrt(best_exact_score):.4f}" if best_exact_picks
-                else f"Final selection DFS: visited={dfs_seen}, pruned={dfs_pruned}, no exact-N set yet"
-            )
-
-    _dfs(0, [], 0.0)
-
-    if best_exact_picks:
-        best_picks = best_exact_picks
-        best_score = best_exact_score
-    else:
-        best_picks = best_any_picks
-        best_score = best_any_score
+    best_picks = _select_regions_beam_openmp(n_select)
+    selector_name = "OpenMP beam"
+    if best_picks is None:
+        selector_name = "Python beam"
+        best_picks = _select_regions_beam_python(n_select)
+    best_score = float(np.sum(Z2[best_picks])) if best_picks else 0.0
 
     if not best_picks:
-        raise RuntimeError("Branch-and-bound found no valid selection")
+        raise RuntimeError("Final beam selection found no valid signal-region set")
     if len(best_picks) < N_SIGNAL_REGIONS:
         log_warning(
-            f"No exact {N_SIGNAL_REGIONS}-region non-overlapping set exists in the "
-            f"candidate pool; returning the best {len(best_picks)}-region subset"
+            f"Final beam selection found only {len(best_picks)} non-overlapping "
+            f"regions; requested {N_SIGNAL_REGIONS}"
         )
 
     log_message(
         f"  Selected {len(best_picks)} signal regions, "
         f"sum(Z^2)={best_score:.6g}, Z_comb={float(np.sqrt(best_score)):.4f}, "
-        f"DFS visited={dfs_seen}, pruned={dfs_pruned}"
+        f"selector={selector_name}"
     )
 
     # ---- Build per-bin reports for the chosen rectangles. ----
