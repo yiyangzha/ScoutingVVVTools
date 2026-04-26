@@ -643,8 +643,8 @@ def plot_signal_regions_2d(result, proba, y, w):
         ax.legend(handles=handles, fontsize=9, loc="upper right", framealpha=0.95)
         _savefig(stem)
 
-    _draw(False, "sr_regions_2d_no_regions")
-    _draw(True, "sr_regions_2d")
+    _draw(False, "scores_no_regions")
+    _draw(True, "scores")
 
 
 # -------------------- Signal-region scan --------------------
