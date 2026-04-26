@@ -2,9 +2,10 @@
 //
 // Build CMS combine datacards from qcd_est.py output and run Significance +
 // AsymptoticLimits. Each input ROOT file is one channel with its matching
-// BDT output directory; channels are concatenated with combineCards.py. Full
-// per-process covariance between signal regions is injected via
-// eigen-decomposed Gaussian shape nuisances.
+// BDT output directory; channels are concatenated with combineCards.py.
+// By default, statistical uncertainty comes from combine's binned Poisson
+// likelihood. Stored ROOT covariance blocks can optionally be injected as
+// extra eigen-decomposed Gaussian shape nuisances.
 //
 // Invocation follows the other C++ tools: the binary reads its config from
 // $COMBINE_CONFIG_PATH (or ./config.json). Any command-line arguments are
@@ -133,6 +134,7 @@ struct AppConfig {
     std::string combine_cmd = "combine";
     std::string combine_cards_cmd = "combineCards.py";
     double eigen_rel_cutoff = 1e-10;
+    bool use_root_covariance = false;
     bool rescale_shape_modes_to_positive = true;
     bool keep_work = true;
     std::string work_dir;  // resolved under output_dir
@@ -168,6 +170,7 @@ AppConfig loadAppConfig() {
     cfg.combine_cards_cmd = payload.getStringOr("combine_cards_cmd", "combineCards.py");
     cfg.eigen_rel_cutoff = static_cast<double>(
         payload.getNumberOr("eigen_rel_cutoff", 1e-10L));
+    cfg.use_root_covariance = payload.getBoolOr("use_root_covariance", false);
     cfg.rescale_shape_modes_to_positive =
         payload.getBoolOr("rescale_shape_modes_to_positive", true);
     cfg.keep_work = payload.getBoolOr("keep_work", true);
@@ -1187,7 +1190,11 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
         }
         pc.modes.reserve(pc.processes.size());
         for (const auto& p : pc.processes) {
-            pc.modes.push_back(decomposeCov(p.cov, cfg.eigen_rel_cutoff));
+            if (cfg.use_root_covariance) {
+                pc.modes.push_back(decomposeCov(p.cov, cfg.eigen_rel_cutoff));
+            } else {
+                pc.modes.emplace_back();
+            }
             for (size_t k = 0; k < pc.modes.back().size(); ++k) {
                 const std::string nuis = "cov_" + ch.name + "_" + p.name +
                                          "_eig" + std::to_string(k);
@@ -1329,6 +1336,8 @@ int runMain() {
     fs::create_directories(cfg.work_dir);
     logMessage("combine.C: output_dir=" + cfg.output_dir);
     logMessage("combine.C: work_dir=" + cfg.work_dir);
+    logMessage(std::string("combine.C: root covariance nuisances=") +
+               (cfg.use_root_covariance ? "enabled" : "disabled"));
     for (const auto& ch : cfg.channels) {
         logMessage("combine.C: channel=" + ch.name +
                    " root_file=" + ch.root_file +

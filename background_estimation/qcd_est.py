@@ -96,6 +96,16 @@ QCD_CLASS_SET = set(QCD_CLASS_NAMES)
 QCD_PREDICT_GROUP_NAME = "QCD"
 
 
+def _poisson_vars_from_yield(values: np.ndarray) -> np.ndarray:
+    """Variance for combine: weighted yields are treated as Poisson counts."""
+    vals = np.asarray(values, dtype=float)
+    return np.maximum(vals, 0.0)
+
+
+def _diag_cov_from_vars(vars_: np.ndarray) -> np.ndarray:
+    return np.diag(np.maximum(np.asarray(vars_, dtype=float), 0.0))
+
+
 # -------------------- Sample registry --------------------
 SAMPLE_INFO = {}
 for rule in sample_cfg["sample"]:
@@ -1033,6 +1043,28 @@ def main() -> None:
     )
     pred_total_vars = np.diag(pred_total_cov).astype(float)
 
+    # The plots above validate ABCD on finite MC and therefore use the propagated
+    # MC-entry variances. The ROOT file is consumed by combine, where the
+    # weighted yield itself is treated as the Poisson count. Store that
+    # combine-facing convention separately so it does not change the validation
+    # plots.
+    sample_root_vars = {
+        sample: _poisson_vars_from_yield(values)
+        for sample, values in sample_yields.items()
+    }
+    group_root_vars = {
+        group: _poisson_vars_from_yield(values)
+        for group, values in group_yields.items()
+    }
+    true_qcd_root_vars = _poisson_vars_from_yield(true_qcd_vals)
+    pred_qcd_root_stat_vars = _poisson_vars_from_yield(pred_qcd_vals)
+    pred_qcd_root_scale_vars = np.zeros_like(pred_qcd_root_stat_vars)
+    pred_qcd_root_cov = _diag_cov_from_vars(pred_qcd_root_stat_vars)
+    pred_total_root_stat_vars = _poisson_vars_from_yield(pred_total_vals)
+    pred_total_root_scale_vars = np.zeros_like(pred_total_root_stat_vars)
+    pred_total_root_cov = _diag_cov_from_vars(pred_total_root_stat_vars)
+    true_total_root_vars = _poisson_vars_from_yield(true_total_vals)
+
     abcd_group_vals = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
     abcd_group_vars = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
     abcd_masks = [a_union_mask, b_mask, c_mask, d_mask]
@@ -1049,21 +1081,21 @@ def main() -> None:
         root_path,
         edges,
         sample_yields,
-        sample_vars,
+        sample_root_vars,
         group_yields,
-        group_vars,
+        group_root_vars,
         pred_qcd_vals,
-        pred_qcd_stat_vars,
-        pred_qcd_scale_vars,
-        pred_qcd_cov,
+        pred_qcd_root_stat_vars,
+        pred_qcd_root_scale_vars,
+        pred_qcd_root_cov,
         true_qcd_vals,
-        true_qcd_vars,
+        true_qcd_root_vars,
         pred_total_vals,
-        pred_total_stat_vars,
-        pred_total_scale_vars,
-        pred_total_cov,
+        pred_total_root_stat_vars,
+        pred_total_root_scale_vars,
+        pred_total_root_cov,
         true_total_vals,
-        true_total_vars,
+        true_total_root_vars,
     )
 
     log_message("Plotting ABCD summary")
