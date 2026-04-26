@@ -3,6 +3,10 @@
     {
       "name": "fat2",
       "root_file": "../background_estimation/output/fat2/qcd_abcd_yields.root"
+    },
+    {
+      "name": "fat3",
+      "root_file": "../background_estimation/output/fat3/qcd_abcd_yields.root"
     }
   ],
   "bdt_root": "../selections/BDT/fat2",
