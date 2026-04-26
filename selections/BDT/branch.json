@@ -35,20 +35,10 @@
     { "name": "ScoutingPFJetRecluster2_mass_3" },
     { "name": "ScoutingPFJetRecluster2_mass_4" },
     { "name": "SelectedLepton_pt_1" },
-    { "name": "SelectedLepton_pt_2" },
-    { "name": "SelectedLepton_pt_3" },
     { "name": "SelectedLepton_eta_1" },
-    { "name": "SelectedLepton_eta_2" },
-    { "name": "SelectedLepton_eta_3" },
     { "name": "SelectedLepton_phi_1" },
-    { "name": "SelectedLepton_phi_2" },
-    { "name": "SelectedLepton_phi_3" },
     { "name": "SelectedLepton_ecalIso_1" },
-    { "name": "SelectedLepton_ecalIso_2" },
-    { "name": "SelectedLepton_ecalIso_3" },
-    { "name": "SelectedLepton_hcalIso_1" },
-    { "name": "SelectedLepton_hcalIso_2" },
-    { "name": "SelectedLepton_hcalIso_3" }
+    { "name": "SelectedLepton_hcalIso_1" }
   ],
   "fat3": [
     { "name": "ScoutingFatPFJetRecluster_selected_pt_sum" },
@@ -78,19 +68,9 @@
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_2" },
     { "name": "ScoutingFatPFJetRecluster_WvsQCD_3" },
     { "name": "SelectedLepton_pt_1" },
-    { "name": "SelectedLepton_pt_2" },
-    { "name": "SelectedLepton_pt_3" },
     { "name": "SelectedLepton_eta_1" },
-    { "name": "SelectedLepton_eta_2" },
-    { "name": "SelectedLepton_eta_3" },
     { "name": "SelectedLepton_phi_1" },
-    { "name": "SelectedLepton_phi_2" },
-    { "name": "SelectedLepton_phi_3" },
     { "name": "SelectedLepton_ecalIso_1" },
-    { "name": "SelectedLepton_ecalIso_2" },
-    { "name": "SelectedLepton_ecalIso_3" },
-    { "name": "SelectedLepton_hcalIso_1" },
-    { "name": "SelectedLepton_hcalIso_2" },
-    { "name": "SelectedLepton_hcalIso_3" }
+    { "name": "SelectedLepton_hcalIso_1" }
   ]
 }
