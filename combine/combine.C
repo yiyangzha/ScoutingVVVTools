@@ -1,9 +1,10 @@
 // combine.C
 //
 // Build CMS combine datacards from qcd_est.py output and run Significance +
-// AsymptoticLimits. Each input ROOT file is one channel; channels are
-// concatenated with combineCards.py. Full per-process covariance between
-// signal regions is injected via eigen-decomposed Gaussian shape nuisances.
+// AsymptoticLimits. Each input ROOT file is one channel with its matching
+// BDT output directory; channels are concatenated with combineCards.py. Full
+// per-process covariance between signal regions is injected via
+// eigen-decomposed Gaussian shape nuisances.
 //
 // Invocation follows the other C++ tools: the binary reads its config from
 // $COMBINE_CONFIG_PATH (or ./config.json). Any command-line arguments are
@@ -123,12 +124,12 @@ std::string shellQuote(const std::string& s) {
 struct ChannelSpec {
     std::string name;
     std::string root_file;
+    std::string bdt_root;
 };
 
 struct AppConfig {
     std::vector<ChannelSpec> channels;
     std::string output_dir;
-    std::string bdt_root;
     std::string combine_cmd = "combine";
     std::string combine_cards_cmd = "combineCards.py";
     double eigen_rel_cutoff = 1e-10;
@@ -150,6 +151,11 @@ AppConfig loadAppConfig() {
         ChannelSpec ch;
         ch.name = item.at("name").asString();
         ch.root_file = resolveReferencedPath(abs, item.at("root_file").asString());
+        if (!item.contains("bdt_root")) {
+            throw std::runtime_error(
+                "config.json channel '" + ch.name + "' missing required 'bdt_root'");
+        }
+        ch.bdt_root = resolveReferencedPath(abs, item.at("bdt_root").asString());
         cfg.channels.push_back(std::move(ch));
     }
     if (cfg.channels.empty()) {
@@ -158,8 +164,6 @@ AppConfig loadAppConfig() {
 
     cfg.output_dir = resolveReferencedPath(
         abs, payload.getStringOr("output_dir", "./output"));
-    cfg.bdt_root = resolveReferencedPath(
-        abs, payload.getStringOr("bdt_root", "../selections/BDT/fat2"));
     cfg.combine_cmd = payload.getStringOr("combine_cmd", "combine");
     cfg.combine_cards_cmd = payload.getStringOr("combine_cards_cmd", "combineCards.py");
     cfg.eigen_rel_cutoff = static_cast<double>(
@@ -190,15 +194,16 @@ struct ClassRegistry {
     std::unordered_map<std::string, SampleInfo> samples;
 };
 
-ClassRegistry loadRegistry(const AppConfig& cfg) {
+ClassRegistry loadRegistryFromBdtRoot(const std::string& bdt_root,
+                                      const std::string& label) {
     ClassRegistry reg;
 
     const std::string bdt_config_path =
-        fs::weakly_canonical(fs::path(cfg.bdt_root) / "config.json").string();
+        fs::weakly_canonical(fs::path(bdt_root) / "config.json").string();
     JsonValue bdtJson = simple_json::parseFile(bdt_config_path);
 
     const std::string sample_cfg_path = resolveReferencedPathFromDir(
-        fs::path(cfg.bdt_root).parent_path().string(),
+        fs::path(bdt_root).parent_path().string(),
         bdtJson.at("sample_config").asString());
     JsonValue sampleJson = simple_json::parseFile(sample_cfg_path);
     for (const auto& node : sampleJson.at("sample").asArray()) {
@@ -210,7 +215,7 @@ ClassRegistry loadRegistry(const AppConfig& cfg) {
     }
 
     if (!bdtJson.contains("class_groups")) {
-        throw std::runtime_error("bdt_root/config.json missing 'class_groups'");
+        throw std::runtime_error(label + " bdt_root/config.json missing 'class_groups'");
     }
     for (const auto& kv : bdtJson.at("class_groups").asObject()) {
         reg.class_order.push_back(kv.first);
@@ -223,7 +228,8 @@ ClassRegistry loadRegistry(const AppConfig& cfg) {
             reg.sample_to_class[s] = kv.first;
             auto it = reg.samples.find(s);
             if (it == reg.samples.end()) {
-                throw std::runtime_error("class_groups references unknown sample: " + s);
+                throw std::runtime_error(
+                    label + " class_groups references unknown sample: " + s);
             }
             if (!it->second.is_signal) all_signal = false;
             any = true;
@@ -236,13 +242,53 @@ ClassRegistry loadRegistry(const AppConfig& cfg) {
         }
     }
     if (reg.qcd_classes.empty()) {
-        throw std::runtime_error("class_groups must contain at least one QCD class");
+        throw std::runtime_error(label + " class_groups must contain at least one QCD class");
     }
 
     for (const auto& c : reg.class_order) {
         for (const auto& s : reg.class_members.at(c)) {
             if (reg.samples.at(s).is_signal) reg.signal_samples.push_back(s);
         }
+    }
+    return reg;
+}
+
+void ensureRegistryCompatible(const ClassRegistry& reference,
+                              const ClassRegistry& candidate,
+                              const std::string& reference_label,
+                              const std::string& candidate_label) {
+    const std::string detail =
+        candidate_label + " BDT registry differs from " + reference_label +
+        "; combine.C requires all channel bdt_root configs to share the same "
+        "class_groups and signal/QCD sample definitions";
+
+    if (candidate.class_order != reference.class_order) {
+        throw std::runtime_error(detail + " (class order mismatch)");
+    }
+    if (candidate.class_members != reference.class_members) {
+        throw std::runtime_error(detail + " (class_groups membership mismatch)");
+    }
+    if (candidate.signal_classes != reference.signal_classes) {
+        throw std::runtime_error(detail + " (signal class mismatch)");
+    }
+    if (candidate.signal_samples != reference.signal_samples) {
+        throw std::runtime_error(detail + " (signal sample mismatch)");
+    }
+    if (candidate.qcd_classes != reference.qcd_classes) {
+        throw std::runtime_error(detail + " (QCD class mismatch)");
+    }
+}
+
+ClassRegistry loadRegistry(const AppConfig& cfg) {
+    const ChannelSpec& first = cfg.channels.front();
+    const std::string reference_label = "channel '" + first.name + "'";
+    ClassRegistry reg = loadRegistryFromBdtRoot(first.bdt_root, reference_label);
+
+    for (size_t i = 1; i < cfg.channels.size(); ++i) {
+        const ChannelSpec& ch = cfg.channels[i];
+        const std::string candidate_label = "channel '" + ch.name + "'";
+        ClassRegistry candidate = loadRegistryFromBdtRoot(ch.bdt_root, candidate_label);
+        ensureRegistryCompatible(reg, candidate, reference_label, candidate_label);
     }
     return reg;
 }
@@ -1282,8 +1328,12 @@ int runMain() {
     fs::create_directories(cfg.output_dir);
     fs::create_directories(cfg.work_dir);
     logMessage("combine.C: output_dir=" + cfg.output_dir);
-    logMessage("combine.C: bdt_root=" + cfg.bdt_root);
     logMessage("combine.C: work_dir=" + cfg.work_dir);
+    for (const auto& ch : cfg.channels) {
+        logMessage("combine.C: channel=" + ch.name +
+                   " root_file=" + ch.root_file +
+                   " bdt_root=" + ch.bdt_root);
+    }
 
     ClassRegistry reg = loadRegistry(cfg);
     logMessage("Loaded registry: classes=" + std::to_string(reg.class_order.size()) +
