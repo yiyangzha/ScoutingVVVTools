@@ -648,17 +648,16 @@ def plot_signal_regions_2d(result, proba, y, w):
 
 
 # -------------------- Signal-region scan --------------------
-def find_signal_regions(proba, y, w):
-    """Find N non-overlapping general high-D score rectangles.
+def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None):
+    """Find non-overlapping general high-D score rectangles.
 
-    The search is exact over the constructed candidate-edge set: each coordinate
-    update scans every [edge[a], edge[b]) interval on that axis with all other
-    axes fixed, and final region selection is an exact branch-and-bound set
-    packing over the candidate pool. The edge set is deliberately dense: it
-    combines total/signal/background weighted quantiles, tail-heavy quantiles,
-    beam coordinate search, and a local pass that injects nearby real event
-    score thresholds around the best candidate boundaries.
+    Each call scans the allowed score space and returns up to ``target_regions``
+    rectangles that do not overlap ``forbidden_regions``. The main workflow calls
+    this with ``target_regions=1`` repeatedly, so every SR is found by a fresh
+    scan of the space left after the previously selected SRs.
     """
+    forbidden_regions = forbidden_regions or []
+    target_regions = max(1, int(target_regions or N_SIGNAL_REGIONS))
     n_events, n_cls = proba.shape
     D = max(1, n_cls - 1)
 
@@ -737,6 +736,24 @@ def find_signal_regions(proba, y, w):
             if not (lo1[d] < hi2[d] - EPS and lo2[d] < hi1[d] - EPS):
                 return False
         return True
+
+    forbidden_boxes = []
+    for region in forbidden_regions:
+        if "lo" in region and "hi" in region:
+            lo_prev = region["lo"]
+            hi_prev = region["hi"]
+        else:
+            lo_prev = region["thr_low"]
+            hi_prev = region["thr_high"]
+        forbidden_boxes.append((
+            [float(v) for v in lo_prev],
+            [float(v) for v in hi_prev],
+        ))
+    if forbidden_boxes:
+        log_message(f"  Excluding {len(forbidden_boxes)} previously selected signal regions")
+
+    def _overlaps_forbidden(lo, hi):
+        return any(_overlap(lo, hi, flo, fhi) for flo, fhi in forbidden_boxes)
 
     def _region_key(lo, hi):
         return (tuple(round(float(v), 10) for v in lo),
@@ -834,6 +851,8 @@ def find_signal_regions(proba, y, w):
         lo = [float(v) for v in lo]
         hi = [float(v) for v in hi]
         if not _valid_region(lo, hi):
+            return None
+        if _overlaps_forbidden(lo, hi):
             return None
         key = _region_key(lo, hi)
         if key in pool:
@@ -967,7 +986,20 @@ def find_signal_regions(proba, y, w):
 
     # ---- Build seeds ----
     seeds = []
-    seeds.append(([0.0] * D, [1.0] * D))  # full box
+    seed_keys = set()
+
+    def _add_seed(lo, hi):
+        lo = [float(v) for v in lo]
+        hi = [float(v) for v in hi]
+        if not _valid_region(lo, hi):
+            return
+        key = _region_key(lo, hi)
+        if key in seed_keys:
+            return
+        seed_keys.add(key)
+        seeds.append((lo, hi))
+
+    _add_seed([0.0] * D, [1.0] * D)  # full box
     for d in range(D):
         edges = edges_per_axis[d]
         for q in SEED_QUANTILES:
@@ -976,12 +1008,48 @@ def find_signal_regions(proba, y, w):
             lo = [0.0] * D
             hi = [1.0] * D
             lo[d] = float(edges[idx])
-            seeds.append((lo, hi))
+            _add_seed(lo, hi)
             if 0 < idx < len(edges) - 1:
                 lo2 = [0.0] * D
                 hi2 = [1.0] * D
                 hi2[d] = float(edges[idx])
-                seeds.append((lo2, hi2))
+                _add_seed(lo2, hi2)
+
+    if forbidden_boxes:
+        axis_segments = []
+        for d in range(D):
+            vals = [0.0, 1.0]
+            for flo, fhi in forbidden_boxes:
+                vals.extend([flo[d], fhi[d]])
+            vals = np.unique(np.clip(np.asarray(vals, dtype=float), 0.0, 1.0))
+            segs = []
+            for a, b in zip(vals[:-1], vals[1:]):
+                if float(a) < float(b) - EPS:
+                    segs.append((float(a), float(b)))
+            axis_segments.append(segs)
+            for a, b in segs:
+                lo = [0.0] * D
+                hi = [1.0] * D
+                lo[d] = a
+                hi[d] = b
+                _add_seed(lo, hi)
+
+        pair_seeds = []
+        for d1 in range(D):
+            for d2 in range(d1 + 1, D):
+                for a1, b1 in axis_segments[d1]:
+                    for a2, b2 in axis_segments[d2]:
+                        lo = [0.0] * D
+                        hi = [1.0] * D
+                        lo[d1], hi[d1] = a1, b1
+                        lo[d2], hi[d2] = a2, b2
+                        if _overlaps_forbidden(lo, hi):
+                            continue
+                        volume = (b1 - a1) * (b2 - a2)
+                        pair_seeds.append((volume, lo, hi))
+        pair_seeds.sort(key=lambda x: -x[0])
+        for _volume, lo, hi in pair_seeds[:max(BEAM_WIDTH * 8, 64)]:
+            _add_seed(lo, hi)
 
     initial = []
     for seed_lo, seed_hi in seeds:
@@ -1242,8 +1310,8 @@ def find_signal_regions(proba, y, w):
             return None
         return [int(v) for v in out[:ret] if int(v) >= 0]
 
-    # ---- Fast bounded set-packing over the candidate pool. ----
-    target_n = N_SIGNAL_REGIONS
+    # ---- Fast bounded selection over the candidate pool. ----
+    target_n = target_regions
     n_select = min(n_items, FINAL_SELECTION_CANDIDATES)
     if n_select < n_items:
         log_warning(
@@ -1265,10 +1333,10 @@ def find_signal_regions(proba, y, w):
 
     if not best_picks:
         raise RuntimeError("Final beam selection found no valid signal-region set")
-    if len(best_picks) < N_SIGNAL_REGIONS:
+    if len(best_picks) < target_regions:
         log_warning(
             f"Final beam selection found only {len(best_picks)} non-overlapping "
-            f"regions; requested {N_SIGNAL_REGIONS}"
+            f"regions; requested {target_regions}"
         )
 
     log_message(
@@ -1361,6 +1429,10 @@ def find_signal_regions(proba, y, w):
             f"S={S_bin:.4g}±{sS_bin:.4g}, B={B_bin:.4g}±{sB_bin:.4g}"
         )
 
+    return _make_signal_region_result(top_bins, S_total, B_total)
+
+
+def _make_signal_region_result(top_bins, S_total, B_total):
     # Combine the per-bin significances as Z_comb = sqrt(sum Z_i^2).
     if top_bins:
         S_comb  = float(sum(b["S"]       for b in top_bins))
@@ -1541,9 +1613,34 @@ def main():
     log_message("Plotting score distributions")
     plot_score_distributions(proba, y, w)
 
-    # Scan for N non-overlapping signal regions.
+    # Scan for N non-overlapping signal regions, one fresh optimization per SR.
     log_message(f"Scanning for {N_SIGNAL_REGIONS} signal regions")
-    result = find_signal_regions(proba, y, w)
+    selected_regions = []
+    top_bins = []
+    for sr_idx in range(N_SIGNAL_REGIONS):
+        log_message(f"\n==== Sequential SR scan {sr_idx + 1}/{N_SIGNAL_REGIONS} ====")
+        partial = find_signal_regions(
+            proba,
+            y,
+            w,
+            forbidden_regions=selected_regions,
+            target_regions=1,
+        )
+        if not partial["top_bins"]:
+            raise RuntimeError(
+                f"Sequential SR scan {sr_idx + 1}/{N_SIGNAL_REGIONS} found no valid region"
+            )
+        b = partial["top_bins"][0]
+        b["bin_index"] = sr_idx + 1
+        top_bins.append(b)
+        selected_regions.append({
+            "lo": [float(v) for v in b["thr_low"]],
+            "hi": [float(v) for v in b["thr_high"]],
+        })
+
+    S_total = float(w[np.isin(y, SIGNAL_CLASS_INDICES)].sum())
+    B_total = float(w[np.isin(y, BACKGROUND_CLASS_INDICES)].sum())
+    result = _make_signal_region_result(top_bins, S_total, B_total)
 
     # Plot the first two scan axes when D >= 2.
     log_message("Plotting signal regions")
