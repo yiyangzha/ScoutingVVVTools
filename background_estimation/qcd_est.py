@@ -774,9 +774,26 @@ def write_root_output(
         else:
             covariance_total = np.asarray(covariance_total, dtype=float)
 
-        root_file[f"{prefix}/yield"] = (vals, edges)
-        root_file[f"{prefix}/stat_error"] = (np.sqrt(np.maximum(stat_vars, 0.0)), edges)
-        root_file[f"{prefix}/scale_error"] = (np.sqrt(np.maximum(scale_vars, 0.0)), edges)
+        n_sr = len(vals)
+        if stat_vars.shape != vals.shape or scale_vars.shape != vals.shape:
+            raise RuntimeError(f"Uncertainty size mismatch for ROOT bundle '{prefix}'")
+        if covariance_total.shape != (n_sr, n_sr):
+            raise RuntimeError(f"Covariance size mismatch for ROOT bundle '{prefix}'")
+
+        one_bin_edges = np.array([0.0, 1.0], dtype=float)
+        stat_err = np.sqrt(np.maximum(stat_vars, 0.0))
+        scale_err = np.sqrt(np.maximum(scale_vars, 0.0))
+        for idx in range(n_sr):
+            sr_prefix = f"{prefix}/sr{idx + 1}"
+            root_file[f"{sr_prefix}/yield"] = (np.array([vals[idx]], dtype=float), one_bin_edges)
+            root_file[f"{sr_prefix}/stat_error"] = (
+                np.array([stat_err[idx]], dtype=float),
+                one_bin_edges,
+            )
+            root_file[f"{sr_prefix}/scale_error"] = (
+                np.array([scale_err[idx]], dtype=float),
+                one_bin_edges,
+            )
         root_file[f"{prefix}/covariance_total"] = (covariance_total, edges, edges)
 
     with uproot.recreate(root_path) as root_file:

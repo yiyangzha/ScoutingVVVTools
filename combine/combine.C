@@ -332,20 +332,35 @@ struct ChannelData {
     YieldCov qcd_predict;                         // merged ABCD QCD prediction
 };
 
+double readOneBinHist(TFile& f, const std::string& path) {
+    TH1* h = dynamic_cast<TH1*>(f.Get(path.c_str()));
+    if (h == nullptr) {
+        throw std::runtime_error("Missing one-bin histogram '" + path + "' in " + f.GetName());
+    }
+    if (h->GetNbinsX() != 1) {
+        throw std::runtime_error("Histogram '" + path + "' in " + f.GetName() +
+                                 " must have exactly one bin");
+    }
+    return h->GetBinContent(1);
+}
+
 YieldCov readYieldCov(TFile& f, const std::string& prefix) {
     // TFile owns the returned histograms; just copy the contents out.
-    TH1* h = dynamic_cast<TH1*>(f.Get((prefix + "/yield").c_str()));
     TH2* h2 = dynamic_cast<TH2*>(f.Get((prefix + "/covariance_total").c_str()));
-    if (h == nullptr || h2 == nullptr) {
-        throw std::runtime_error("Missing '" + prefix + "/yield' or '" + prefix +
-                                 "/covariance_total' in " + f.GetName());
+    if (h2 == nullptr) {
+        throw std::runtime_error("Missing '" + prefix + "/covariance_total' in " + f.GetName());
     }
-    const int n = h->GetNbinsX();
-    if (h2->GetNbinsX() != n || h2->GetNbinsY() != n) {
+    const int n = h2->GetNbinsX();
+    if (n <= 0 || h2->GetNbinsY() != n) {
         throw std::runtime_error("Covariance size mismatch for " + prefix);
     }
     YieldCov out(n);
-    for (int i = 0; i < n; ++i) out.yields[i] = h->GetBinContent(i + 1);
+    for (int i = 0; i < n; ++i) {
+        const std::string sr_prefix = prefix + "/sr" + std::to_string(i + 1);
+        out.yields[i] = readOneBinHist(f, sr_prefix + "/yield");
+        readOneBinHist(f, sr_prefix + "/stat_error");
+        readOneBinHist(f, sr_prefix + "/scale_error");
+    }
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
             out.cov(i, j) = h2->GetBinContent(i + 1, j + 1);
@@ -959,6 +974,10 @@ void validateProcessShapes(const AppConfig& cfg, const Process& proc,
     }
 }
 
+std::string srBinName(const std::string& channel_name, int sr_index_zero_based) {
+    return channel_name + "_sr" + std::to_string(sr_index_zero_based + 1);
+}
+
 void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
                        const std::string& shape_path) {
     TFile* f = TFile::Open(shape_path.c_str(), "RECREATE");
@@ -966,18 +985,12 @@ void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
         if (f != nullptr) delete f;
         throw std::runtime_error("Cannot create shape file: " + shape_path);
     }
-    TDirectory* ch_dir = f->mkdir(pc.name.c_str());
-    ch_dir->cd();
 
-    auto makeHist = [&](const std::string& hname,
-                        const std::vector<double>& vals) {
-        TH1D* h = new TH1D(hname.c_str(), hname.c_str(), pc.n_sr, 0.0,
-                           static_cast<double>(pc.n_sr));
-        h->SetDirectory(ch_dir);
-        for (int i = 0; i < pc.n_sr; ++i) {
-            h->SetBinContent(i + 1, vals[i]);
-            h->SetBinError(i + 1, 0.0);  // uncertainties live in nuisances
-        }
+    auto makeHist = [&](TDirectory* dir, const std::string& hname, double value) {
+        TH1D* h = new TH1D(hname.c_str(), hname.c_str(), 1, 0.0, 1.0);
+        h->SetDirectory(dir);
+        h->SetBinContent(1, value);
+        h->SetBinError(1, 0.0);  // uncertainties live in nuisances
         return h;
     };
 
@@ -986,25 +999,27 @@ void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
             throw std::runtime_error("Invalid data_obs content in channel '" + pc.name + "'");
         }
     }
-    makeHist("data_obs", pc.data_obs);
-
     for (size_t p = 0; p < pc.processes.size(); ++p) {
-        const Process& proc = pc.processes[p];
-        validateProcessShapes(cfg, proc, pc.modes[p], pc.name);
-        makeHist(proc.name, proc.yields);
+        validateProcessShapes(cfg, pc.processes[p], pc.modes[p], pc.name);
+    }
 
-        const auto& modes = pc.modes[p];
-        for (size_t k = 0; k < modes.size(); ++k) {
-            std::vector<double> up(pc.n_sr), down(pc.n_sr);
-            for (int i = 0; i < pc.n_sr; ++i) {
-                const double d = modes[k].scale * modes[k].template_scale * modes[k].v[i];
-                up[i] = proc.yields[i] + d;
-                down[i] = proc.yields[i] - d;
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        TDirectory* sr_dir = f->mkdir(srBinName(pc.name, sr).c_str());
+        sr_dir->cd();
+        makeHist(sr_dir, "data_obs", pc.data_obs[sr]);
+
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const Process& proc = pc.processes[p];
+            makeHist(sr_dir, proc.name, proc.yields[sr]);
+
+            const auto& modes = pc.modes[p];
+            for (size_t k = 0; k < modes.size(); ++k) {
+                const double d = modes[k].scale * modes[k].template_scale * modes[k].v[sr];
+                const std::string nuis = "cov_" + pc.name + "_" + proc.name +
+                                         "_eig" + std::to_string(k);
+                makeHist(sr_dir, proc.name + "_" + nuis + "Up", proc.yields[sr] + d);
+                makeHist(sr_dir, proc.name + "_" + nuis + "Down", proc.yields[sr] - d);
             }
-            const std::string nuis = "cov_" + pc.name + "_" + proc.name +
-                                     "_eig" + std::to_string(k);
-            makeHist(proc.name + "_" + nuis + "Up", up);
-            makeHist(proc.name + "_" + nuis + "Down", down);
         }
     }
     f->Write();
@@ -1012,48 +1027,82 @@ void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
     delete f;
 }
 
-void writeChannelDatacard(const PerChannelCard& pc, const std::string& shape_file) {
+void writeChannelDatacard(const AppConfig& cfg, const PerChannelCard& pc,
+                          const std::string& shape_file) {
     std::ofstream ofs(pc.datacard_path);
     if (!ofs) {
         throw std::runtime_error("Cannot write datacard: " + pc.datacard_path);
     }
+    const bool use_shapes = cfg.use_root_covariance;
+    if (use_shapes && shape_file.empty()) {
+        throw std::runtime_error("Shape file path is required when use_root_covariance=true");
+    }
     ofs << "# Auto-generated by combine.C\n";
-    ofs << "imax 1\njmax *\nkmax *\n";
+    ofs << "imax " << pc.n_sr << "\njmax *\nkmax *\n";
     ofs << "----------\n";
-    ofs << "shapes * " << pc.name << " " << shape_file
-        << " $CHANNEL/$PROCESS $CHANNEL/$PROCESS_$SYSTEMATIC\n";
-    ofs << "----------\n";
-    ofs << "bin " << pc.name << "\n";
-    ofs << "observation -1\n";
+    if (use_shapes) {
+        ofs << "shapes * * " << shape_file
+            << " $CHANNEL/$PROCESS $CHANNEL/$PROCESS_$SYSTEMATIC\n";
+        ofs << "----------\n";
+    }
+    ofs << "bin";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        ofs << " " << srBinName(pc.name, sr);
+    }
+    ofs << "\n";
+    ofs << "observation";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        ofs << " " << (use_shapes ? "-1" : formatDouble(pc.data_obs[sr]));
+    }
+    ofs << "\n";
     ofs << "----------\n";
 
     // bin row
     ofs << "bin";
-    for (size_t p = 0; p < pc.processes.size(); ++p) ofs << " " << pc.name;
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            ofs << " " << srBinName(pc.name, sr);
+        }
+    }
     ofs << "\n";
     // process names
     ofs << "process";
-    for (const auto& pr : pc.processes) ofs << " " << pr.name;
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (const auto& pr : pc.processes) ofs << " " << pr.name;
+    }
     ofs << "\n";
     // process indices (signal=0, backgrounds=1,2,...)
     ofs << "process";
-    for (size_t p = 0; p < pc.processes.size(); ++p) ofs << " " << p;
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) ofs << " " << p;
+    }
     ofs << "\n";
-    // rates (-1 => from histogram integral)
+    // In the default counting-card mode, rates are explicit. In optional
+    // covariance-nuisance mode, rates are read from one-bin shapes.
     ofs << "rate";
-    for (size_t p = 0; p < pc.processes.size(); ++p) ofs << " -1";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            ofs << " " << (use_shapes ? "-1" : formatDouble(pc.processes[p].yields[sr]));
+        }
+    }
     ofs << "\n";
     ofs << "----------\n";
 
-    // shape nuisances: one per process per eigen mode, listed in one row each.
+    if (!use_shapes) return;
+
+    // Shape nuisances: one correlated row per process eigenmode. The row is
+    // active for that process in every SR and inactive for all other processes.
     for (size_t p = 0; p < pc.processes.size(); ++p) {
         const auto& proc = pc.processes[p];
         for (size_t k = 0; k < pc.modes[p].size(); ++k) {
             const std::string nuis = "cov_" + pc.name + "_" + proc.name +
                                      "_eig" + std::to_string(k);
             ofs << nuis << " shape";
-            for (size_t q = 0; q < pc.processes.size(); ++q) {
-                ofs << " " << (q == p ? formatDouble(1.0 / pc.modes[p][k].template_scale) : "-");
+            for (int sr = 0; sr < pc.n_sr; ++sr) {
+                for (size_t q = 0; q < pc.processes.size(); ++q) {
+                    ofs << " "
+                        << (q == p ? formatDouble(1.0 / pc.modes[p][k].template_scale) : "-");
+                }
             }
             ofs << "\n";
         }
@@ -1165,8 +1214,9 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
     const fs::path work = fs::path(cfg.work_dir) / tag;
     fs::create_directories(work);
 
-    // Build per-channel cards + one shape file per channel.
-    std::vector<std::string> card_tokens;  // for combineCards.py: chname=path
+    // Build per-channel cards. Shape files are only needed when optional ROOT
+    // covariance nuisances are enabled.
+    std::vector<std::string> card_tokens;  // for combineCards.py
     std::vector<std::string> skipped_zero_signal_channels;
     for (const auto& ch : channels) {
         PerChannelCard pc;
@@ -1208,14 +1258,17 @@ void buildAndRun(const AppConfig& cfg, const ClassRegistry& reg,
             for (int i = 0; i < pc.n_sr; ++i) pc.data_obs[i] += p.yields[i];
         }
 
-        const std::string shape_path =
-            (work / ("shapes_" + ch.name + ".root")).string();
-        writeChannelShape(cfg, pc, shape_path);
+        std::string shape_path;
+        if (cfg.use_root_covariance) {
+            shape_path = (work / ("shapes_" + ch.name + ".root")).string();
+            writeChannelShape(cfg, pc, shape_path);
+        }
 
         pc.datacard_path = (work / ("card_" + ch.name + ".txt")).string();
-        // Use absolute shape paths so combineCards.py preserves them verbatim.
-        writeChannelDatacard(pc, shape_path);
-        card_tokens.push_back(ch.name + "=" + pc.datacard_path);
+        // Bin names are globally unique (<channel>_sr<N>), so labels are not
+        // needed and channel names stay identical to any optional shape dirs.
+        writeChannelDatacard(cfg, pc, shape_path);
+        card_tokens.push_back(pc.datacard_path);
     }
 
     if (card_tokens.empty()) {
