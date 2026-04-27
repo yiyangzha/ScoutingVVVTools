@@ -269,7 +269,9 @@ def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded, reweight_br
     info        = SAMPLE_INFO[sample_name]
     xsec        = float(info.get("xsection", 0.0))
     raw_entries = float(info.get("raw_entries", 0.0))
-    if raw_entries == 0.0 or n_loaded == 0 or tree_entries_total == 0:
+    if raw_entries <= 0.0:
+        raise RuntimeError(f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json")
+    if n_loaded == 0 or tree_entries_total == 0:
         df["weight"] = 0.0
         return df
     target_total = LUMI_TOTAL * xsec * float(tree_entries_total) / raw_entries
@@ -410,15 +412,13 @@ def _process_tree(tree_name):
                 raise RuntimeError(f"MC sample '{sname}' not found in sample.json")
             files = _input_files(sname, input_root, input_pattern)
             if not files:
-                log_message(f"  [WARN] no files for '{sname}', skipping")
-                continue
+                raise RuntimeError(f"No ROOT files found for MC sample '{sname}'")
             n_total = _tree_entries_total(files, tree_name)
             if n_total <= 0:
-                log_message(f"  [WARN] empty tree '{tree_name}' for '{sname}', skipping")
-                continue
+                raise RuntimeError(f"Empty tree '{tree_name}' for MC sample '{sname}'")
             df = _load_tree(files, tree_name, mc_need_load)
             if df is None or len(df) == 0:
-                continue
+                raise RuntimeError(f"No events loaded for MC sample '{sname}' in tree '{tree_name}'")
             df = _assign_mc_weight(df, sname, n_total, len(df), reweight_branches)
             dfs.append(df)
             log_message(
@@ -429,7 +429,7 @@ def _process_tree(tree_name):
             class_dfs[cls_name] = pd.concat(dfs, ignore_index=True)
             log_message(f"  Loaded class '{cls_name}': events={len(class_dfs[cls_name])}")
         else:
-            log_message(f"  [WARN] class '{cls_name}' has no usable events")
+            raise RuntimeError(f"MC class '{cls_name}' has no usable events")
 
     # Load the data events.
     log_message(f"Loading data samples: n={len(DATA_SAMPLES)}")

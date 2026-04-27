@@ -68,6 +68,7 @@ BDT_ROOT = _resolve(qcd_cfg["bdt_root"], _SCRIPT_DIR)
 OUTPUT_DIR = _resolve(qcd_cfg.get("output_dir", "./output"), _SCRIPT_DIR)
 ROOT_FILE_NAME = qcd_cfg.get("root_file_name", "qcd_abcd_yields.root")
 SIGNAL_REGION_CSV_PATH = _resolve(qcd_cfg["signal_region_csv"], _SCRIPT_DIR)
+TEST_REFERENCE_QCD_EST = os.path.join(BDT_ROOT, "test_reference_qcd_est.npz")
 
 
 # -------------------- BDT config copies --------------------
@@ -86,15 +87,23 @@ MODEL_PATTERN = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
 CLASS_GROUPS = cfg["class_groups"]
 CLASS_NAMES = list(CLASS_GROUPS.keys())
 NUM_CLASSES = len(CLASS_NAMES)
-AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
+DEFAULT_AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
 
-QCD_CLASS_NAME = None
-for class_name in CLASS_NAMES:
-    if class_name.lower() == "qcd":
-        QCD_CLASS_NAME = class_name
-        break
-if QCD_CLASS_NAME is None:
-    raise RuntimeError("BDT class_groups must contain a QCD class")
+QCD_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if "qcd" in class_name.lower()]
+if not QCD_CLASS_NAMES:
+    raise RuntimeError("BDT class_groups must contain at least one QCD class")
+QCD_CLASS_SET = set(QCD_CLASS_NAMES)
+QCD_PREDICT_GROUP_NAME = "QCD"
+
+
+def _poisson_vars_from_yield(values: np.ndarray) -> np.ndarray:
+    """Variance for combine: weighted yields are treated as Poisson counts."""
+    vals = np.asarray(values, dtype=float)
+    return np.maximum(vals, 0.0)
+
+
+def _diag_cov_from_vars(vars_: np.ndarray) -> np.ndarray:
+    return np.diag(np.maximum(np.asarray(vars_, dtype=float), 0.0))
 
 
 # -------------------- Sample registry --------------------
@@ -115,7 +124,9 @@ for class_idx, (class_name, members) in enumerate(CLASS_GROUPS.items()):
         SAMPLE_TO_CLASS[sample_name] = class_idx
         SAMPLE_TO_GROUP[sample_name] = class_name
 
-QCD_SAMPLES = set(CLASS_GROUPS[QCD_CLASS_NAME])
+QCD_SAMPLES = set()
+for class_name in QCD_CLASS_NAMES:
+    QCD_SAMPLES.update(CLASS_GROUPS[class_name])
 
 
 # -------------------- Threshold filtering --------------------
@@ -213,6 +224,87 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     return X
 
 
+def _reshape_multiclass_margin(predt, num_class):
+    predt = np.asarray(predt, dtype=float)
+    if predt.ndim == 2:
+        if predt.shape[1] == num_class:
+            return predt
+        if predt.shape[0] == num_class:
+            return predt.T
+    rows = predt.size // num_class
+    return predt.reshape(rows, num_class)
+
+
+def _softmax_rows(logits: np.ndarray) -> np.ndarray:
+    logits = np.asarray(logits, dtype=float)
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp_v = np.exp(shifted)
+    return exp_v / (np.sum(exp_v, axis=1, keepdims=True) + 1e-12)
+
+
+def _predict_model_proba(model, X):
+    if isinstance(model, xgb.Booster):
+        dmat = xgb.DMatrix(X, feature_names=list(X.columns) if hasattr(X, "columns") else None)
+        margins = model.predict(dmat, output_margin=True)
+        return _softmax_rows(_reshape_multiclass_margin(margins, NUM_CLASSES))
+    return model.predict_proba(X)
+
+
+def _compare_prediction_reference(path, feature_names, sample_labels, class_idx, weights, proba):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Prediction reference not found: {path}. Re-run train.py before qcd_est.py."
+        )
+
+    ref = np.load(path, allow_pickle=False)
+    ref_features = ref["feature_names"].astype(str).tolist()
+    cur_features = list(feature_names)
+    if cur_features != ref_features:
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est model features: "
+            f"current={cur_features}, reference={ref_features}"
+        )
+
+    ref_samples = ref["sample_name"].astype(str)
+    cur_samples = np.asarray(sample_labels, dtype=str)
+    if not np.array_equal(cur_samples, ref_samples):
+        raise RuntimeError("Prediction reference mismatch for qcd_est sample order/content")
+
+    ref_class_idx = ref["class_idx"].astype(int)
+    cur_class_idx = np.asarray(class_idx, dtype=int)
+    if not np.array_equal(cur_class_idx, ref_class_idx):
+        raise RuntimeError("Prediction reference mismatch for qcd_est class labels")
+
+    ref_weights = ref["weight"].astype(float) * LUMI
+    cur_weights = np.asarray(weights, dtype=float)
+    weight_rtol = float(ref["weight_rtol"])
+    weight_atol = float(ref["weight_atol"])
+    if not np.allclose(cur_weights, ref_weights, rtol=weight_rtol, atol=weight_atol):
+        diff = float(np.max(np.abs(cur_weights - ref_weights)))
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est weights: "
+            f"max_abs_diff={diff:.6g}, rtol={weight_rtol}, atol={weight_atol}"
+        )
+
+    ref_proba = ref["proba"].astype(float)
+    cur_proba = np.asarray(proba, dtype=float)
+    proba_rtol = float(ref["proba_rtol"])
+    proba_atol = float(ref["proba_atol"])
+    if cur_proba.shape != ref_proba.shape:
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est probabilities shape: "
+            f"current={cur_proba.shape}, reference={ref_proba.shape}"
+        )
+    if not np.allclose(cur_proba, ref_proba, rtol=proba_rtol, atol=proba_atol):
+        diff = float(np.max(np.abs(cur_proba - ref_proba)))
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est probabilities: "
+            f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
+        )
+
+    log_message(f"Validated prediction reference: {path}")
+
+
 # -------------------- Test data loading --------------------
 def load_test_data(branches: list[str]) -> pd.DataFrame:
     """Load the full test split with the same weight definition as signal_region.py."""
@@ -228,30 +320,30 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
     for sample_name, sample_meta in test_meta["samples"].items():
         info = SAMPLE_INFO.get(sample_name)
         if info is None:
-            log_warning(f"Sample '{sample_name}' not found in sample config, skipping")
-            continue
+            raise RuntimeError(f"Sample '{sample_name}' not found in sample config")
         if not info["is_MC"]:
             log_warning(f"Skipping non-MC sample '{sample_name}'")
             continue
         if sample_name not in SAMPLE_TO_CLASS:
-            log_warning(f"Sample '{sample_name}' not in any class group, skipping")
-            continue
+            raise RuntimeError(f"Sample '{sample_name}' not in any class group")
 
         xsec = float(info["xsection"])
         raw_entries = int(info["raw_entries"])
         total_entries = int(sample_meta["total_entries"])
+        if raw_entries <= 0:
+            raise RuntimeError(
+                f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json"
+            )
 
         parts = []
         for seg in sample_meta["test_segments"]:
             fpath = seg["file"]
             if not os.path.exists(fpath):
-                log_warning(f"File not found: {fpath}, skipping segment")
-                continue
+                raise FileNotFoundError(f"Test split file not found: {fpath}")
             try:
                 with uproot.open(fpath) as uf:
                     if TREE_NAME not in uf:
-                        log_warning(f"Tree '{TREE_NAME}' not in {fpath}, skipping")
-                        continue
+                        raise KeyError(f"Tree '{TREE_NAME}' not in {fpath}")
                     tree = uf[TREE_NAME]
                     available = set(tree.keys())
                     missing = [branch for branch in load_branches if branch not in available]
@@ -269,12 +361,10 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
                         )
                     )
             except Exception as exc:
-                log_warning(f"Failed to read {fpath}: {exc}, skipping segment")
-                continue
+                raise RuntimeError(f"Failed to read test split file {fpath}: {exc}") from exc
 
         if not parts:
-            log_warning(f"No data loaded for '{sample_name}', skipping")
-            continue
+            raise RuntimeError(f"No data loaded for sample '{sample_name}'")
 
         df = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
@@ -287,11 +377,11 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
         else:
             raw_w = np.ones(n_loaded, dtype=float)
 
-        if xsec <= 0.0 or raw_entries <= 0:
+        if xsec <= 0.0:
             target_total = 0.0
             df["weight"] = 0.0
             log_warning(
-                f"{sample_name}: non-positive xsec={xsec} or raw_entries={raw_entries}, zero weight"
+                f"{sample_name}: non-positive xsec={xsec}, zero weight"
             )
         else:
             target_total = LUMI * xsec * total_entries / raw_entries
@@ -327,7 +417,7 @@ def _load_model():
     model_base = MODEL_PATTERN.format(output_root=BDT_ROOT, tree_name=TREE_NAME)
     if os.path.exists(model_base + ".json"):
         model_path = model_base + ".json"
-        clf = xgb.XGBClassifier()
+        clf = xgb.Booster()
         clf.load_model(model_path)
         log_message(f"Loaded model: {model_path}")
         return clf
@@ -377,7 +467,26 @@ def _mass_pass_fail_masks(df: pd.DataFrame, mass_thresholds: dict) -> Tuple[np.n
     return pass_mask, fail_mask
 
 
-def _load_signal_regions() -> pd.DataFrame:
+def _detect_signal_region_axes(df: pd.DataFrame) -> List[str]:
+    axes = []
+    columns = set(df.columns)
+    for col in df.columns:
+        if not col.endswith("_low"):
+            continue
+        axis_name = col[:-4]
+        if f"{axis_name}_high" not in columns:
+            continue
+        if axis_name not in CLASS_NAMES:
+            raise KeyError(
+                f"Signal region axis {axis_name!r} is not in BDT class_groups: {CLASS_NAMES}"
+            )
+        axes.append(axis_name)
+    if not axes:
+        axes = list(DEFAULT_AXIS_NAMES)
+    return axes
+
+
+def _load_signal_regions() -> Tuple[pd.DataFrame, List[str]]:
     if not os.path.exists(SIGNAL_REGION_CSV_PATH):
         raise FileNotFoundError(
             f"Signal region CSV not found: {SIGNAL_REGION_CSV_PATH}. Run signal_region.py first."
@@ -387,8 +496,9 @@ def _load_signal_regions() -> pd.DataFrame:
     if df.empty:
         raise RuntimeError(f"Signal region CSV is empty: {SIGNAL_REGION_CSV_PATH}")
 
+    axis_names = _detect_signal_region_axes(df)
     required = ["bin_index"]
-    for axis_name in AXIS_NAMES:
+    for axis_name in axis_names:
         required.extend([f"{axis_name}_low", f"{axis_name}_high"])
     missing = [name for name in required if name not in df.columns]
     if missing:
@@ -396,15 +506,15 @@ def _load_signal_regions() -> pd.DataFrame:
             f"Signal region CSV missing required columns: {', '.join(missing)}"
         )
 
-    return df.sort_values("bin_index").reset_index(drop=True)
+    return df.sort_values("bin_index").reset_index(drop=True), axis_names
 
 
-def _region_mask(scores: np.ndarray, region_row: pd.Series) -> np.ndarray:
-    mask = np.ones(scores.shape[0], dtype=bool)
-    for dim, axis_name in enumerate(AXIS_NAMES):
+def _region_mask(proba: np.ndarray, region_row: pd.Series, axis_names: List[str]) -> np.ndarray:
+    mask = np.ones(proba.shape[0], dtype=bool)
+    for axis_name in axis_names:
         low = float(region_row[f"{axis_name}_low"])
         high = float(region_row[f"{axis_name}_high"])
-        axis_scores = scores[:, dim]
+        axis_scores = proba[:, CLASS_NAMES.index(axis_name)]
         if high < 1.0 - 1e-12:
             mask &= (axis_scores >= low) & (axis_scores < high)
         else:
@@ -684,9 +794,26 @@ def write_root_output(
         else:
             covariance_total = np.asarray(covariance_total, dtype=float)
 
-        root_file[f"{prefix}/yield"] = (vals, edges)
-        root_file[f"{prefix}/stat_error"] = (np.sqrt(np.maximum(stat_vars, 0.0)), edges)
-        root_file[f"{prefix}/scale_error"] = (np.sqrt(np.maximum(scale_vars, 0.0)), edges)
+        n_sr = len(vals)
+        if stat_vars.shape != vals.shape or scale_vars.shape != vals.shape:
+            raise RuntimeError(f"Uncertainty size mismatch for ROOT bundle '{prefix}'")
+        if covariance_total.shape != (n_sr, n_sr):
+            raise RuntimeError(f"Covariance size mismatch for ROOT bundle '{prefix}'")
+
+        one_bin_edges = np.array([0.0, 1.0], dtype=float)
+        stat_err = np.sqrt(np.maximum(stat_vars, 0.0))
+        scale_err = np.sqrt(np.maximum(scale_vars, 0.0))
+        for idx in range(n_sr):
+            sr_prefix = f"{prefix}/sr{idx + 1}"
+            root_file[f"{sr_prefix}/yield"] = (np.array([vals[idx]], dtype=float), one_bin_edges)
+            root_file[f"{sr_prefix}/stat_error"] = (
+                np.array([stat_err[idx]], dtype=float),
+                one_bin_edges,
+            )
+            root_file[f"{sr_prefix}/scale_error"] = (
+                np.array([scale_err[idx]], dtype=float),
+                one_bin_edges,
+            )
         root_file[f"{prefix}/covariance_total"] = (covariance_total, edges, edges)
 
     with uproot.recreate(root_path) as root_file:
@@ -748,14 +875,24 @@ def main() -> None:
     decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
 
     log_message("Loading signal region file")
-    load_branches = sorted(set(model_branches) | set(thresholds.keys()))
-    signal_regions = _load_signal_regions()
+    # Load every branch needed downstream: BDT features (model_branches), all
+    # threshold branches (for filter_X and the mass pass/fail masks), and every
+    # decorrelate branch (in case decorrelation references a branch not in
+    # branch.json). BDT inference still uses only model_branches.
+    load_branches = sorted(set(model_branches) | set(thresholds.keys()) | set(decorrelate))
+    signal_regions, axis_names = _load_signal_regions()
     region_labels = [f"SR{int(idx)}" for idx in signal_regions["bin_index"].tolist()]
     edges = np.arange(len(region_labels) + 1, dtype=float)
     log_message(
         f"Resolved inputs: model_branches={len(model_branches)}, "
         f"load_branches={len(load_branches)}, signal_regions={len(region_labels)}, "
-        f"non_mass_thresholds={len(bdt_thresholds)}, mass_thresholds={len(mass_thresholds)}"
+        f"score_axes={axis_names}, non_mass_thresholds={len(bdt_thresholds)}, "
+        f"mass_thresholds={len(mass_thresholds)}"
+    )
+    log_message(
+        "QCD classes for ABCD merge: "
+        + ", ".join(QCD_CLASS_NAMES)
+        + f" ({len(QCD_SAMPLES)} samples)"
     )
     log_message(f"Output directory: {OUTPUT_DIR}")
 
@@ -800,15 +937,24 @@ def main() -> None:
 
     clf = _load_model()
     log_message("Running BDT prediction")
-    proba = clf.predict_proba(X_model)
+    proba = _predict_model_proba(clf, X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
+    log_message("Validating test-set prediction reference")
+    _compare_prediction_reference(
+        TEST_REFERENCE_QCD_EST,
+        X_model.columns if hasattr(X_model, "columns") else [f"f{i}" for i in range(X_model.shape[1])],
+        sample_labels,
+        y,
+        w,
+        proba,
+    )
 
     log_message("Building ABCD regions")
     region_score_masks = []
     union_score_mask = np.zeros(len(X_raw), dtype=bool)
     membership = np.zeros(len(X_raw), dtype=int)
     for _, row in signal_regions.iterrows():
-        mask = _region_mask(proba[:, : len(AXIS_NAMES)], row)
+        mask = _region_mask(proba, row, axis_names)
         region_score_masks.append(mask)
         union_score_mask |= mask
         membership += mask.astype(int)
@@ -828,7 +974,7 @@ def main() -> None:
         f"D={int(np.count_nonzero(d_mask))}"
     )
 
-    qcd_mask = np.isin(sample_labels, list(QCD_SAMPLES))
+    qcd_mask = np.isin(sample_labels, sorted(QCD_SAMPLES))
     weights = w
 
     def _sum_weight(mask):
@@ -908,28 +1054,54 @@ def main() -> None:
     )
     pred_qcd_vars = np.diag(pred_qcd_cov).astype(float)
 
-    pred_group_yields = {group: group_yields[group].copy() for group in CLASS_NAMES}
-    pred_group_vars = {group: group_vars[group].copy() for group in CLASS_NAMES}
-    pred_group_yields[QCD_CLASS_NAME] = pred_qcd_vals.copy()
-    pred_group_vars[QCD_CLASS_NAME] = pred_qcd_vars.copy()
+    non_qcd_groups = [group for group in CLASS_NAMES if group not in QCD_CLASS_SET]
+    pred_group_yields = {group: group_yields[group].copy() for group in non_qcd_groups}
+    pred_group_vars = {group: group_vars[group].copy() for group in non_qcd_groups}
+    pred_group_yields[QCD_PREDICT_GROUP_NAME] = pred_qcd_vals.copy()
+    pred_group_vars[QCD_PREDICT_GROUP_NAME] = pred_qcd_vars.copy()
+    pred_group_order = non_qcd_groups + [QCD_PREDICT_GROUP_NAME]
 
     true_total_vals = np.zeros(len(region_labels), dtype=float)
     true_total_vars = np.zeros(len(region_labels), dtype=float)
     pred_total_vals = np.zeros(len(region_labels), dtype=float)
-    pred_total_vars = np.zeros(len(region_labels), dtype=float)
     for group_name in CLASS_NAMES:
         true_total_vals += group_yields[group_name]
         true_total_vars += group_vars[group_name]
+    pred_total_stat_vars = np.zeros(len(region_labels), dtype=float)
+    for group_name in non_qcd_groups:
         pred_total_vals += pred_group_yields[group_name]
-        pred_total_vars += pred_group_vars[group_name]
+        pred_total_stat_vars += pred_group_vars[group_name]
+    pred_total_vals += pred_qcd_vals
 
-    pred_total_stat_vars = true_total_vars - group_vars[QCD_CLASS_NAME] + pred_qcd_stat_vars
+    pred_total_stat_vars += pred_qcd_stat_vars
     pred_total_scale_vars = pred_qcd_scale_vars.copy()
     pred_total_cov = np.diag(pred_total_stat_vars) + np.outer(
         np.sqrt(np.maximum(pred_total_scale_vars, 0.0)),
         np.sqrt(np.maximum(pred_total_scale_vars, 0.0)),
     )
     pred_total_vars = np.diag(pred_total_cov).astype(float)
+
+    # The plots above validate ABCD on finite MC and therefore use the propagated
+    # MC-entry variances. The ROOT file is consumed by combine, where the
+    # weighted yield itself is treated as the Poisson count. Store that
+    # combine-facing convention separately so it does not change the validation
+    # plots.
+    sample_root_vars = {
+        sample: _poisson_vars_from_yield(values)
+        for sample, values in sample_yields.items()
+    }
+    group_root_vars = {
+        group: _poisson_vars_from_yield(values)
+        for group, values in group_yields.items()
+    }
+    true_qcd_root_vars = _poisson_vars_from_yield(true_qcd_vals)
+    pred_qcd_root_stat_vars = _poisson_vars_from_yield(pred_qcd_vals)
+    pred_qcd_root_scale_vars = np.zeros_like(pred_qcd_root_stat_vars)
+    pred_qcd_root_cov = _diag_cov_from_vars(pred_qcd_root_stat_vars)
+    pred_total_root_stat_vars = _poisson_vars_from_yield(pred_total_vals)
+    pred_total_root_scale_vars = np.zeros_like(pred_total_root_stat_vars)
+    pred_total_root_cov = _diag_cov_from_vars(pred_total_root_stat_vars)
+    true_total_root_vars = _poisson_vars_from_yield(true_total_vals)
 
     abcd_group_vals = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
     abcd_group_vars = {group: np.zeros(4, dtype=float) for group in CLASS_NAMES}
@@ -947,21 +1119,21 @@ def main() -> None:
         root_path,
         edges,
         sample_yields,
-        sample_vars,
+        sample_root_vars,
         group_yields,
-        group_vars,
+        group_root_vars,
         pred_qcd_vals,
-        pred_qcd_stat_vars,
-        pred_qcd_scale_vars,
-        pred_qcd_cov,
+        pred_qcd_root_stat_vars,
+        pred_qcd_root_scale_vars,
+        pred_qcd_root_cov,
         true_qcd_vals,
-        true_qcd_vars,
+        true_qcd_root_vars,
         pred_total_vals,
-        pred_total_stat_vars,
-        pred_total_scale_vars,
-        pred_total_cov,
+        pred_total_root_stat_vars,
+        pred_total_root_scale_vars,
+        pred_total_root_cov,
         true_total_vals,
-        true_total_vars,
+        true_total_root_vars,
     )
 
     log_message("Plotting ABCD summary")
@@ -987,18 +1159,18 @@ def main() -> None:
         true_total_vals,
         true_total_vars,
         os.path.join(OUTPUT_DIR, "qcd_abcd_signal_regions_total.pdf"),
-        CLASS_NAMES,
+        pred_group_order,
         "Events",
     )
     plot_signal_region_prediction(
         region_labels,
-        {QCD_CLASS_NAME: pred_qcd_vals.copy()},
+        {QCD_PREDICT_GROUP_NAME: pred_qcd_vals.copy()},
         pred_qcd_vals,
         pred_qcd_vars,
         true_qcd_vals,
         true_qcd_vars,
         os.path.join(OUTPUT_DIR, "qcd_abcd_signal_regions_qcd.pdf"),
-        [QCD_CLASS_NAME],
+        [QCD_PREDICT_GROUP_NAME],
         "QCD Events",
     )
 

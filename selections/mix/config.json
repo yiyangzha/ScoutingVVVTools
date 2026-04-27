@@ -1,0 +1,14 @@
+{
+  "tree_name": ["fat2", "fat3"],
+  "run_sample": "www",
+  "submit_samples": [],
+  "max_threads": 18,
+  "input_root": "../../dataset",
+  "input_pattern": "{input_root}/{sample_group}/{sample}.root",
+  "output_root": "../../dataset",
+  "output_pattern": "{output_root}/{sample_group}_mixed/{sample}.root",
+  "sample_config": "../../src/sample.json",
+  "random_state": 42,
+  "min_block_entries": 8,
+  "max_block_entries": 4096
+}

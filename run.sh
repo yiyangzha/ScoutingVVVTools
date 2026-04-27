@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAX_CONCURRENT_JOBS=1
 USE_SLURM=false
-SLURM_PARTITION="cms-express"
+SLURM_PARTITION="cms"
 SLURM_TIME="04:00:00"
 SLURM_MEM="4G"
 SLURM_CPUS=12
@@ -27,12 +27,14 @@ Modes:
   mode=3  Run signal_region/signal_region.py.
   mode=4  Run plotting/data_mc.py.
   mode=5  Run background_estimation/qcd_est.py.
+  mode=6  Run selections/mix/mix.C (shuffle sample entries across chunks).
+  mode=7  Run combine/combine.C (CMS combine wrapper for MC-true and ABCD QCD).
 
 Sample selection:
   1. If sample names are given on the command line, they are used.
   2. Otherwise the script reads submit_samples from the chosen config.json.
   3. If submit_samples is empty or missing, all MC samples are submitted.
-  4. Sample arguments are only supported for mode=0 and mode=1.
+  4. Sample arguments are only supported for mode=0, mode=1, and mode=6.
 EOF
 }
 
@@ -88,6 +90,22 @@ case "${MODE}" in
     CONFIG_ENV_VAR="QCD_EST_CONFIG_PATH"
     MODE_LABEL="qcd_est"
     PYTHON_SCRIPT="qcd_est.py"
+    ;;
+  6)
+    WORK_DIR="${ROOT_DIR}/selections/mix"
+    SOURCE_FILE="mix.C"
+    BIN_NAME="mix"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="MIX_CONFIG_PATH"
+    MODE_LABEL="mix"
+    ;;
+  7)
+    WORK_DIR="${ROOT_DIR}/combine"
+    SOURCE_FILE="combine.C"
+    BIN_NAME="combine_run"
+    DEFAULT_CONFIG="${WORK_DIR}/config.json"
+    CONFIG_ENV_VAR="COMBINE_CONFIG_PATH"
+    MODE_LABEL="combine"
     ;;
   *)
     echo "Unknown mode: ${MODE}" >&2
@@ -151,7 +169,6 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "????SD?SD"
 
 detect_openmp_flags() {
   local test_src test_bin
@@ -186,14 +203,12 @@ if [ -n "${OMP_INFO}" ]; then
   OMP_LDFLAGS="${OMP_INFO#*|}"
 fi
 
-echo "blubb?"
 
 echo ${WORK_DIR}
 cd "${WORK_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
 
-echo "dumm????"
 
 if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ] || [ "${MODE}" = "4" ] || [ "${MODE}" = "5" ]; then
   if [ "$#" -gt 0 ]; then
@@ -218,7 +233,6 @@ if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ] || [ "${MODE}" = "4" ] || [ "${MOD
   exit "${status}"
 fi
 
-echo "bla????"
 
 if ! command -v c++ >/dev/null 2>&1; then
   echo "c++ is required to compile ${MODE_LABEL}." >&2
@@ -239,7 +253,6 @@ cleanup_build_artifacts() {
   fi
 }
 
-echo "??????"
 
 
 if $USE_SLURM; then
@@ -268,7 +281,20 @@ echo "[$(timestamp)] compile: ${COMPILE_CMD}"
 eval "${COMPILE_CMD}"
 echo "[$(timestamp)] compile finished"
 
-echo "here???"
+if [ "${MODE}" = "7" ]; then
+  if [ "$#" -gt 0 ]; then
+    echo "mode=${MODE} does not accept sample arguments: $*" >&2
+    exit 1
+  fi
+  echo "[$(timestamp)] started job=${MODE_LABEL} pid=$$"
+  echo "[$(timestamp)] run: env ${CONFIG_ENV_VAR}=${CONFIG_PATH} ${BIN_PATH}"
+  set +e
+  env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" "${BIN_PATH}"
+  status=$?
+  set -e
+  echo "[$(timestamp)] finished job=${MODE_LABEL} pid=$$ status=${status}"
+  exit "${status}"
+fi
 
 samples=()
 while IFS= read -r sample; do
@@ -346,7 +372,6 @@ for sample in selected:
 PY
 )
 
-echo ${samples}
 
 if [ "${#samples[@]}" -eq 0 ]; then
   echo "No samples selected from ${CONFIG_PATH}" >&2
@@ -452,7 +477,6 @@ launch_job() {
   local sample="$1"
 
   if $USE_SLURM; then
-    echo "going for submit"
     local job_name="${MODE_LABEL}_${sample}"
     local slurm_log="${WORK_DIR}/${sample}_%j.out"
 
@@ -493,7 +517,6 @@ launch_job() {
     echo "[$(timestamp)] all jobs submitted to SLURM"
   else
     for sample in "${samples[@]}"; do
-      echo "in sample loop"     
       while [ "${#RUNNING_PIDS[@]}" -ge "${MAX_CONCURRENT_JOBS}" ]; do
       if ! reap_finished_jobs; then
         sleep 2

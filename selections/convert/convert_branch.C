@@ -22,6 +22,7 @@
 #include <vector>
 #include <unistd.h>
 
+#include <TChain.h>
 #include <TFile.h>
 #include <TH1.h>
 #include <TList.h>
@@ -2121,123 +2122,6 @@ fs::path makeSplitOutputPath(const fs::path& basePath, size_t index) {
     return basePath.parent_path() / (stem + "_" + to_string(index) + extension);
 }
 
-bool hasRemainingEntries(const vector<Long64_t>& currentEntries,
-                         const vector<Long64_t>& totalEntries) {
-    for (size_t index = 0; index < totalEntries.size(); ++index) {
-        if (currentEntries[index] < totalEntries[index]) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void writeSingleOutputFile(const string& outputFileName,
-                           const vector<unique_ptr<TTree>>& mergedTrees) {
-    unique_ptr<TFile> outFile(TFile::Open(outputFileName.c_str(), "RECREATE"));
-    if (!outFile || outFile->IsZombie()) {
-        throw runtime_error("Error opening output file " + outputFileName);
-    }
-
-    outFile->cd();
-    for (const auto& mergedTree : mergedTrees) {
-        mergedTree->Write();
-    }
-    outFile->Close();
-}
-
-vector<string> writeSplitOutputFiles(const fs::path& baseOutputPath,
-                                     const vector<unique_ptr<TTree>>& mergedTrees,
-                                     Long64_t maxOutputBytes) {
-    const Long64_t targetBytes = max<Long64_t>(1, static_cast<Long64_t>(maxOutputBytes * 0.90));
-    vector<Long64_t> totalEntries;
-    vector<Long64_t> currentEntries;
-    vector<double> bytesPerEntry;
-    totalEntries.reserve(mergedTrees.size());
-    currentEntries.assign(mergedTrees.size(), 0);
-    bytesPerEntry.reserve(mergedTrees.size());
-
-    for (const auto& mergedTree : mergedTrees) {
-        const Long64_t entries = mergedTree->GetEntries();
-        totalEntries.push_back(entries);
-        const Long64_t estimatedBytes = estimateTreeBytes(mergedTree.get());
-        const double perEntry = (entries > 0) ? static_cast<double>(estimatedBytes) / static_cast<double>(entries) : 1.0;
-        bytesPerEntry.push_back(max(perEntry, 1.0));
-    }
-
-    vector<string> writtenFiles;
-    size_t fileIndex = 0;
-    while (hasRemainingEntries(currentEntries, totalEntries)) {
-        long double remainingBytes = 0.;
-        for (size_t treeIndex = 0; treeIndex < mergedTrees.size(); ++treeIndex) {
-            remainingBytes += static_cast<long double>(totalEntries[treeIndex] - currentEntries[treeIndex]) * bytesPerEntry[treeIndex];
-        }
-
-        long double ratio = 1.;
-        if (remainingBytes > static_cast<long double>(targetBytes)) {
-            ratio = static_cast<long double>(targetBytes) / remainingBytes;
-        }
-
-        const fs::path chunkPath = makeSplitOutputPath(baseOutputPath, fileIndex++);
-        unique_ptr<TFile> outFile(TFile::Open(chunkPath.c_str(), "RECREATE"));
-        if (!outFile || outFile->IsZombie()) {
-            throw runtime_error("Error opening output file " + chunkPath.string());
-        }
-
-        bool wroteAnyTree = false;
-        for (size_t treeIndex = 0; treeIndex < mergedTrees.size(); ++treeIndex) {
-            const Long64_t entriesLeft = totalEntries[treeIndex] - currentEntries[treeIndex];
-            if (entriesLeft <= 0) {
-                continue;
-            }
-
-            Long64_t chunkEntries = entriesLeft;
-            if (ratio < 1.) {
-                chunkEntries = static_cast<Long64_t>(floor(static_cast<long double>(entriesLeft) * ratio));
-            }
-            if (chunkEntries <= 0) {
-                continue;
-            }
-
-            unique_ptr<TTree> chunkTree(mergedTrees[treeIndex]->CopyTree("", "", chunkEntries, currentEntries[treeIndex]));
-            if (!chunkTree) {
-                throw runtime_error("Failed to split output tree: " + string(mergedTrees[treeIndex]->GetName()));
-            }
-
-            outFile->cd();
-            chunkTree->Write();
-            currentEntries[treeIndex] += chunkEntries;
-            wroteAnyTree = true;
-        }
-
-        if (!wroteAnyTree) {
-            for (size_t treeIndex = 0; treeIndex < mergedTrees.size(); ++treeIndex) {
-                const Long64_t entriesLeft = totalEntries[treeIndex] - currentEntries[treeIndex];
-                if (entriesLeft <= 0) {
-                    continue;
-                }
-                unique_ptr<TTree> chunkTree(mergedTrees[treeIndex]->CopyTree("", "", 1, currentEntries[treeIndex]));
-                if (!chunkTree) {
-                    throw runtime_error("Failed to split output tree: " + string(mergedTrees[treeIndex]->GetName()));
-                }
-
-                outFile->cd();
-                chunkTree->Write();
-                currentEntries[treeIndex] += 1;
-                wroteAnyTree = true;
-                break;
-            }
-        }
-
-        if (!wroteAnyTree) {
-            throw runtime_error("Unable to write any trees while splitting output file " + baseOutputPath.string());
-        }
-
-        outFile->Close();
-        writtenFiles.push_back(chunkPath.string());
-    }
-
-    return writtenFiles;
-}
 
 vector<string> listRemoteRootFiles(const string& datasetPath) {
     string query = "file dataset=" + datasetPath;
@@ -2757,34 +2641,187 @@ void printFileProgress(const string& sample, size_t done, size_t total) {
     }
 }
 
-TTree* mergeOutputTree(const vector<ThreadConvertResult>& results,
-                       size_t treeIndex,
-                       const TreeConfig& treeConfig,
-                       bool isMC) {
-    TList list;
-    list.SetOwner(false);
-    bool hasEntries = false;
-    for (const auto& result : results) {
-        if (treeIndex >= result.outputTrees.size() || result.outputTrees[treeIndex].tree == nullptr) {
+// Persist each thread's filled trees to its temp ROOT file and close the file.
+// The temp file on disk is kept so the streaming writer below can re-open it
+// read-only; cleanupThreadResult() unlinks the file later.
+vector<string> finalizeThreadTempFiles(vector<ThreadConvertResult>& threadResults) {
+    vector<string> paths;
+    paths.reserve(threadResults.size());
+    for (auto& result : threadResults) {
+        if (result.tempFile == nullptr) {
             continue;
         }
-        list.Add(result.outputTrees[treeIndex].tree);
-        hasEntries = hasEntries || (result.outputTrees[treeIndex].tree->GetEntries() > 0);
+        result.tempFile->cd();
+        for (auto& treeState : result.outputTrees) {
+            if (treeState.tree != nullptr) {
+                treeState.tree->Write("", TObject::kOverwrite);
+            }
+        }
+        result.tempFile->Close();
+        delete result.tempFile;
+        result.tempFile = nullptr;
+        // TFile::Close() deletes the TTree objects owned by the file, so the
+        // cached pointers in outputTrees are now dangling — null them out.
+        for (auto& treeState : result.outputTrees) {
+            treeState.tree = nullptr;
+        }
+        if (!result.tempFilePath.empty()) {
+            paths.push_back(result.tempFilePath);
+        }
+    }
+    return paths;
+}
+
+// Stream the combined per-thread trees into one or more output files. Each
+// chunk is a fresh TFile with both fat2/fat3 trees cloned from a TChain over
+// the thread temp files, so ROOT keeps the clone's branch addresses synced as
+// the chain advances across file boundaries. Basket size is fixed and
+// auto-flush is disabled so that OptimizeBaskets cannot inflate a basket past
+// ROOT's 1GB TBufferFile serialization limit (the failure mode observed on the
+// large QCD samples when TTree::MergeTrees was used instead).
+vector<string> writeOutputFilesStreaming(const fs::path& baseOutputPath,
+                                         const vector<string>& threadTempPaths,
+                                         const vector<TreeConfig>& treeConfigs,
+                                         Long64_t maxOutputBytes) {
+    const size_t nTrees = treeConfigs.size();
+
+    // Sum per-tree entry counts and estimated bytes across all thread temp files.
+    vector<Long64_t> treeEntries(nTrees, 0);
+    Long64_t estimatedTotalBytes = 0;
+    for (const auto& p : threadTempPaths) {
+        unique_ptr<TFile> f(TFile::Open(p.c_str(), "READ"));
+        if (!f || f->IsZombie()) {
+            continue;
+        }
+        for (size_t i = 0; i < nTrees; ++i) {
+            TTree* t = dynamic_cast<TTree*>(f->Get(treeConfigs[i].name.c_str()));
+            if (t == nullptr) {
+                continue;
+            }
+            treeEntries[i] += t->GetEntries();
+            estimatedTotalBytes += estimateTreeBytes(t);
+        }
     }
 
-    TTree* merged = nullptr;
-    if (hasEntries) {
-        merged = TTree::MergeTrees(&list);
+    // Decide how many chunks to write. Stay safely under the configured GB
+    // limit (~10% margin) so per-file on-disk size comes close to but does
+    // not exceed the limit.
+    size_t nChunks = 1;
+    if (maxOutputBytes > 0 && estimatedTotalBytes > maxOutputBytes) {
+        const Long64_t target = max<Long64_t>(1, static_cast<Long64_t>(maxOutputBytes * 0.9));
+        nChunks = static_cast<size_t>((estimatedTotalBytes + target - 1) / target);
+        if (nChunks < 2) {
+            nChunks = 2;
+        }
     }
-    if (merged == nullptr) {
-        OutputTreeState emptyState;
-        emptyState.config = treeConfig;
-        bookTreeBranches(emptyState, isMC, nullptr);
-        merged = emptyState.tree;
-        emptyState.tree = nullptr;
+    const bool split = (nChunks > 1);
+
+    vector<string> writtenFiles;
+    writtenFiles.reserve(nChunks);
+
+    for (size_t chunkIdx = 0; chunkIdx < nChunks; ++chunkIdx) {
+        const fs::path outPath = split
+            ? makeSplitOutputPath(baseOutputPath, chunkIdx)
+            : baseOutputPath;
+        unique_ptr<TFile> outFile(TFile::Open(outPath.c_str(), "RECREATE"));
+        if (!outFile || outFile->IsZombie()) {
+            throw runtime_error("Error opening output file " + outPath.string());
+        }
+
+        for (size_t i = 0; i < nTrees; ++i) {
+            const Long64_t totalE = treeEntries[i];
+            const Long64_t first = (totalE * static_cast<Long64_t>(chunkIdx)) /
+                                   static_cast<Long64_t>(nChunks);
+            const Long64_t last = (totalE * static_cast<Long64_t>(chunkIdx + 1)) /
+                                  static_cast<Long64_t>(nChunks);
+            const Long64_t expectedEntries = last - first;
+
+            auto configureOutTree = [&](TTree& outTree) {
+                outTree.SetDirectory(outFile.get());
+                outTree.SetNameTitle(treeConfigs[i].name.c_str(),
+                                     treeConfigs[i].title.c_str());
+                // Explicit small basket + disabled auto-flush prevents ROOT's
+                // OptimizeBaskets from growing a single basket's uncompressed size
+                // past its 1GB TBufferFile serialization cap on highly-compressible
+                // branches (e.g. constant sample_ID / is_MC flags).
+                outTree.SetBasketSize("*", 32000);
+                outTree.SetAutoFlush(0);
+                outTree.SetAutoSave(0);
+            };
+
+            outFile->cd();
+            TTree* outTree = nullptr;
+            if (expectedEntries > 0) {
+                TChain chain(treeConfigs[i].name.c_str());
+                for (const auto& p : threadTempPaths) {
+                    chain.Add(p.c_str());
+                }
+                if (chain.LoadTree(first) < 0) {
+                    throw runtime_error("Failed to load entry " + to_string(first) +
+                                        " for tree " + treeConfigs[i].name);
+                }
+                outTree = chain.CloneTree(0);
+                if (outTree == nullptr) {
+                    throw runtime_error("Failed to clone output tree from chain for " +
+                                        treeConfigs[i].name);
+                }
+                configureOutTree(*outTree);
+                Long64_t written = 0;
+                for (Long64_t e = first; e < last; ++e) {
+                    if (chain.GetEntry(e) <= 0) {
+                        throw runtime_error("Failed to read entry " + to_string(e) +
+                                            " for tree " + treeConfigs[i].name);
+                    }
+                    outTree->Fill();
+                    ++written;
+                }
+                if (written != expectedEntries) {
+                    throw runtime_error("Output chunk entry count mismatch for tree " +
+                                        treeConfigs[i].name + ": expected " +
+                                        to_string(expectedEntries) + ", got " +
+                                        to_string(written));
+                }
+                outFile->cd();
+                outTree->Write("", TObject::kOverwrite);
+                chain.ResetBranchAddresses();
+                outTree->ResetBranchAddresses();
+                continue;
+            }
+
+            // No entries land in this chunk for this tree, but still create an
+            // empty tree so every output file keeps the full fat2/fat3 layout.
+            unique_ptr<TFile> structureFile;
+            TTree* structureSrc = nullptr;
+            for (const auto& p : threadTempPaths) {
+                unique_ptr<TFile> f(TFile::Open(p.c_str(), "READ"));
+                if (!f || f->IsZombie()) {
+                    continue;
+                }
+                TTree* t = dynamic_cast<TTree*>(f->Get(treeConfigs[i].name.c_str()));
+                if (t != nullptr) {
+                    structureFile = std::move(f);
+                    structureSrc = t;
+                    break;
+                }
+            }
+            if (structureSrc != nullptr) {
+                outTree = structureSrc->CloneTree(0);
+            }
+            if (outTree == nullptr) {
+                outTree = new TTree(treeConfigs[i].name.c_str(),
+                                    treeConfigs[i].title.c_str());
+            }
+            configureOutTree(*outTree);
+
+            outFile->cd();
+            outTree->Write("", TObject::kOverwrite);
+            outTree->ResetBranchAddresses();
+        }
+        outFile->Close();
+        writtenFiles.push_back(outPath.string());
     }
-    merged->SetNameTitle(treeConfig.name.c_str(), treeConfig.title.c_str());
-    return merged;
+
+    return writtenFiles;
 }
 
 void processInputFile(const string& inputFileName,
@@ -3012,28 +3049,23 @@ int main(int argc, char** argv) {
         if (!outputPath.parent_path().empty()) {
             fs::create_directories(outputPath.parent_path());
         }
-        vector<unique_ptr<TTree>> mergedTrees;
-        mergedTrees.reserve(branchConfig.trees.size());
-        for (size_t treeIndex = 0; treeIndex < branchConfig.trees.size(); ++treeIndex) {
-            mergedTrees.emplace_back(mergeOutputTree(threadResults, treeIndex, branchConfig.trees[treeIndex], sampleMeta.isMC));
-        }
 
+        const vector<string> threadTempPaths = finalizeThreadTempFiles(threadResults);
         const Long64_t maxOutputBytes = outputSizeLimitBytes(appConfig.maxOutputFileSizeGB);
-        Long64_t estimatedTotalBytes = 0;
-        for (const auto& mergedTree : mergedTrees) {
-            estimatedTotalBytes += estimateTreeBytes(mergedTree.get());
-        }
-
-        if (maxOutputBytes > 0 && estimatedTotalBytes > maxOutputBytes) {
-            const vector<string> writtenFiles = writeSplitOutputFiles(outputPath, mergedTrees, maxOutputBytes);
+        const vector<string> writtenFiles = writeOutputFilesStreaming(outputPath,
+                                                                      threadTempPaths,
+                                                                      branchConfig.trees,
+                                                                      maxOutputBytes);
+        if (writtenFiles.size() <= 1) {
+            cout << "Wrote output file: "
+                 << (writtenFiles.empty() ? sampleMeta.outputFileName : writtenFiles.front())
+                 << endl;
+        } else {
             cout << "Wrote output files:";
             for (const auto& fileName : writtenFiles) {
                 cout << ' ' << fileName;
             }
             cout << endl;
-        } else {
-            writeSingleOutputFile(sampleMeta.outputFileName, mergedTrees);
-            cout << "Wrote output file: " << sampleMeta.outputFileName << endl;
         }
     } catch (const exception& ex) {
         cerr << "Output error: " << ex.what() << endl;
