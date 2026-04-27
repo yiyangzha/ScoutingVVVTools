@@ -12,6 +12,7 @@
   "beam_width": 96,
   "top_intervals_per_axis": 8,
   "coordinate_rounds": 10,
+  "seed_intervals_per_axis": 16,
   "multi_axis_seed_max_axes": 2,
   "multi_axis_seed_max_seeds": 5000,
   "local_refine_rounds": 8,

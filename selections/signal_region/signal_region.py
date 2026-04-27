@@ -59,6 +59,7 @@ MAX_EDGE_CANDIDATES_PER_AXIS = max(8, int(scan_cfg.get("max_edge_candidates_per_
 BEAM_WIDTH = max(1, int(scan_cfg.get("beam_width", 48)))
 TOP_INTERVALS_PER_AXIS = max(1, int(scan_cfg.get("top_intervals_per_axis", 8)))
 COORDINATE_ROUNDS = max(1, int(scan_cfg.get("coordinate_rounds", 8)))
+SEED_INTERVALS_PER_AXIS = max(0, int(scan_cfg.get("seed_intervals_per_axis", 0)))
 LOCAL_REFINE_ROUNDS = max(0, int(scan_cfg.get("local_refine_rounds", 3)))
 LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edges", 48)))
 LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
@@ -72,15 +73,9 @@ CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_li
 PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
 GLOBAL_SELECTION_CANDIDATES = max(
     N_SIGNAL_REGIONS,
-    int(scan_cfg.get(
-        "global_selection_candidates",
-        scan_cfg.get("final_selection_candidates", 5000),
-    )),
+    int(scan_cfg.get("global_selection_candidates", 5000)),
 )
-GLOBAL_BEAM_WIDTH = max(
-    1,
-    int(scan_cfg.get("global_beam_width", scan_cfg.get("selection_beam_width", 512))),
-)
+GLOBAL_BEAM_WIDTH = max(1, int(scan_cfg.get("global_beam_width", 512)))
 BRANCH_BOUND_MAX_NODES = max(0, int(scan_cfg.get("branch_bound_max_nodes", 0)))
 BRANCH_BOUND_TIME_LIMIT_SECONDS = max(
     0.0, float(scan_cfg.get("branch_bound_time_limit_seconds", 0.0))
@@ -1074,6 +1069,8 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     _add_seed([0.0] * D, [1.0] * D)  # full box
     axis_seed_options = []
+    full_lo = [0.0] * D
+    full_hi = [1.0] * D
     for d in range(D):
         edges = edges_per_axis[d]
         options = []
@@ -1094,6 +1091,16 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 _add_seed(lo2, hi2)
                 if edge > EPS:
                     options.append((0.0, edge))
+        if SEED_INTERVALS_PER_AXIS > 0:
+            for low_d, high_d, _S_v, _B_v, _Z in _top_intervals_on_axis(
+                d, full_lo, full_hi, edges, SEED_INTERVALS_PER_AXIS
+            ):
+                lo = [0.0] * D
+                hi = [1.0] * D
+                lo[d] = low_d
+                hi[d] = high_d
+                _add_seed(lo, hi)
+                options.append((low_d, high_d))
         unique_options = []
         seen_options = set()
         for low_d, high_d in options:
