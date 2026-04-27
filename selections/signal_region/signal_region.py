@@ -60,6 +60,8 @@ BEAM_WIDTH = max(1, int(scan_cfg.get("beam_width", 48)))
 TOP_INTERVALS_PER_AXIS = max(1, int(scan_cfg.get("top_intervals_per_axis", 8)))
 COORDINATE_ROUNDS = max(1, int(scan_cfg.get("coordinate_rounds", 8)))
 SEED_INTERVALS_PER_AXIS = max(0, int(scan_cfg.get("seed_intervals_per_axis", 0)))
+COMPATIBILITY_SEED_ANCHORS = max(0, int(scan_cfg.get("compatibility_seed_anchors", 0)))
+COMPATIBILITY_SEED_ROUNDS = max(0, int(scan_cfg.get("compatibility_seed_rounds", 0)))
 LOCAL_REFINE_ROUNDS = max(0, int(scan_cfg.get("local_refine_rounds", 3)))
 LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edges", 48)))
 LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
@@ -726,7 +728,9 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         "  Optimizer: "
         f"max_edges={MAX_EDGE_CANDIDATES_PER_AXIS}, "
         f"beam_width={BEAM_WIDTH}, top_intervals={TOP_INTERVALS_PER_AXIS}, "
-        f"rounds={COORDINATE_ROUNDS}, local_refine_rounds={LOCAL_REFINE_ROUNDS}, "
+        f"rounds={COORDINATE_ROUNDS}, compatibility_anchors={COMPATIBILITY_SEED_ANCHORS}, "
+        f"compatibility_rounds={COMPATIBILITY_SEED_ROUNDS}, "
+        f"local_refine_rounds={LOCAL_REFINE_ROUNDS}, "
         f"global_candidates={GLOBAL_SELECTION_CANDIDATES}, "
         f"global_beam_width={GLOBAL_BEAM_WIDTH}"
     )
@@ -1052,6 +1056,37 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 selected_keys.add(key)
         return selected
 
+    def _select_state_beam(states, width):
+        unique = {}
+        for item, locked_axis in states:
+            if item is None:
+                continue
+            key = (_region_key(item["lo"], item["hi"]), int(locked_axis))
+            if key not in unique or item["Z"] > unique[key][0]["Z"]:
+                unique[key] = (item, int(locked_axis))
+        ordered = sorted(unique.values(), key=lambda state: -state[0]["Z"])
+        if len(ordered) <= width:
+            return ordered
+
+        selected = []
+        selected_keys = set()
+        diverse_target = max(1, width // 2)
+        for item, locked_axis in ordered:
+            if len(selected) >= diverse_target:
+                break
+            if all(not _overlap(item["lo"], item["hi"], prev[0]["lo"], prev[0]["hi"]) for prev in selected):
+                selected.append((item, locked_axis))
+                selected_keys.add((_region_key(item["lo"], item["hi"]), locked_axis))
+
+        for item, locked_axis in ordered:
+            if len(selected) >= width:
+                break
+            key = (_region_key(item["lo"], item["hi"]), locked_axis)
+            if key not in selected_keys:
+                selected.append((item, locked_axis))
+                selected_keys.add(key)
+        return selected
+
     # ---- Build seeds ----
     seeds = []
     seed_keys = set()
@@ -1236,6 +1271,81 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             "lower min_bkg_weight or check inputs"
         )
 
+    if COMPATIBILITY_SEED_ANCHORS > 0 and COMPATIBILITY_SEED_ROUNDS > 0:
+        anchors = []
+        seen_anchor_masks = set()
+        duplicate_anchors = 0
+        for item in sorted(pool.values(), key=lambda x: -x["Z"]):
+            packed = np.packbits(_rect_mask(item["lo"], item["hi"])).tobytes()
+            if packed in seen_anchor_masks:
+                duplicate_anchors += 1
+                continue
+            seen_anchor_masks.add(packed)
+            anchors.append(item)
+            if len(anchors) >= COMPATIBILITY_SEED_ANCHORS:
+                break
+        log_message(
+            f"  Compatibility anchors: selected={len(anchors)}, "
+            f"mask_duplicates_skipped={duplicate_anchors}"
+        )
+        compat_states = []
+        for anchor in anchors:
+            for d in range(D):
+                if anchor["lo"][d] > EPS:
+                    lo = [0.0] * D
+                    hi = [1.0] * D
+                    hi[d] = anchor["lo"][d]
+                    item = _add_to_pool(lo, hi)
+                    if item is not None:
+                        compat_states.append((item, d))
+                if anchor["hi"][d] < 1.0 - EPS:
+                    lo = [0.0] * D
+                    hi = [1.0] * D
+                    lo[d] = anchor["hi"][d]
+                    item = _add_to_pool(lo, hi)
+                    if item is not None:
+                        compat_states.append((item, d))
+
+        compat_beam = _select_state_beam(compat_states, BEAM_WIDTH)
+        _progress(
+            f"Compatibility expansion start: anchors={len(anchors)}, "
+            f"seeds={len(compat_states)}, beam={len(compat_beam)}, pool={len(pool)}",
+            force=True,
+        )
+        for r in range(COMPATIBILITY_SEED_ROUNDS):
+            before_pool = len(pool)
+            produced_states = []
+            for ib, (item, locked_axis) in enumerate(compat_beam):
+                for d in range(D):
+                    if d == locked_axis:
+                        continue
+                    intervals = _top_intervals_on_axis(
+                        d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
+                    )
+                    for low_d, high_d, S_v, B_v, _Z in intervals:
+                        lo = list(item["lo"])
+                        hi = list(item["hi"])
+                        lo[d] = low_d
+                        hi[d] = high_d
+                        new_item = _add_to_pool(lo, hi, S_v, B_v)
+                        if new_item is not None:
+                            produced_states.append((new_item, locked_axis))
+                _progress(
+                    f"Compatibility round {r + 1}/{COMPATIBILITY_SEED_ROUNDS}: "
+                    f"processed {ib + 1}/{len(compat_beam)} states, pool={len(pool)}"
+                )
+            _trim_pool()
+            compat_beam = _select_state_beam(compat_beam + produced_states, BEAM_WIDTH)
+            best_Z = compat_beam[0][0]["Z"] if compat_beam else 0.0
+            _progress(
+                f"Compatibility round {r + 1}/{COMPATIBILITY_SEED_ROUNDS} done: "
+                f"new={len(pool) - before_pool}, produced={len(produced_states)}, "
+                f"pool={len(pool)}, beam={len(compat_beam)}, best_Z={best_Z:.4f}",
+                force=True,
+            )
+            if len(pool) == before_pool:
+                break
+
     def _local_edges_for_axis(d, lo, hi):
         edge_values = [0.0, 1.0, lo[d], hi[d]]
         edge_values.extend(edges_per_axis[d])
@@ -1339,13 +1449,6 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     all_items = sorted(pool.values(), key=lambda x: -x["Z"])
     log_message(f"  Candidate pool size: {len(all_items)}")
-    n_items_total = len(all_items)
-    n_limited = min(n_items_total, GLOBAL_SELECTION_CANDIDATES)
-    if n_limited < n_items_total:
-        log_warning(
-            f"Global selection uses top {n_limited} of {n_items_total} candidates for speed; "
-            "increase global_selection_candidates for a wider exact search"
-        )
 
     def _dedupe_by_event_mask(candidate_items):
         if not DEDUPLICATE_EVENT_MASKS:
@@ -1370,7 +1473,19 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         )
         return deduped
 
-    items = _dedupe_by_event_mask(all_items[:n_limited])
+    if DEDUPLICATE_EVENT_MASKS:
+        unique_items = _dedupe_by_event_mask(all_items)
+    else:
+        unique_items = all_items
+
+    n_items_total = len(unique_items)
+    n_limited = min(n_items_total, GLOBAL_SELECTION_CANDIDATES)
+    if n_limited < n_items_total:
+        log_warning(
+            f"Global selection uses top {n_limited} of {n_items_total} unique candidates for speed; "
+            "increase global_selection_candidates for a wider exact search"
+        )
+    items = unique_items[:n_limited]
     if len(items) < target_regions:
         raise RuntimeError(
             f"Only {len(items)} unique candidate signal regions are available; "
