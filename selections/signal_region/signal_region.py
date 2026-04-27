@@ -87,7 +87,12 @@ REQUIRE_EXACT_N_REGIONS = bool(scan_cfg.get("require_exact_n_regions", True))
 MAX_THREADS = max(1, int(scan_cfg.get("max_threads", 8)))
 SEED_QUANTILES = [
     float(q) for q in scan_cfg.get(
-        "seed_quantiles", [0.5, 0.75, 0.9, 0.95, 0.98, 0.99]
+        "seed_quantiles", [
+            0.001, 0.0025, 0.005, 0.01, 0.02, 0.05, 0.075,
+            0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6,
+            0.7, 0.75, 0.8, 0.85, 0.9, 0.925, 0.95,
+            0.975, 0.98, 0.99, 0.995, 0.9975, 0.999,
+        ]
     )
 ]
 
@@ -781,6 +786,10 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 m &= (v >= lo[d]) & (v < hi[d])
         return m
 
+    def _rect_hypervolume(lo, hi):
+        widths = [max(0.0, float(hi[d]) - float(lo[d])) for d in range(D)]
+        return float(np.prod(widths))
+
     def _rect_SB(lo, hi):
         m = _rect_mask(lo, hi)
         return float(w_sig[m].sum()), float(w_bkg[m].sum())
@@ -1453,23 +1462,47 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     def _dedupe_by_event_mask(candidate_items):
         if not DEDUPLICATE_EVENT_MASKS:
             return candidate_items
-        seen_masks = set()
-        deduped = []
+        best_by_mask = {}
         duplicate_count = 0
+        volume_replacements = 0
+        z_replacements = 0
+        z_tol = 1.0e-10
+        volume_tol = 1.0e-15
         for i, item in enumerate(candidate_items):
             packed = np.packbits(_rect_mask(item["lo"], item["hi"])).tobytes()
-            if packed in seen_masks:
+            volume = _rect_hypervolume(item["lo"], item["hi"])
+            previous = best_by_mask.get(packed)
+            if previous is None:
+                best_by_mask[packed] = (item, volume)
+            else:
                 duplicate_count += 1
-                continue
-            seen_masks.add(packed)
-            deduped.append(item)
+                previous_item, previous_volume = previous
+                if item["Z"] > previous_item["Z"] + z_tol:
+                    best_by_mask[packed] = (item, volume)
+                    z_replacements += 1
+                elif (
+                    abs(item["Z"] - previous_item["Z"]) <= z_tol and
+                    volume < previous_volume - volume_tol
+                ):
+                    best_by_mask[packed] = (item, volume)
+                    volume_replacements += 1
             _progress(
                 f"Event-mask dedupe: processed {i + 1}/{len(candidate_items)}, "
-                f"kept={len(deduped)}"
+                f"kept={len(best_by_mask)}"
             )
+        deduped = [entry[0] for entry in best_by_mask.values()]
+        deduped.sort(
+            key=lambda item: (
+                -item["Z"],
+                _rect_hypervolume(item["lo"], item["hi"]),
+                _region_key(item["lo"], item["hi"]),
+            )
+        )
         log_message(
             f"  Event-mask dedupe: input={len(candidate_items)}, "
-            f"duplicates={duplicate_count}, kept={len(deduped)}"
+            f"duplicates={duplicate_count}, kept={len(deduped)}, "
+            f"z_replacements={z_replacements}, "
+            f"volume_tie_replacements={volume_replacements}"
         )
         return deduped
 
