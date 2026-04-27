@@ -1,5 +1,5 @@
 {
-  "submit_trees": ["fat3"],
+  "submit_trees": ["fat2"],
   "sample_config": "../../src/sample.json",
   "input_root": "../../dataset",
   "input_pattern": "{input_root}/{sample_group}_mixed/{sample}.root",
