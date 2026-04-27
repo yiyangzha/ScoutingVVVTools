@@ -52,6 +52,9 @@ N_SIGNAL_REGIONS = int(scan_cfg.get("n_signal_regions", scan_cfg.get("N", 4)))
 BDT_ROOT         = scan_cfg.get("bdt_root", scan_cfg.get("output_root"))
 OUTPUT_DIR       = scan_cfg.get("output_dir", BDT_ROOT)
 MIN_BKG_WEIGHT   = float(scan_cfg.get("min_bkg_weight", 5.0))
+MIN_SIGNAL_WEIGHT = float(scan_cfg.get("min_signal_weight", 0.0))
+MIN_SIGNAL_ENTRIES = max(0, int(scan_cfg.get("min_signal_entries", 0)))
+MIN_BKG_ENTRIES = max(0, int(scan_cfg.get("min_bkg_entries", 0)))
 MAX_EDGE_CANDIDATES_PER_AXIS = max(8, int(scan_cfg.get("max_edge_candidates_per_axis", 120)))
 BEAM_WIDTH = max(1, int(scan_cfg.get("beam_width", 48)))
 TOP_INTERVALS_PER_AXIS = max(1, int(scan_cfg.get("top_intervals_per_axis", 8)))
@@ -61,8 +64,23 @@ LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edg
 LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
 CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_limit", 20000)))
 PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
-FINAL_SELECTION_CANDIDATES = max(N_SIGNAL_REGIONS, int(scan_cfg.get("final_selection_candidates", 5000)))
-SELECTION_BEAM_WIDTH = max(1, int(scan_cfg.get("selection_beam_width", 512)))
+GLOBAL_SELECTION_CANDIDATES = max(
+    N_SIGNAL_REGIONS,
+    int(scan_cfg.get(
+        "global_selection_candidates",
+        scan_cfg.get("final_selection_candidates", 5000),
+    )),
+)
+GLOBAL_BEAM_WIDTH = max(
+    1,
+    int(scan_cfg.get("global_beam_width", scan_cfg.get("selection_beam_width", 512))),
+)
+BRANCH_BOUND_MAX_NODES = max(0, int(scan_cfg.get("branch_bound_max_nodes", 0)))
+BRANCH_BOUND_TIME_LIMIT_SECONDS = max(
+    0.0, float(scan_cfg.get("branch_bound_time_limit_seconds", 0.0))
+)
+DEDUPLICATE_EVENT_MASKS = bool(scan_cfg.get("deduplicate_event_masks", True))
+REQUIRE_EXACT_N_REGIONS = bool(scan_cfg.get("require_exact_n_regions", True))
 MAX_THREADS = max(1, int(scan_cfg.get("max_threads", 8)))
 SEED_QUANTILES = [
     float(q) for q in scan_cfg.get(
@@ -649,12 +667,12 @@ def plot_signal_regions_2d(result, proba, y, w):
 
 # -------------------- Signal-region scan --------------------
 def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None):
-    """Find non-overlapping general high-D score rectangles.
+    """Find a global set of non-overlapping high-D score rectangles.
 
-    Each call scans the allowed score space and returns up to ``target_regions``
-    rectangles that do not overlap ``forbidden_regions``. The main workflow calls
-    this with ``target_regions=1`` repeatedly, so every SR is found by a fresh
-    scan of the space left after the previously selected SRs.
+    The candidate generator uses the same score-rectangle cuts as before. The
+    final selection is global: it maximizes the existing combined objective
+    ``sum(Z_i^2)`` over mutually non-overlapping candidates, using branch and
+    bound when the OpenMP helper is available.
     """
     forbidden_regions = forbidden_regions or []
     target_regions = max(1, int(target_regions or N_SIGNAL_REGIONS))
@@ -678,7 +696,9 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         "  Optimizer: "
         f"max_edges={MAX_EDGE_CANDIDATES_PER_AXIS}, "
         f"beam_width={BEAM_WIDTH}, top_intervals={TOP_INTERVALS_PER_AXIS}, "
-        f"rounds={COORDINATE_ROUNDS}, local_refine_rounds={LOCAL_REFINE_ROUNDS}"
+        f"rounds={COORDINATE_ROUNDS}, local_refine_rounds={LOCAL_REFINE_ROUNDS}, "
+        f"global_candidates={GLOBAL_SELECTION_CANDIDATES}, "
+        f"global_beam_width={GLOBAL_BEAM_WIDTH}"
     )
 
     scan_t0 = time.monotonic()
@@ -730,6 +750,17 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     def _rect_SB(lo, hi):
         m = _rect_mask(lo, hi)
         return float(w_sig[m].sum()), float(w_bkg[m].sum())
+
+    def _rect_stats(lo, hi):
+        m = _rect_mask(lo, hi)
+        ms = m & is_sig
+        mb = m & is_bkg
+        return (
+            float(w[ms].sum()),
+            float(w[mb].sum()),
+            int(ms.sum()),
+            int(mb.sum()),
+        )
 
     def _overlap(lo1, hi1, lo2, hi2):
         for d in range(D):
@@ -861,8 +892,15 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             S_v, B_v = _rect_SB(lo, hi)
         else:
             S_v, B_v = float(S_v), float(B_v)
-        if B_v < MIN_BKG_WEIGHT or S_v <= 0.0:
+        if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
             return None
+        if MIN_SIGNAL_ENTRIES > 0 or MIN_BKG_ENTRIES > 0:
+            S_check, B_check, S_entries, B_entries = _rect_stats(lo, hi)
+            S_v, B_v = S_check, B_check
+            if S_entries < MIN_SIGNAL_ENTRIES or B_entries < MIN_BKG_ENTRIES:
+                return None
+            if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
+                return None
         Z = _calc_Z_val(S_v, B_v)
         if Z <= 0.0:
             return None
@@ -1169,23 +1207,62 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         _trim_pool()
         _progress(f"Local refinement done: pool={len(pool)}", force=True)
 
-    items = sorted(pool.values(), key=lambda x: -x["Z"])
-    log_message(f"  Candidate pool size: {len(items)}")
+    all_items = sorted(pool.values(), key=lambda x: -x["Z"])
+    log_message(f"  Candidate pool size: {len(all_items)}")
+    n_items_total = len(all_items)
+    n_limited = min(n_items_total, GLOBAL_SELECTION_CANDIDATES)
+    if n_limited < n_items_total:
+        log_warning(
+            f"Global selection uses top {n_limited} of {n_items_total} candidates for speed; "
+            "increase global_selection_candidates for a wider exact search"
+        )
+
+    def _dedupe_by_event_mask(candidate_items):
+        if not DEDUPLICATE_EVENT_MASKS:
+            return candidate_items
+        seen_masks = set()
+        deduped = []
+        duplicate_count = 0
+        for i, item in enumerate(candidate_items):
+            packed = np.packbits(_rect_mask(item["lo"], item["hi"])).tobytes()
+            if packed in seen_masks:
+                duplicate_count += 1
+                continue
+            seen_masks.add(packed)
+            deduped.append(item)
+            _progress(
+                f"Event-mask dedupe: processed {i + 1}/{len(candidate_items)}, "
+                f"kept={len(deduped)}"
+            )
+        log_message(
+            f"  Event-mask dedupe: input={len(candidate_items)}, "
+            f"duplicates={duplicate_count}, kept={len(deduped)}"
+        )
+        return deduped
+
+    items = _dedupe_by_event_mask(all_items[:n_limited])
+    if len(items) < target_regions:
+        raise RuntimeError(
+            f"Only {len(items)} unique candidate signal regions are available; "
+            f"requested {target_regions}"
+        )
+
     n_items = len(items)
     Z_arr = np.array([it["Z"] for it in items], dtype=float)
     Z2 = Z_arr ** 2
     los = [it["lo"] for it in items]
     his = [it["hi"] for it in items]
+    target_n = target_regions
 
     def _compatible_with_picks(i, picks):
         return all(not _overlap(los[i], his[i], los[j], his[j]) for j in picks)
 
-    def _prune_state_bucket(bucket):
+    def _prune_state_bucket(bucket, width):
         bucket.sort(key=lambda state: (-state[0], state[1]))
-        if len(bucket) > SELECTION_BEAM_WIDTH:
-            del bucket[SELECTION_BEAM_WIDTH:]
+        if len(bucket) > width:
+            del bucket[width:]
 
-    def _select_regions_beam_python(n_select):
+    def _select_regions_beam_python(n_select, beam_width):
         states = [[] for _ in range(target_n + 1)]
         states[0] = [(0.0, tuple())]
         for i in range(n_select):
@@ -1197,16 +1274,121 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                         additions.append((score + Z2[i], picks + (i,)))
                 if additions:
                     states[count + 1].extend(additions)
-                    _prune_state_bucket(states[count + 1])
+                    _prune_state_bucket(states[count + 1], beam_width)
             _progress(
-                f"Final selection beam: processed {i + 1}/{n_select}, "
+                f"Global incumbent beam: processed {i + 1}/{n_select}, "
                 f"best_count={max(c for c, bucket in enumerate(states) if bucket)}"
             )
         for count in range(target_n, 0, -1):
             if states[count]:
-                _prune_state_bucket(states[count])
+                _prune_state_bucket(states[count], beam_width)
                 return list(states[count][0][1])
         return []
+
+    def _score_picks(picks):
+        return float(np.sum(Z2[list(picks)])) if picks else 0.0
+
+    def _selection_result(picks, score, upper_bound, completed, nodes, selector_name):
+        score = float(score)
+        upper_bound = float(max(score, upper_bound))
+        return {
+            "picks": list(picks),
+            "score": score,
+            "upper_bound": upper_bound,
+            "completed": bool(completed),
+            "nodes": int(nodes),
+            "selector": selector_name,
+        }
+
+    def _select_regions_branch_bound_python(n_select):
+        seed = _select_regions_beam_python(n_select, GLOBAL_BEAM_WIDTH)
+        best_picks = tuple(seed) if len(seed) == target_n else tuple()
+        best_score = _score_picks(best_picks)
+        nodes = 0
+        stopped = False
+        start_time = time.monotonic()
+
+        def _limit_hit():
+            nonlocal stopped
+            if stopped:
+                return True
+            if BRANCH_BOUND_MAX_NODES > 0 and nodes >= BRANCH_BOUND_MAX_NODES:
+                stopped = True
+            if (
+                BRANCH_BOUND_TIME_LIMIT_SECONDS > 0.0 and
+                time.monotonic() - start_time >= BRANCH_BOUND_TIME_LIMIT_SECONDS
+            ):
+                stopped = True
+            return stopped
+
+        def _optimistic_bound(start, picks, score):
+            remaining = target_n - len(picks)
+            if remaining <= 0:
+                return float(score)
+            bound = float(score)
+            count = 0
+            for cand in range(start, n_select):
+                if _compatible_with_picks(cand, picks):
+                    bound += Z2[cand]
+                    count += 1
+                    if count >= remaining:
+                        return float(bound)
+            return -np.inf
+
+        root_bound = _optimistic_bound(0, tuple(), 0.0)
+        if not np.isfinite(root_bound):
+            return _selection_result([], 0.0, 0.0, True, nodes, "Python branch-and-bound")
+
+        def _better_picks(a, b):
+            return tuple(a) < tuple(b)
+
+        def _update_best(picks, score):
+            nonlocal best_picks, best_score
+            picks = tuple(picks)
+            if (
+                score > best_score + 1e-12 or
+                (abs(score - best_score) <= 1e-12 and picks and _better_picks(picks, best_picks))
+            ):
+                best_score = float(score)
+                best_picks = picks
+
+        def _dfs(start, picks, score):
+            nonlocal nodes
+            if stopped:
+                return
+            nodes += 1
+            if nodes % 4096 == 0 and _limit_hit():
+                return
+            if len(picks) == target_n:
+                _update_best(picks, score)
+                return
+            bound = _optimistic_bound(start, picks, score)
+            if not np.isfinite(bound) or bound <= best_score + 1e-12:
+                return
+            remaining = target_n - len(picks)
+            for cand in range(start, n_select - remaining + 1):
+                if _limit_hit():
+                    return
+                if not _compatible_with_picks(cand, picks):
+                    continue
+                _dfs(cand + 1, picks + (cand,), score + Z2[cand])
+
+        _progress(
+            f"Python branch-and-bound start: candidates={n_select}, target_bins={target_n}, "
+            f"incumbent_Z={np.sqrt(best_score):.4f}",
+            force=True,
+        )
+        _dfs(0, tuple(), 0.0)
+        completed = not stopped
+        upper = best_score if completed else root_bound
+        return _selection_result(
+            best_picks,
+            best_score,
+            upper,
+            completed,
+            nodes,
+            "Python branch-and-bound",
+        )
 
     def _build_openmp_selector():
         src = os.path.join(_SCRIPT_DIR, "openmp_region_select.cpp")
@@ -1260,14 +1442,14 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                     errors.append(f"{label}: compiler returned {proc.returncode}")
             if not built:
                 log_warning(
-                    "OpenMP selector build failed; falling back to Python beam. "
+                    "OpenMP selector build failed; falling back to Python branch-and-bound. "
                     + " | ".join(errors)
                 )
                 return None
         try:
             helper = ctypes.CDLL(lib)
-            fn = helper.select_regions_beam_openmp
-            fn.argtypes = [
+            beam_fn = helper.select_regions_beam_openmp
+            beam_fn.argtypes = [
                 ctypes.c_int,
                 ctypes.c_int,
                 ctypes.c_int,
@@ -1278,71 +1460,135 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 ctypes.POINTER(ctypes.c_int),
                 ctypes.c_int,
             ]
-            fn.restype = ctypes.c_int
-            return fn
+            beam_fn.restype = ctypes.c_int
+
+            bnb_fn = helper.select_regions_branch_bound_openmp
+            bnb_fn.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_longlong,
+                ctypes.c_double,
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.POINTER(ctypes.c_int),
+                ctypes.POINTER(ctypes.c_double),
+                ctypes.c_int,
+            ]
+            bnb_fn.restype = ctypes.c_int
+            return {"beam": beam_fn, "branch_bound": bnb_fn}
         except Exception as exc:
-            log_warning(f"OpenMP selector load failed; falling back to Python beam: {exc}")
+            log_warning(f"OpenMP selector load failed; falling back to Python branch-and-bound: {exc}")
             return None
 
-    def _select_regions_beam_openmp(n_select):
+    def _select_regions_branch_bound_openmp(n_select):
         if MAX_THREADS <= 1 or target_n > 16:
             return None
-        fn = _build_openmp_selector()
-        if fn is None:
+        helper = _build_openmp_selector()
+        if helper is None:
             return None
+        fn = helper["branch_bound"]
         lows_arr = np.ascontiguousarray(np.asarray(los[:n_select], dtype=np.float64))
         highs_arr = np.ascontiguousarray(np.asarray(his[:n_select], dtype=np.float64))
         z2_arr = np.ascontiguousarray(np.asarray(Z2[:n_select], dtype=np.float64))
         out = np.full(target_n, -1, dtype=np.int32)
+        stats = np.zeros(6, dtype=np.float64)
         ret = fn(
             ctypes.c_int(n_select),
             ctypes.c_int(D),
             ctypes.c_int(target_n),
-            ctypes.c_int(SELECTION_BEAM_WIDTH),
+            ctypes.c_int(GLOBAL_BEAM_WIDTH),
+            ctypes.c_longlong(BRANCH_BOUND_MAX_NODES),
+            ctypes.c_double(BRANCH_BOUND_TIME_LIMIT_SECONDS),
             lows_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             highs_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             z2_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             out.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+            stats.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             ctypes.c_int(MAX_THREADS),
         )
-        if ret <= 0:
-            log_warning(f"OpenMP selector returned {ret}; falling back to Python beam")
+        if ret < 0:
+            log_warning(f"OpenMP branch-and-bound returned {ret}; falling back to Python")
             return None
-        return [int(v) for v in out[:ret] if int(v) >= 0]
-
-    # ---- Fast bounded selection over the candidate pool. ----
-    target_n = target_regions
-    n_select = min(n_items, FINAL_SELECTION_CANDIDATES)
-    if n_select < n_items:
-        log_warning(
-            f"Final selection uses top {n_select} of {n_items} candidates for speed; "
-            "increase final_selection_candidates for a wider search"
+        picks = [int(v) for v in out[:ret] if int(v) >= 0]
+        return _selection_result(
+            picks,
+            stats[0],
+            stats[1],
+            stats[3] > 0.5,
+            int(round(stats[2])),
+            "OpenMP branch-and-bound",
         )
+
+    # ---- Global selection over the candidate pool. ----
+    n_select = n_items
     _progress(
-        f"Final beam selection start: candidates={n_select}, target_bins={target_n}, "
-        f"selection_beam_width={SELECTION_BEAM_WIDTH}, max_threads={MAX_THREADS}",
+        f"Global branch-and-bound start: candidates={n_select}, target_bins={target_n}, "
+        f"beam_width={GLOBAL_BEAM_WIDTH}, max_threads={MAX_THREADS}",
         force=True,
     )
 
-    best_picks = _select_regions_beam_openmp(n_select)
-    selector_name = "OpenMP beam"
-    if best_picks is None:
-        selector_name = "Python beam"
-        best_picks = _select_regions_beam_python(n_select)
-    best_score = float(np.sum(Z2[best_picks])) if best_picks else 0.0
+    selection = _select_regions_branch_bound_openmp(n_select)
+    if selection is None:
+        selection = _select_regions_branch_bound_python(n_select)
+    best_picks = selection["picks"]
+    best_score = selection["score"]
 
     if not best_picks:
-        raise RuntimeError("Final beam selection found no valid signal-region set")
+        raise RuntimeError("Global selection found no valid signal-region set")
     if len(best_picks) < target_regions:
-        log_warning(
-            f"Final beam selection found only {len(best_picks)} non-overlapping "
+        message = (
+            f"Global selection found only {len(best_picks)} non-overlapping "
             f"regions; requested {target_regions}"
+        )
+        if REQUIRE_EXACT_N_REGIONS:
+            raise RuntimeError(message)
+        log_warning(message)
+
+    selected_masks = [_rect_mask(los[idx], his[idx]) for idx in best_picks]
+    geometry_overlap_pairs = 0
+    event_overlap_pairs = 0
+    for ia in range(len(best_picks)):
+        for ib in range(ia + 1, len(best_picks)):
+            if _overlap(
+                los[best_picks[ia]], his[best_picks[ia]],
+                los[best_picks[ib]], his[best_picks[ib]],
+            ):
+                geometry_overlap_pairs += 1
+            if np.any(selected_masks[ia] & selected_masks[ib]):
+                event_overlap_pairs += 1
+    if geometry_overlap_pairs or event_overlap_pairs:
+        raise RuntimeError(
+            "Selected signal-region definitions overlap: "
+            f"geometry_pairs={geometry_overlap_pairs}, event_pairs={event_overlap_pairs}"
+        )
+
+    upper_score = selection["upper_bound"]
+    z_best = float(np.sqrt(best_score))
+    z_upper = float(np.sqrt(max(best_score, upper_score)))
+    if selection["completed"]:
+        log_message(
+            f"  Global selection completed exactly over {n_select} candidates: "
+            f"sum(Z^2)={best_score:.6g}, Z_comb={z_best:.4f}, "
+            f"nodes={selection['nodes']}, selector={selection['selector']}"
+        )
+    else:
+        log_warning(
+            f"Global selection stopped before exhausting the search: "
+            f"Z_best={z_best:.4f}, Z_upper_bound<={z_upper:.4f}, "
+            f"delta_Z<={max(0.0, z_upper - z_best):.4f}, "
+            f"nodes={selection['nodes']}, selector={selection['selector']}"
         )
 
     log_message(
         f"  Selected {len(best_picks)} signal regions, "
-        f"sum(Z^2)={best_score:.6g}, Z_comb={float(np.sqrt(best_score)):.4f}, "
-        f"selector={selector_name}"
+        f"sum(Z^2)={best_score:.6g}, Z_comb={z_best:.4f}"
+    )
+    log_message(
+        f"  Non-overlap check passed: geometry_pairs={geometry_overlap_pairs}, "
+        f"event_pairs={event_overlap_pairs}"
     )
 
     # ---- Build per-bin reports for the chosen rectangles. ----
@@ -1429,10 +1675,20 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             f"S={S_bin:.4g}±{sS_bin:.4g}, B={B_bin:.4g}±{sB_bin:.4g}"
         )
 
-    return _make_signal_region_result(top_bins, S_total, B_total)
+    selection_summary = {
+        "selector": selection["selector"],
+        "completed": selection["completed"],
+        "nodes": selection["nodes"],
+        "objective_sum_z2": best_score,
+        "objective_upper_bound_sum_z2": upper_score,
+        "geometry_overlap_pairs": geometry_overlap_pairs,
+        "event_overlap_pairs": event_overlap_pairs,
+        "candidate_count": n_select,
+    }
+    return _make_signal_region_result(top_bins, S_total, B_total, selection_summary)
 
 
-def _make_signal_region_result(top_bins, S_total, B_total):
+def _make_signal_region_result(top_bins, S_total, B_total, selection_summary=None):
     # Combine the per-bin significances as Z_comb = sqrt(sum Z_i^2).
     if top_bins:
         S_comb  = float(sum(b["S"]       for b in top_bins))
@@ -1457,6 +1713,7 @@ def _make_signal_region_result(top_bins, S_total, B_total):
         "combined_significance_error": sZ_comb,
         "S_total":                     S_total,
         "B_total":                     B_total,
+        "selection":                   selection_summary or {},
     }
 
 
@@ -1516,6 +1773,22 @@ def print_results(result):
         f"  Combined significance: {result['combined_significance']:.4f} ± "
         f"{result['combined_significance_error']:.4f}"
     )
+    selection = result.get("selection") or {}
+    if selection:
+        upper = float(selection.get("objective_upper_bound_sum_z2", 0.0))
+        best = float(selection.get("objective_sum_z2", 0.0))
+        log_message(
+            f"  Global selector:        {selection.get('selector', 'unknown')} "
+            f"(completed={selection.get('completed', False)}, nodes={selection.get('nodes', 0)})"
+        )
+        log_message(
+            f"  Search certificate:     Z_best={np.sqrt(max(0.0, best)):.4f}, "
+            f"Z_upper_bound<={np.sqrt(max(best, upper, 0.0)):.4f}"
+        )
+        log_message(
+            f"  Non-overlap pairs:      geometry={selection.get('geometry_overlap_pairs', 0)}, "
+            f"events={selection.get('event_overlap_pairs', 0)}"
+        )
 
 
 # -------------------- Main --------------------
@@ -1613,34 +1886,14 @@ def main():
     log_message("Plotting score distributions")
     plot_score_distributions(proba, y, w)
 
-    # Scan for N non-overlapping signal regions, one fresh optimization per SR.
-    log_message(f"Scanning for {N_SIGNAL_REGIONS} signal regions")
-    selected_regions = []
-    top_bins = []
-    for sr_idx in range(N_SIGNAL_REGIONS):
-        log_message(f"\n==== Sequential SR scan {sr_idx + 1}/{N_SIGNAL_REGIONS} ====")
-        partial = find_signal_regions(
-            proba,
-            y,
-            w,
-            forbidden_regions=selected_regions,
-            target_regions=1,
-        )
-        if not partial["top_bins"]:
-            raise RuntimeError(
-                f"Sequential SR scan {sr_idx + 1}/{N_SIGNAL_REGIONS} found no valid region"
-            )
-        b = partial["top_bins"][0]
-        b["bin_index"] = sr_idx + 1
-        top_bins.append(b)
-        selected_regions.append({
-            "lo": [float(v) for v in b["thr_low"]],
-            "hi": [float(v) for v in b["thr_high"]],
-        })
-
-    S_total = float(w[np.isin(y, SIGNAL_CLASS_INDICES)].sum())
-    B_total = float(w[np.isin(y, BACKGROUND_CLASS_INDICES)].sum())
-    result = _make_signal_region_result(top_bins, S_total, B_total)
+    # Scan once and globally select K mutually non-overlapping regions.
+    log_message(f"Scanning globally for {N_SIGNAL_REGIONS} signal regions")
+    result = find_signal_regions(
+        proba,
+        y,
+        w,
+        target_regions=N_SIGNAL_REGIONS,
+    )
 
     # Plot the first two scan axes when D >= 2.
     log_message("Plotting signal regions")
