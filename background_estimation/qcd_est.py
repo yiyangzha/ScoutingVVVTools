@@ -87,7 +87,7 @@ MODEL_PATTERN = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
 CLASS_GROUPS = cfg["class_groups"]
 CLASS_NAMES = list(CLASS_GROUPS.keys())
 NUM_CLASSES = len(CLASS_NAMES)
-AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
+DEFAULT_AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
 
 QCD_CLASS_NAMES = [class_name for class_name in CLASS_NAMES if "qcd" in class_name.lower()]
 if not QCD_CLASS_NAMES:
@@ -467,7 +467,26 @@ def _mass_pass_fail_masks(df: pd.DataFrame, mass_thresholds: dict) -> Tuple[np.n
     return pass_mask, fail_mask
 
 
-def _load_signal_regions() -> pd.DataFrame:
+def _detect_signal_region_axes(df: pd.DataFrame) -> List[str]:
+    axes = []
+    columns = set(df.columns)
+    for col in df.columns:
+        if not col.endswith("_low"):
+            continue
+        axis_name = col[:-4]
+        if f"{axis_name}_high" not in columns:
+            continue
+        if axis_name not in CLASS_NAMES:
+            raise KeyError(
+                f"Signal region axis {axis_name!r} is not in BDT class_groups: {CLASS_NAMES}"
+            )
+        axes.append(axis_name)
+    if not axes:
+        axes = list(DEFAULT_AXIS_NAMES)
+    return axes
+
+
+def _load_signal_regions() -> Tuple[pd.DataFrame, List[str]]:
     if not os.path.exists(SIGNAL_REGION_CSV_PATH):
         raise FileNotFoundError(
             f"Signal region CSV not found: {SIGNAL_REGION_CSV_PATH}. Run signal_region.py first."
@@ -477,8 +496,9 @@ def _load_signal_regions() -> pd.DataFrame:
     if df.empty:
         raise RuntimeError(f"Signal region CSV is empty: {SIGNAL_REGION_CSV_PATH}")
 
+    axis_names = _detect_signal_region_axes(df)
     required = ["bin_index"]
-    for axis_name in AXIS_NAMES:
+    for axis_name in axis_names:
         required.extend([f"{axis_name}_low", f"{axis_name}_high"])
     missing = [name for name in required if name not in df.columns]
     if missing:
@@ -486,15 +506,15 @@ def _load_signal_regions() -> pd.DataFrame:
             f"Signal region CSV missing required columns: {', '.join(missing)}"
         )
 
-    return df.sort_values("bin_index").reset_index(drop=True)
+    return df.sort_values("bin_index").reset_index(drop=True), axis_names
 
 
-def _region_mask(scores: np.ndarray, region_row: pd.Series) -> np.ndarray:
-    mask = np.ones(scores.shape[0], dtype=bool)
-    for dim, axis_name in enumerate(AXIS_NAMES):
+def _region_mask(proba: np.ndarray, region_row: pd.Series, axis_names: List[str]) -> np.ndarray:
+    mask = np.ones(proba.shape[0], dtype=bool)
+    for axis_name in axis_names:
         low = float(region_row[f"{axis_name}_low"])
         high = float(region_row[f"{axis_name}_high"])
-        axis_scores = scores[:, dim]
+        axis_scores = proba[:, CLASS_NAMES.index(axis_name)]
         if high < 1.0 - 1e-12:
             mask &= (axis_scores >= low) & (axis_scores < high)
         else:
@@ -860,13 +880,14 @@ def main() -> None:
     # decorrelate branch (in case decorrelation references a branch not in
     # branch.json). BDT inference still uses only model_branches.
     load_branches = sorted(set(model_branches) | set(thresholds.keys()) | set(decorrelate))
-    signal_regions = _load_signal_regions()
+    signal_regions, axis_names = _load_signal_regions()
     region_labels = [f"SR{int(idx)}" for idx in signal_regions["bin_index"].tolist()]
     edges = np.arange(len(region_labels) + 1, dtype=float)
     log_message(
         f"Resolved inputs: model_branches={len(model_branches)}, "
         f"load_branches={len(load_branches)}, signal_regions={len(region_labels)}, "
-        f"non_mass_thresholds={len(bdt_thresholds)}, mass_thresholds={len(mass_thresholds)}"
+        f"score_axes={axis_names}, non_mass_thresholds={len(bdt_thresholds)}, "
+        f"mass_thresholds={len(mass_thresholds)}"
     )
     log_message(
         "QCD classes for ABCD merge: "
@@ -933,7 +954,7 @@ def main() -> None:
     union_score_mask = np.zeros(len(X_raw), dtype=bool)
     membership = np.zeros(len(X_raw), dtype=int)
     for _, row in signal_regions.iterrows():
-        mask = _region_mask(proba[:, : len(AXIS_NAMES)], row)
+        mask = _region_mask(proba, row, axis_names)
         region_score_masks.append(mask)
         union_score_mask |= mask
         membership += mask.astype(int)

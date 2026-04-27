@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplhep as hep
 import xgboost as xgb
-from itertools import product as iproduct
+from itertools import combinations, product as iproduct
 from matplotlib.lines import Line2D
 
 plt.rcParams['mathtext.fontset'] = 'cm'
@@ -62,6 +62,12 @@ COORDINATE_ROUNDS = max(1, int(scan_cfg.get("coordinate_rounds", 8)))
 LOCAL_REFINE_ROUNDS = max(0, int(scan_cfg.get("local_refine_rounds", 3)))
 LOCAL_REFINE_NEIGHBOR_EDGES = max(1, int(scan_cfg.get("local_refine_neighbor_edges", 48)))
 LOCAL_REFINE_TOP_CANDIDATES = max(0, int(scan_cfg.get("local_refine_top_candidates", 512)))
+LOCAL_REFINE_DIVERSE_MASKS = bool(scan_cfg.get("local_refine_diverse_masks", True))
+LOCAL_REFINE_CANDIDATE_OVERSCAN = max(
+    0, int(scan_cfg.get("local_refine_candidate_overscan", 0))
+)
+MULTI_AXIS_SEED_MAX_AXES = max(1, int(scan_cfg.get("multi_axis_seed_max_axes", 1)))
+MULTI_AXIS_SEED_MAX_SEEDS = max(0, int(scan_cfg.get("multi_axis_seed_max_seeds", 0)))
 CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_limit", 20000)))
 PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
 GLOBAL_SELECTION_CANDIDATES = max(
@@ -128,6 +134,45 @@ for _rule in sample_cfg["sample"]:
 CLASS_GROUPS = cfg["class_groups"]
 CLASS_NAMES  = list(CLASS_GROUPS.keys())
 NUM_CLASSES  = len(CLASS_NAMES)
+
+
+def _resolve_score_axes(setting):
+    if setting is None:
+        setting = "independent"
+    if isinstance(setting, str):
+        key = setting.strip().lower()
+        if key in ("independent", "first_n_minus_one", "first_n-1"):
+            return list(range(max(1, NUM_CLASSES - 1)))
+        if key in ("all", "*"):
+            return list(range(NUM_CLASSES))
+        names = [part.strip() for part in setting.split(",") if part.strip()]
+    elif isinstance(setting, (list, tuple)):
+        names = list(setting)
+    else:
+        raise TypeError("score_axes must be a string or list")
+
+    indices = []
+    for item in names:
+        if isinstance(item, (int, np.integer)):
+            idx = int(item)
+        else:
+            name = str(item)
+            if name not in CLASS_NAMES:
+                raise KeyError(
+                    f"score_axes entry {name!r} is not in class_groups: {CLASS_NAMES}"
+                )
+            idx = CLASS_NAMES.index(name)
+        if idx < 0 or idx >= NUM_CLASSES:
+            raise IndexError(f"score_axes index {idx} outside [0, {NUM_CLASSES})")
+        if idx not in indices:
+            indices.append(idx)
+    if not indices:
+        raise ValueError("score_axes resolved to an empty list")
+    return indices
+
+
+SCORE_AXIS_INDICES = _resolve_score_axes(scan_cfg.get("score_axes", "independent"))
+SCORE_AXIS_NAMES = [CLASS_NAMES[idx] for idx in SCORE_AXIS_INDICES]
 
 SIGNAL_CLASS_INDICES     = []
 BACKGROUND_CLASS_INDICES = []
@@ -450,7 +495,7 @@ def _savefig(stem):
 
 
 def write_signal_region_csv(result):
-    axis_names = [CLASS_NAMES[d] for d in range(max(1, NUM_CLASSES - 1))]
+    axis_names = list(SCORE_AXIS_NAMES)
     if result["top_bins"]:
         axis_names = list(result["top_bins"][0]["axis_names"])
 
@@ -494,13 +539,11 @@ def write_signal_region_csv(result):
 
 def plot_score_distributions(proba, y, w):
     """Weighted BDT score distributions per scan axis (one plot per axis)."""
-    D = max(1, proba.shape[1] - 1)
     palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
     bins = np.linspace(0.0, 1.0, 51)
 
-    for d in range(D):
-        axis_name = CLASS_NAMES[d]
-        score = proba[:, d]
+    for axis_idx, axis_name in zip(SCORE_AXIS_INDICES, SCORE_AXIS_NAMES):
+        score = proba[:, axis_idx]
         plt.figure(figsize=(8, 6))
         for cls_i, cls_name in enumerate(CLASS_NAMES):
             m = (y == cls_i)
@@ -552,37 +595,27 @@ def plot_signal_regions_2d(result, proba, y, w):
     coords = np.asarray(proba, dtype=float) @ vertices
 
     def _project_region(bin_info):
-        D = len(bin_info["thr_low"])
-        if D != n_classes - 1:
-            return None
-        lo = np.clip(np.asarray(bin_info["thr_low"], dtype=float), 0.0, 1.0)
-        hi = np.clip(np.asarray(bin_info["thr_high"], dtype=float), 0.0, 1.0)
+        lo_full = np.zeros(n_classes, dtype=float)
+        hi_full = np.ones(n_classes, dtype=float)
+        for dim, axis_name in enumerate(bin_info["axis_names"]):
+            cls_idx = CLASS_NAMES.index(axis_name)
+            lo_full[cls_idx] = float(bin_info["thr_low"][dim])
+            hi_full[cls_idx] = float(bin_info["thr_high"][dim])
+        lo = np.clip(lo_full, 0.0, 1.0)
+        hi = np.clip(hi_full, 0.0, 1.0)
         eps = 1e-12
         candidates = []
 
-        def add_candidate(p_first):
-            p_first = np.asarray(p_first, dtype=float)
-            p_last = 1.0 - float(np.sum(p_first))
-            if p_last < -eps:
-                return
-            full = np.r_[p_first, max(0.0, p_last)]
-            if np.all(full >= -eps) and np.all(full <= 1.0 + eps):
-                candidates.append(np.clip(full, 0.0, 1.0))
-
-        for fixed in iproduct([0, 1], repeat=D):
-            p = np.array([hi[d] if fixed[d] else lo[d] for d in range(D)], dtype=float)
-            if float(np.sum(p)) <= 1.0 + eps:
-                add_candidate(p)
-
-        for free_dim in range(D):
-            fixed_dims = [d for d in range(D) if d != free_dim]
-            for fixed in iproduct([0, 1], repeat=max(0, D - 1)):
-                p = np.zeros(D, dtype=float)
+        for free_dim in range(n_classes):
+            fixed_dims = [d for d in range(n_classes) if d != free_dim]
+            for fixed in iproduct([0, 1], repeat=max(0, n_classes - 1)):
+                p = np.zeros(n_classes, dtype=float)
                 for bit, dim in zip(fixed, fixed_dims):
                     p[dim] = hi[dim] if bit else lo[dim]
                 p[free_dim] = 1.0 - float(np.sum(p[fixed_dims]))
                 if lo[free_dim] - eps <= p[free_dim] <= hi[free_dim] + eps:
-                    add_candidate(p)
+                    if np.all(p >= lo - eps) and np.all(p <= hi + eps):
+                        candidates.append(np.clip(p, 0.0, 1.0))
 
         if not candidates:
             return None
@@ -677,10 +710,12 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     forbidden_regions = forbidden_regions or []
     target_regions = max(1, int(target_regions or N_SIGNAL_REGIONS))
     n_events, n_cls = proba.shape
-    D = max(1, n_cls - 1)
+    if n_cls != NUM_CLASSES:
+        raise RuntimeError(f"Model returned {n_cls} classes, expected {NUM_CLASSES}")
 
-    score_axes = np.column_stack([proba[:, d] for d in range(D)])  # (N, D)
-    axis_names = [CLASS_NAMES[d] for d in range(D)]
+    score_axes = np.column_stack([proba[:, d] for d in SCORE_AXIS_INDICES])  # (N, D)
+    axis_names = list(SCORE_AXIS_NAMES)
+    D = len(axis_names)
 
     is_sig = np.isin(y, SIGNAL_CLASS_INDICES)
     is_bkg = np.isin(y, BACKGROUND_CLASS_INDICES)
@@ -1038,20 +1073,67 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         seeds.append((lo, hi))
 
     _add_seed([0.0] * D, [1.0] * D)  # full box
+    axis_seed_options = []
     for d in range(D):
         edges = edges_per_axis[d]
+        options = []
         for q in SEED_QUANTILES:
             qc = float(np.clip(q, 0.0, 1.0))
             idx = int(np.clip(round(qc * (len(edges) - 1)), 0, len(edges) - 1))
+            edge = float(edges[idx])
             lo = [0.0] * D
             hi = [1.0] * D
-            lo[d] = float(edges[idx])
+            lo[d] = edge
             _add_seed(lo, hi)
+            if edge < 1.0 - EPS:
+                options.append((edge, 1.0))
             if 0 < idx < len(edges) - 1:
                 lo2 = [0.0] * D
                 hi2 = [1.0] * D
-                hi2[d] = float(edges[idx])
+                hi2[d] = edge
                 _add_seed(lo2, hi2)
+                if edge > EPS:
+                    options.append((0.0, edge))
+        unique_options = []
+        seen_options = set()
+        for low_d, high_d in options:
+            key = (round(float(low_d), 10), round(float(high_d), 10))
+            if key in seen_options or not (low_d < high_d - EPS):
+                continue
+            seen_options.add(key)
+            unique_options.append((float(low_d), float(high_d)))
+        axis_seed_options.append(unique_options)
+
+    if MULTI_AXIS_SEED_MAX_AXES >= 2 and MULTI_AXIS_SEED_MAX_SEEDS > 0:
+        before_multi = len(seeds)
+        added_multi = 0
+        max_axes = min(D, MULTI_AXIS_SEED_MAX_AXES)
+        for n_axes in range(2, max_axes + 1):
+            for dims in combinations(range(D), n_axes):
+                option_lists = [axis_seed_options[d] for d in dims]
+                if any(not opts for opts in option_lists):
+                    continue
+                for option_combo in iproduct(*option_lists):
+                    lo = [0.0] * D
+                    hi = [1.0] * D
+                    for dim, (low_d, high_d) in zip(dims, option_combo):
+                        lo[dim] = low_d
+                        hi[dim] = high_d
+                    prev = len(seeds)
+                    _add_seed(lo, hi)
+                    if len(seeds) > prev:
+                        added_multi += 1
+                        if added_multi >= MULTI_AXIS_SEED_MAX_SEEDS:
+                            break
+                if added_multi >= MULTI_AXIS_SEED_MAX_SEEDS:
+                    break
+            if added_multi >= MULTI_AXIS_SEED_MAX_SEEDS:
+                break
+        if len(seeds) > before_multi:
+            log_message(
+                f"  Added multi-axis seeds: {len(seeds) - before_multi} "
+                f"(max_axes={max_axes}, limit={MULTI_AXIS_SEED_MAX_SEEDS})"
+            )
 
     if forbidden_boxes:
         axis_segments = []
@@ -1159,9 +1241,50 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 edge_values.extend(vals[left:right])
         return np.unique(np.clip(np.asarray(edge_values, dtype=float), 0.0, 1.0))
 
+    def _select_local_refine_items(ordered_items):
+        limit = min(len(ordered_items), LOCAL_REFINE_TOP_CANDIDATES)
+        if limit <= 0:
+            return []
+        if not LOCAL_REFINE_DIVERSE_MASKS:
+            return ordered_items[:limit]
+
+        scan_limit = len(ordered_items)
+        if LOCAL_REFINE_CANDIDATE_OVERSCAN > 0:
+            scan_limit = min(scan_limit, max(limit, LOCAL_REFINE_CANDIDATE_OVERSCAN))
+
+        selected = []
+        selected_ids = set()
+        seen_masks = set()
+        duplicate_count = 0
+        for item in ordered_items[:scan_limit]:
+            packed = np.packbits(_rect_mask(item["lo"], item["hi"])).tobytes()
+            if packed in seen_masks:
+                duplicate_count += 1
+                continue
+            seen_masks.add(packed)
+            selected.append(item)
+            selected_ids.add(id(item))
+            if len(selected) >= limit:
+                break
+
+        if len(selected) < limit:
+            for item in ordered_items[:scan_limit]:
+                if id(item) in selected_ids:
+                    continue
+                selected.append(item)
+                selected_ids.add(id(item))
+                if len(selected) >= limit:
+                    break
+
+        log_message(
+            f"  Local refinement diversity: requested={limit}, scanned={scan_limit}, "
+            f"mask_duplicates={duplicate_count}, selected={len(selected)}"
+        )
+        return selected
+
     if LOCAL_REFINE_ROUNDS > 0 and LOCAL_REFINE_TOP_CANDIDATES > 0:
         ordered_for_refine = sorted(pool.values(), key=lambda x: -x["Z"])
-        refine_items = ordered_for_refine[:LOCAL_REFINE_TOP_CANDIDATES]
+        refine_items = _select_local_refine_items(ordered_for_refine)
         _progress(
             f"Local event-threshold refinement start: candidates={len(refine_items)}, "
             f"rounds={LOCAL_REFINE_ROUNDS}",
