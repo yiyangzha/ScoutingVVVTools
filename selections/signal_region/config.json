@@ -18,7 +18,7 @@
   "global_selection_candidates": 50000,
   "global_beam_width": 2048,
   "branch_bound_max_nodes": 0,
-  "branch_bound_time_limit_seconds": 14400,
+  "branch_bound_time_limit_seconds": 28800,
   "deduplicate_event_masks": true,
   "require_exact_n_regions": true,
   "max_threads": 18,
