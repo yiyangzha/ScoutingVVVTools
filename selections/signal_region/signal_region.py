@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplhep as hep
 import xgboost as xgb
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations, product as iproduct
 from matplotlib.lines import Line2D
 
@@ -71,12 +72,7 @@ LOCAL_REFINE_CANDIDATE_OVERSCAN = max(
 )
 MULTI_AXIS_SEED_MAX_AXES = max(1, int(scan_cfg.get("multi_axis_seed_max_axes", 1)))
 MULTI_AXIS_SEED_MAX_SEEDS = max(0, int(scan_cfg.get("multi_axis_seed_max_seeds", 0)))
-CANDIDATE_POOL_LIMIT = max(N_SIGNAL_REGIONS, int(scan_cfg.get("candidate_pool_limit", 20000)))
 PROGRESS_EVERY_SECONDS = float(scan_cfg.get("progress_every_seconds", 30.0))
-GLOBAL_SELECTION_CANDIDATES = max(
-    N_SIGNAL_REGIONS,
-    int(scan_cfg.get("global_selection_candidates", 5000)),
-)
 GLOBAL_BEAM_WIDTH = max(1, int(scan_cfg.get("global_beam_width", 512)))
 BRANCH_BOUND_MAX_NODES = max(0, int(scan_cfg.get("branch_bound_max_nodes", 0)))
 BRANCH_BOUND_TIME_LIMIT_SECONDS = max(
@@ -736,7 +732,6 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         f"rounds={COORDINATE_ROUNDS}, compatibility_anchors={COMPATIBILITY_SEED_ANCHORS}, "
         f"compatibility_rounds={COMPATIBILITY_SEED_ROUNDS}, "
         f"local_refine_rounds={LOCAL_REFINE_ROUNDS}, "
-        f"global_candidates={GLOBAL_SELECTION_CANDIDATES}, "
         f"global_beam_width={GLOBAL_BEAM_WIDTH}"
     )
 
@@ -751,6 +746,13 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         if force or PROGRESS_EVERY_SECONDS <= 0.0 or now - last_progress[0] >= PROGRESS_EVERY_SECONDS:
             log_message(f"  [{_elapsed():.1f}s] {message}")
             last_progress[0] = now
+
+    def _parallel_map_ordered(fn, items):
+        items = list(items)
+        if MAX_THREADS <= 1 or len(items) <= 1:
+            return [fn(item) for item in items]
+        with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+            return list(executor.map(fn, items))
 
     def _calc_Z(S, B, sS, sB):
         if S <= 0.0 or B <= 0.0:
@@ -789,6 +791,46 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     def _rect_hypervolume(lo, hi):
         widths = [max(0.0, float(hi[d]) - float(lo[d])) for d in range(D)]
         return float(np.prod(widths))
+
+    def _next_interval_hi(value, original_hi):
+        if _hi_to_open(original_hi) and float(value) >= 1.0 - EPS:
+            return 1.0
+        hi = float(np.nextafter(float(value), np.inf))
+        return min(float(original_hi), hi)
+
+    def _event_preserving_shrink(item, mask):
+        if not np.any(mask):
+            return dict(item)
+        lo_new = []
+        hi_new = []
+        min_width = 2.0 * EPS
+        for d in range(D):
+            orig_lo = float(item["lo"][d])
+            orig_hi = float(item["hi"][d])
+            vals = score_axes[mask, d]
+            sel_min = float(np.min(vals))
+            sel_max = float(np.max(vals))
+            hi = _next_interval_hi(sel_max, orig_hi)
+            lo = max(orig_lo, min(sel_min, orig_hi - min_width))
+            if hi - lo <= EPS:
+                hi = min(orig_hi, max(hi, lo + min_width))
+                if hi <= sel_max or hi - lo <= EPS:
+                    lo = orig_lo
+                    hi = orig_hi
+            lo_new.append(float(lo))
+            hi_new.append(float(hi))
+
+        if not np.array_equal(_rect_mask(lo_new, hi_new), mask):
+            lo_new = [float(v) for v in item["lo"]]
+            hi_new = [float(v) for v in item["hi"]]
+
+        return {
+            "lo": lo_new,
+            "hi": hi_new,
+            "S": float(item["S"]),
+            "B": float(item["B"]),
+            "Z": float(item["Z"]),
+        }
 
     def _rect_SB(lo, hi):
         m = _rect_mask(lo, hi)
@@ -898,8 +940,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     sig_q = _quantile_levels(max(8, max_edges // 3))
     bkg_q = _quantile_levels(max(8, max_edges // 3))
     all_q = _quantile_levels(max(6, max_edges // 6))
-    edges_per_axis = []
-    for d in range(D):
+    def _build_edges_for_axis(d):
         v = score_axes[:, d]
         edge_values = [0.0, 1.0]
         edge_values.extend(_weighted_quantiles(v, w_sig + w_bkg, total_q))
@@ -908,7 +949,9 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         finite_v = v[np.isfinite(v)]
         if finite_v.size:
             edge_values.extend(np.quantile(finite_v, all_q))
-        edges_per_axis.append(_cap_edges(edge_values, max_edges))
+        return _cap_edges(edge_values, max_edges)
+
+    edges_per_axis = _parallel_map_ordered(_build_edges_for_axis, range(D))
     axis_unique_values = [
         np.unique(score_axes[np.isfinite(score_axes[:, d]), d])
         for d in range(D)
@@ -921,16 +964,13 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     pool = {}  # key -> {"lo", "hi", "S", "B", "Z"}
 
-    def _add_to_pool(lo, hi, S_v=None, B_v=None):
+    def _evaluate_region(lo, hi, S_v=None, B_v=None):
         lo = [float(v) for v in lo]
         hi = [float(v) for v in hi]
         if not _valid_region(lo, hi):
             return None
         if _overlaps_forbidden(lo, hi):
             return None
-        key = _region_key(lo, hi)
-        if key in pool:
-            return pool[key]
         if S_v is None or B_v is None:
             S_v, B_v = _rect_SB(lo, hi)
         else:
@@ -947,22 +987,19 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         Z = _calc_Z_val(S_v, B_v)
         if Z <= 0.0:
             return None
-        pool[key] = {"lo": [float(v) for v in lo],
-                     "hi": [float(v) for v in hi],
-                     "S": S_v, "B": B_v, "Z": Z}
-        return pool[key]
+        return {"lo": lo, "hi": hi, "S": S_v, "B": B_v, "Z": Z}
 
-    def _trim_pool():
-        if len(pool) <= CANDIDATE_POOL_LIMIT:
-            return
-        before = len(pool)
-        keep = sorted(pool.items(), key=lambda kv: -kv[1]["Z"])[:CANDIDATE_POOL_LIMIT]
-        pool.clear()
-        pool.update(keep)
-        log_warning(
-            f"Candidate pool trimmed from {before} to {len(pool)} by Z; "
-            "increase candidate_pool_limit for a wider final search"
-        )
+    def _add_to_pool(lo, hi, S_v=None, B_v=None):
+        lo = [float(v) for v in lo]
+        hi = [float(v) for v in hi]
+        key = _region_key(lo, hi)
+        if key in pool:
+            return pool[key]
+        item = _evaluate_region(lo, hi, S_v, B_v)
+        if item is None:
+            return None
+        pool[key] = item
+        return item
 
     def _top_intervals_on_axis(d, lo, hi, edges, top_n):
         """Top [edges[a], edges[b]) intervals on axis d with other axes fixed."""
@@ -1244,24 +1281,34 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     for r in range(COORDINATE_ROUNDS):
         before_pool = len(pool)
         produced = []
-        for ib, item in enumerate(beam):
-            for d in range(D):
-                intervals = _top_intervals_on_axis(
-                    d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
-                )
-                for low_d, high_d, S_v, B_v, _Z in intervals:
-                    lo = list(item["lo"])
-                    hi = list(item["hi"])
-                    lo[d] = low_d
-                    hi[d] = high_d
-                    new_item = _add_to_pool(lo, hi, S_v, B_v)
-                    if new_item is not None:
-                        produced.append(new_item)
-            _progress(
-                f"Beam round {r + 1}/{COORDINATE_ROUNDS}: "
-                f"processed {ib + 1}/{len(beam)} beam states, pool={len(pool)}"
+        tasks = [(ib, d, item) for ib, item in enumerate(beam) for d in range(D)]
+
+        def _beam_task(task):
+            ib, d, item = task
+            intervals = _top_intervals_on_axis(
+                d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
             )
-        _trim_pool()
+            updates = []
+            for low_d, high_d, S_v, B_v, _Z in intervals:
+                lo = list(item["lo"])
+                hi = list(item["hi"])
+                lo[d] = low_d
+                hi[d] = high_d
+                updates.append((lo, hi, S_v, B_v))
+            return ib, updates
+
+        processed_ib = -1
+        for ib, updates in _parallel_map_ordered(_beam_task, tasks):
+            for lo, hi, S_v, B_v in updates:
+                new_item = _add_to_pool(lo, hi, S_v, B_v)
+                if new_item is not None:
+                    produced.append(new_item)
+            if ib != processed_ib:
+                processed_ib = ib
+                _progress(
+                    f"Beam round {r + 1}/{COORDINATE_ROUNDS}: "
+                    f"processed {ib + 1}/{len(beam)} beam states, pool={len(pool)}"
+                )
         pool_top = sorted(pool.values(), key=lambda item: -item["Z"])[:BEAM_WIDTH]
         beam = _select_beam(beam + produced + pool_top)
         best_Z = beam[0]["Z"] if beam else 0.0
@@ -1324,26 +1371,39 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         for r in range(COMPATIBILITY_SEED_ROUNDS):
             before_pool = len(pool)
             produced_states = []
-            for ib, (item, locked_axis) in enumerate(compat_beam):
-                for d in range(D):
-                    if d == locked_axis:
-                        continue
-                    intervals = _top_intervals_on_axis(
-                        d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
-                    )
-                    for low_d, high_d, S_v, B_v, _Z in intervals:
-                        lo = list(item["lo"])
-                        hi = list(item["hi"])
-                        lo[d] = low_d
-                        hi[d] = high_d
-                        new_item = _add_to_pool(lo, hi, S_v, B_v)
-                        if new_item is not None:
-                            produced_states.append((new_item, locked_axis))
-                _progress(
-                    f"Compatibility round {r + 1}/{COMPATIBILITY_SEED_ROUNDS}: "
-                    f"processed {ib + 1}/{len(compat_beam)} states, pool={len(pool)}"
+            tasks = [
+                (ib, d, item, locked_axis)
+                for ib, (item, locked_axis) in enumerate(compat_beam)
+                for d in range(D)
+                if d != locked_axis
+            ]
+
+            def _compat_task(task):
+                ib, d, item, locked_axis = task
+                intervals = _top_intervals_on_axis(
+                    d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
                 )
-            _trim_pool()
+                updates = []
+                for low_d, high_d, S_v, B_v, _Z in intervals:
+                    lo = list(item["lo"])
+                    hi = list(item["hi"])
+                    lo[d] = low_d
+                    hi[d] = high_d
+                    updates.append((lo, hi, S_v, B_v, locked_axis))
+                return ib, updates
+
+            processed_ib = -1
+            for ib, updates in _parallel_map_ordered(_compat_task, tasks):
+                for lo, hi, S_v, B_v, locked_axis in updates:
+                    new_item = _add_to_pool(lo, hi, S_v, B_v)
+                    if new_item is not None:
+                        produced_states.append((new_item, locked_axis))
+                if ib != processed_ib:
+                    processed_ib = ib
+                    _progress(
+                        f"Compatibility round {r + 1}/{COMPATIBILITY_SEED_ROUNDS}: "
+                        f"processed {ib + 1}/{len(compat_beam)} states, pool={len(pool)}"
+                    )
             compat_beam = _select_state_beam(compat_beam + produced_states, BEAM_WIDTH)
             best_Z = compat_beam[0][0]["Z"] if compat_beam else 0.0
             _progress(
@@ -1416,10 +1476,13 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             f"rounds={LOCAL_REFINE_ROUNDS}",
             force=True,
         )
-        for ic, item in enumerate(refine_items):
+
+        def _refine_task(task):
+            ic, item = task
             lo = list(item["lo"])
             hi = list(item["hi"])
             prev_Z = item["Z"]
+            updates = []
             for rr in range(LOCAL_REFINE_ROUNDS):
                 changed = False
                 for d in range(D):
@@ -1434,7 +1497,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                         hi_alt = list(hi)
                         lo_alt[d] = low_d
                         hi_alt[d] = high_d
-                        _add_to_pool(lo_alt, hi_alt, S_v, B_v)
+                        updates.append((lo_alt, hi_alt, S_v, B_v))
                     low_d, high_d, S_v, B_v, Z_axis = intervals[0]
                     boundary_changed = (
                         abs(low_d - lo[d]) > 1e-12 or abs(high_d - hi[d]) > 1e-12
@@ -1444,16 +1507,21 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                         hi[d] = high_d
                         prev_Z = Z_axis
                         changed = True
-                refined = _add_to_pool(lo, hi)
+                refined = _evaluate_region(lo, hi)
                 if refined is not None:
+                    updates.append((list(lo), list(hi), refined["S"], refined["B"]))
                     prev_Z = refined["Z"]
                 if not changed:
                     break
+            return ic, updates
+
+        for ic, updates in _parallel_map_ordered(_refine_task, enumerate(refine_items)):
+            for lo, hi, S_v, B_v in updates:
+                _add_to_pool(lo, hi, S_v, B_v)
             _progress(
                 f"Local refinement: processed {ic + 1}/{len(refine_items)}, "
                 f"pool={len(pool)}"
             )
-        _trim_pool()
         _progress(f"Local refinement done: pool={len(pool)}", force=True)
 
     all_items = sorted(pool.values(), key=lambda x: -x["Z"])
@@ -1461,36 +1529,68 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     def _dedupe_by_event_mask(candidate_items):
         if not DEDUPLICATE_EVENT_MASKS:
-            return candidate_items
-        best_by_mask = {}
+            shrunk = []
+            for item in candidate_items:
+                mask = _rect_mask(item["lo"], item["hi"])
+                shrunk.append(_event_preserving_shrink(item, mask))
+            return shrunk
+        best_by_canonical = {}
         duplicate_count = 0
         volume_replacements = 0
         z_replacements = 0
         z_tol = 1.0e-10
         volume_tol = 1.0e-15
-        for i, item in enumerate(candidate_items):
-            packed = np.packbits(_rect_mask(item["lo"], item["hi"])).tobytes()
-            volume = _rect_hypervolume(item["lo"], item["hi"])
-            previous = best_by_mask.get(packed)
-            if previous is None:
-                best_by_mask[packed] = (item, volume)
-            else:
-                duplicate_count += 1
-                previous_item, previous_volume = previous
-                if item["Z"] > previous_item["Z"] + z_tol:
-                    best_by_mask[packed] = (item, volume)
-                    z_replacements += 1
-                elif (
-                    abs(item["Z"] - previous_item["Z"]) <= z_tol and
-                    volume < previous_volume - volume_tol
-                ):
-                    best_by_mask[packed] = (item, volume)
-                    volume_replacements += 1
-            _progress(
-                f"Event-mask dedupe: processed {i + 1}/{len(candidate_items)}, "
-                f"kept={len(best_by_mask)}"
-            )
-        deduped = [entry[0] for entry in best_by_mask.values()]
+        chunk_size = 128
+        chunks = [
+            (start, candidate_items[start:start + chunk_size])
+            for start in range(0, len(candidate_items), chunk_size)
+        ]
+
+        def _dedupe_chunk(chunk):
+            start, chunk_items = chunk
+            out = []
+            for offset, item in enumerate(chunk_items):
+                mask = _rect_mask(item["lo"], item["hi"])
+                packed = np.packbits(mask).tobytes()
+                shrunk_item = _event_preserving_shrink(item, mask)
+                canonical_key = _region_key(shrunk_item["lo"], shrunk_item["hi"])
+                volume = _rect_hypervolume(shrunk_item["lo"], shrunk_item["hi"])
+                out.append((start + offset, packed, canonical_key, shrunk_item, volume))
+            return out
+
+        executor = None
+        if MAX_THREADS <= 1 or len(chunks) <= 1:
+            chunk_results_iter = map(_dedupe_chunk, chunks)
+        else:
+            executor = ThreadPoolExecutor(max_workers=MAX_THREADS)
+            chunk_results_iter = executor.map(_dedupe_chunk, chunks)
+        try:
+            for chunk_results in chunk_results_iter:
+                for i, packed, canonical_key, shrunk_item, volume in chunk_results:
+                    dedupe_key = (packed, canonical_key)
+                    previous = best_by_canonical.get(dedupe_key)
+                    if previous is None:
+                        best_by_canonical[dedupe_key] = (shrunk_item, volume)
+                    else:
+                        duplicate_count += 1
+                        previous_item, previous_volume = previous
+                        if shrunk_item["Z"] > previous_item["Z"] + z_tol:
+                            best_by_canonical[dedupe_key] = (shrunk_item, volume)
+                            z_replacements += 1
+                        elif (
+                            abs(shrunk_item["Z"] - previous_item["Z"]) <= z_tol and
+                            volume < previous_volume - volume_tol
+                        ):
+                            best_by_canonical[dedupe_key] = (shrunk_item, volume)
+                            volume_replacements += 1
+                    _progress(
+                        f"Event-mask dedupe: processed {i + 1}/{len(candidate_items)}, "
+                        f"kept={len(best_by_canonical)}"
+                    )
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)
+        deduped = [entry[0] for entry in best_by_canonical.values()]
         deduped.sort(
             key=lambda item: (
                 -item["Z"],
@@ -1506,19 +1606,9 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         )
         return deduped
 
-    if DEDUPLICATE_EVENT_MASKS:
-        unique_items = _dedupe_by_event_mask(all_items)
-    else:
-        unique_items = all_items
+    unique_items = _dedupe_by_event_mask(all_items)
 
-    n_items_total = len(unique_items)
-    n_limited = min(n_items_total, GLOBAL_SELECTION_CANDIDATES)
-    if n_limited < n_items_total:
-        log_warning(
-            f"Global selection uses top {n_limited} of {n_items_total} unique candidates for speed; "
-            "increase global_selection_candidates for a wider exact search"
-        )
-    items = unique_items[:n_limited]
+    items = unique_items
     if len(items) < target_regions:
         raise RuntimeError(
             f"Only {len(items)} unique candidate signal regions are available; "

@@ -22,8 +22,6 @@
   "local_refine_top_candidates": 3072,
   "local_refine_diverse_masks": true,
   "local_refine_candidate_overscan": 0,
-  "candidate_pool_limit": 1000000,
-  "global_selection_candidates": 300000,
   "global_beam_width": 8192,
   "branch_bound_max_nodes": 0,
   "branch_bound_time_limit_seconds": 0,
