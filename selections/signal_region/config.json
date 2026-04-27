@@ -1,6 +1,6 @@
 {
   "lumi": 283.8,
-  "n_signal_regions": 4,
+  "n_signal_regions": 5,
   "bdt_root": "../BDT/fat3",
   "output_dir": "./output/fat3",
   "min_bkg_weight": 3.0,
