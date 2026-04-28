@@ -26,7 +26,7 @@
   },
   "fat2": {
     "n_estimators": 2000,
-    "n_estimators_decorr": 2000,
+    "n_estimators_decorr": 1000,
     "max_depth": 11,
     "gamma": 4,
     "learning_rate": 0.01,
@@ -45,7 +45,7 @@
   },
   "fat3": {
     "n_estimators": 2000,
-    "n_estimators_decorr": 500,
+    "n_estimators_decorr": 2000,
     "max_depth": 7,
     "gamma": 5,
     "learning_rate": 0.01,
