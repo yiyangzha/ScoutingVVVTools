@@ -1959,6 +1959,109 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         f"event_pairs={event_overlap_pairs}"
     )
 
+    # ---- Empty-bin score-axis expansion. ----
+    # For each selected SR (in order SR1, SR2, ...), push signal-class axis
+    # upper bounds toward 1.0 and background-class axis lower bounds toward 0.0
+    # into space that is empty in MC, subject to:
+    #   (a) the SR keeps its exact selected event mask, and
+    #   (b) the expanded box stays geometrically non-overlapping with every
+    #       other selected SR (both already-expanded earlier ones and
+    #       not-yet-expanded later ones).
+    signal_axis_flags = [SCORE_AXIS_INDICES[d] in SIGNAL_CLASS_INDICES for d in range(D)]
+    expanded_los = [list(map(float, los[idx])) for idx in best_picks]
+    expanded_his = [list(map(float, his[idx])) for idx in best_picks]
+
+    def _other_axis_separates(lo_a, hi_a, lo_b, hi_b, skip):
+        for dd in range(D):
+            if dd == skip:
+                continue
+            if lo_a[dd] >= hi_b[dd] - EPS or lo_b[dd] >= hi_a[dd] - EPS:
+                return True
+        return False
+
+    n_sr = len(best_picks)
+    expand_high_count = 0
+    expand_low_count = 0
+    for i in range(n_sr):
+        lo_i = expanded_los[i]
+        hi_i = expanded_his[i]
+        base_mask = _rect_mask(lo_i, hi_i)
+        for d in range(D):
+            other_mask = np.ones(n_events, dtype=bool)
+            for dd in range(D):
+                if dd == d:
+                    continue
+                v_dd = score_axes[:, dd]
+                if _hi_to_open(hi_i[dd]):
+                    other_mask &= v_dd >= lo_i[dd]
+                else:
+                    other_mask &= (v_dd >= lo_i[dd]) & (v_dd < hi_i[dd])
+            v_d = score_axes[:, d]
+            if signal_axis_flags[d]:
+                old_hi = hi_i[d]
+                if old_hi >= 1.0 - EPS:
+                    continue
+                cand = other_mask & (v_d >= old_hi)
+                event_limit = float(np.min(v_d[cand])) if np.any(cand) else 1.0
+                box_limit = 1.0
+                for j in range(n_sr):
+                    if j == i:
+                        continue
+                    lo_j = expanded_los[j]
+                    hi_j = expanded_his[j]
+                    if _other_axis_separates(lo_i, hi_i, lo_j, hi_j, d):
+                        continue
+                    if lo_j[d] >= hi_i[d] - EPS:
+                        box_limit = min(box_limit, float(lo_j[d]))
+                new_hi = min(event_limit, box_limit, 1.0)
+                if new_hi > old_hi + EPS:
+                    hi_i[d] = new_hi
+                    expand_high_count += 1
+            else:
+                old_lo = lo_i[d]
+                if old_lo <= EPS:
+                    continue
+                cand = other_mask & (v_d < old_lo)
+                if np.any(cand):
+                    event_limit = float(np.nextafter(float(np.max(v_d[cand])), np.inf))
+                else:
+                    event_limit = 0.0
+                box_limit = 0.0
+                for j in range(n_sr):
+                    if j == i:
+                        continue
+                    lo_j = expanded_los[j]
+                    hi_j = expanded_his[j]
+                    if _other_axis_separates(lo_i, hi_i, lo_j, hi_j, d):
+                        continue
+                    if lo_i[d] >= hi_j[d] - EPS:
+                        box_limit = max(box_limit, float(hi_j[d]))
+                new_lo = max(event_limit, box_limit, 0.0)
+                if new_lo < old_lo - EPS:
+                    lo_i[d] = new_lo
+                    expand_low_count += 1
+        if not np.array_equal(_rect_mask(lo_i, hi_i), base_mask):
+            raise RuntimeError(
+                f"Empty-bin expansion changed event mask for SR{i + 1}"
+            )
+
+    for ia in range(n_sr):
+        for ib in range(ia + 1, n_sr):
+            if _overlap(expanded_los[ia], expanded_his[ia],
+                        expanded_los[ib], expanded_his[ib]):
+                raise RuntimeError(
+                    f"Empty-bin expansion produced overlapping SRs ({ia + 1},{ib + 1})"
+                )
+
+    for k, idx in enumerate(best_picks):
+        los[idx] = expanded_los[k]
+        his[idx] = expanded_his[k]
+
+    log_message(
+        f"  Empty-bin expansion: signal-axis high bounds raised={expand_high_count}, "
+        f"background-axis low bounds lowered={expand_low_count}"
+    )
+
     # ---- Build per-bin reports for the chosen rectangles. ----
     top_bins = []
     for k, idx in enumerate(best_picks):
