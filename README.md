@@ -71,6 +71,12 @@ Sample arguments:
 - If no sample names are given, `run.sh` uses `submit_samples` from the chosen config.
 - If `submit_samples` is empty or missing, all MC samples in `src/sample.json` are used.
 
+Log archiving:
+
+- After the final `[finished …]` line is written, `run.sh` copies the per-mode `log.txt` into the program's configured output directory.
+- Applies to `mode=1` (`output_root`), `mode=2` / `mode=4` (per-tree `output_root` expanded over `submit_trees`), and `mode=3` / `mode=5` / `mode=7` (`output_dir`). `mode=0` (`convert_branch`) and `mode=6` (`mix`) are intentionally skipped.
+- The copy runs on both success and failure; if the resolved output dir does not yet exist (e.g., the run aborted before creating it), the copy is skipped with a warning instead of erroring.
+
 ## Main JSON files
 
 - `src/sample.json`: master sample registry with `name`, `path`, `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`.

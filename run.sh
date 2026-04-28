@@ -169,19 +169,100 @@ if [ -n "${OMP_INFO}" ]; then
   OMP_LDFLAGS="${OMP_INFO#*|}"
 fi
 
+timestamp() {
+  date '+%Y-%m-%d %H:%M:%S'
+}
+
+# At end-of-run, copy the run-log into the program's configured output dir(s).
+# Modes 0 (convert_branch) and 6 (mix) are intentionally skipped per design.
+# Modes 2 and 4 use a `{tree_name}` template against `submit_trees` so the log
+# is copied once per tree output directory; the other modes have a single dir.
+copy_log_to_output_dirs() {
+  if [ -z "${LOG_PATH:-}" ] || [ ! -f "${LOG_PATH}" ]; then
+    return 0
+  fi
+  if [ -z "${MODE:-}" ] || [ -z "${CONFIG_PATH:-}" ] || [ -z "${WORK_DIR:-}" ]; then
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local dirs_output
+  dirs_output="$(python3 - "${MODE}" "${CONFIG_PATH}" "${WORK_DIR}" 2>/dev/null <<'PY' || true
+import json, os, sys
+
+mode, cfg_path, work_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(cfg_path, "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+except Exception:
+    sys.exit(0)
+
+def _resolve(rel):
+    if not isinstance(rel, str) or not rel:
+        return None
+    return rel if os.path.isabs(rel) else os.path.normpath(os.path.join(work_dir, rel))
+
+dirs = []
+if mode == "1":
+    d = _resolve(cfg.get("output_root"))
+    if d:
+        dirs.append(d)
+elif mode in ("2", "4"):
+    patt = cfg.get("output_root", "") or ""
+    trees = cfg.get("submit_trees", []) or []
+    for tree in trees:
+        if isinstance(tree, str) and tree:
+            d = _resolve(patt.replace("{tree_name}", tree))
+            if d:
+                dirs.append(d)
+elif mode in ("3", "5", "7"):
+    rel = cfg.get("output_dir") or cfg.get("output_root")
+    d = _resolve(rel)
+    if d:
+        dirs.append(d)
+
+seen = set()
+for d in dirs:
+    norm = os.path.normpath(d)
+    if norm in seen:
+        continue
+    seen.add(norm)
+    print(norm)
+PY
+  )"
+
+  if [ -z "${dirs_output}" ]; then
+    return 0
+  fi
+
+  while IFS= read -r out_dir; do
+    [ -z "${out_dir}" ] && continue
+    if [ ! -d "${out_dir}" ]; then
+      echo "[$(timestamp)] log copy: skipping missing output dir ${out_dir}"
+      continue
+    fi
+    if cp "${LOG_PATH}" "${out_dir}/log.txt" 2>/dev/null; then
+      echo "[$(timestamp)] copied log to ${out_dir}/log.txt"
+    else
+      echo "[$(timestamp)] warning: failed to copy log to ${out_dir}/log.txt"
+    fi
+  done <<<"${dirs_output}"
+
+  return 0
+}
+
 cd "${WORK_DIR}"
 : > "${LOG_PATH}"
 exec >> "${LOG_PATH}" 2>&1
+trap copy_log_to_output_dirs EXIT
 
 if [ "${MODE}" = "2" ] || [ "${MODE}" = "3" ] || [ "${MODE}" = "4" ] || [ "${MODE}" = "5" ]; then
   if [ "$#" -gt 0 ]; then
     echo "mode=${MODE} does not accept sample arguments: $*" >&2
     exit 1
   fi
-
-  timestamp() {
-    date '+%Y-%m-%d %H:%M:%S'
-  }
 
   echo "[$(timestamp)] mode=${MODE} (${MODE_LABEL})"
   echo "[$(timestamp)] work_dir=${WORK_DIR}"
@@ -215,11 +296,7 @@ cleanup_build_artifacts() {
   fi
 }
 
-trap cleanup_build_artifacts EXIT
-
-timestamp() {
-  date '+%Y-%m-%d %H:%M:%S'
-}
+trap 'cleanup_build_artifacts; copy_log_to_output_dirs' EXIT
 
 echo "[$(timestamp)] mode=${MODE} (${MODE_LABEL})"
 echo "[$(timestamp)] work_dir=${WORK_DIR}"
