@@ -961,40 +961,115 @@ def _build_decor_state(Z: np.ndarray, mode: str):
     raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
 
 
-def _smooth_cvm_value_and_grad_1d(score, memberships, weights, thresholds, score_tau):
-    score = np.asarray(score, dtype=float).ravel()
+def _prepare_decor_state_for_labels(decor_state, labels, weights, num_class):
+    mode = decor_state.get("mode", "none")
+    if mode == "none":
+        return decor_state
+
+    labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
+    class_states = []
+
+    for cls_idx in range(int(num_class)):
+        idx = np.nonzero(labels == cls_idx)[0]
+        cls_weights = weights[idx]
+        state = {"indices": idx, "weights": cls_weights}
+
+        if mode == "smooth_cvm":
+            feature_states = []
+            for memberships in decor_state.get("memberships", []):
+                feature_memberships = memberships[idx, :] if memberships is not None else None
+                feature_states.append(
+                    _prepare_smooth_cvm_feature_state(feature_memberships, cls_weights)
+                )
+            state["features"] = feature_states
+        elif mode == "cvm":
+            feature_groups = []
+            for groups in decor_state.get("groups", []):
+                if not groups:
+                    feature_groups.append(None)
+                    continue
+                local_groups = []
+                for group_idx in groups:
+                    group_idx = np.asarray(group_idx, dtype=int)
+                    cls_group_idx = group_idx[labels[group_idx] == cls_idx]
+                    if cls_group_idx.size >= 3:
+                        local_groups.append(np.searchsorted(idx, cls_group_idx))
+                feature_groups.append(local_groups if local_groups else None)
+            state["groups"] = feature_groups
+        else:
+            raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
+
+        class_states.append(state)
+
+    prepared = dict(decor_state)
+    prepared["class_states"] = class_states
+    if mode == "smooth_cvm":
+        prepared.pop("memberships", None)
+    return prepared
+
+
+def _prepare_smooth_cvm_feature_state(memberships, weights):
+    if memberships is None:
+        return None
+    memberships = np.asarray(memberships, dtype=float)
+    weights = np.asarray(weights, dtype=float).ravel()
+    if memberships.ndim != 2 or memberships.shape[0] != weights.size:
+        raise ValueError("Smooth-CvM memberships and weights have incompatible shapes.")
+    total_w = float(np.sum(weights))
+    if memberships.shape[0] == 0 or total_w <= _EPS:
+        return None
+
+    weighted_memberships = weights[:, None] * memberships
+    bin_totals = np.sum(weighted_memberships, axis=0)
+    valid_bins = bin_totals > _EPS
+    if not np.any(valid_bins):
+        return None
+
+    bin_totals_v = bin_totals[valid_bins]
+    memberships_v = memberships[:, valid_bins]
+    return {
+        "weights": weights,
+        "total_w": total_w,
+        "weighted_memberships_t": np.ascontiguousarray(weighted_memberships[:, valid_bins].T),
+        "bin_totals": bin_totals_v,
+        "rho": bin_totals_v / total_w,
+        "membership_over_bin_total": np.ascontiguousarray(memberships_v / bin_totals_v),
+    }
+
+
+def _smooth_cvm_value_and_grad_1d(score, feature_state, thresholds, score_tau,
+                                  need_derivatives=True):
+    score = np.asarray(score, dtype=float).ravel()
     n = score.size
     grad = np.zeros(n, dtype=float)
     hess = np.zeros(n, dtype=float)
-    if memberships is None or n == 0:
+    if feature_state is None or n == 0:
         return 0.0, grad, hess
 
-    total_w = float(np.sum(weights))
+    weights = feature_state["weights"]
+    total_w = float(feature_state["total_w"])
+    if weights.size != n:
+        raise ValueError("Smooth-CvM feature state and score have incompatible shapes.")
     if total_w <= _EPS:
         return 0.0, grad, hess
 
     thresholds = np.asarray(thresholds, dtype=float).ravel()
     sig = _sigmoid((score[:, None] - thresholds[None, :]) / score_tau)
-    dsig = sig * (1.0 - sig) / score_tau
 
     global_eff = np.sum(weights[:, None] * sig, axis=0) / total_w
-    weighted_memberships = weights[:, None] * memberships
-    bin_totals = np.sum(weighted_memberships, axis=0)
-    valid_bins = bin_totals > _EPS
-    if not np.any(valid_bins):
-        return 0.0, grad, hess
-
-    memberships_v = memberships[:, valid_bins]
-    bin_totals_v = bin_totals[valid_bins]
-    rho = bin_totals_v / total_w
-    local_eff = (weighted_memberships[:, valid_bins].T @ sig) / bin_totals_v[:, None]
+    local_eff = (feature_state["weighted_memberships_t"] @ sig) / feature_state["bin_totals"][:, None]
     delta = local_eff - global_eff[None, :]
     n_thr = float(sig.shape[1])
 
-    loss = float(np.sum(rho[:, None] * delta * delta) / n_thr)
-    local_term = (memberships_v / bin_totals_v) @ (rho[:, None] * delta)
-    global_term = np.sum(rho[:, None] * delta, axis=0) / total_w
+    weighted_delta = feature_state["rho"][:, None] * delta
+    loss = float(np.sum(weighted_delta * delta) / n_thr)
+    if not need_derivatives:
+        return loss, grad, hess
+
+    dsig = sig * (1.0 - sig) / score_tau
+    local_term = feature_state["membership_over_bin_total"] @ weighted_delta
+    global_term = np.sum(weighted_delta, axis=0) / total_w
     coeff = local_term - global_term[None, :]
     grad = (2.0 * weights[:, None] * dsig * coeff).sum(axis=1) / n_thr
     # Positive Gauss-Newton-style diagonal surrogate for the coupled decorrelation term.
@@ -1074,7 +1149,8 @@ def _weighted_mlogloss(loss_sum, weights):
     return float(loss_sum / weight_sum)
 
 
-def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class, decor_scale=1.0):
+def _decorrelation_loss_components(logits, labels, weights, decor_state, num_class,
+                                   decor_scale=1.0, need_derivatives=True):
     labels = np.asarray(labels, dtype=int).ravel()
     weights = np.asarray(weights, dtype=float).ravel()
     logits = _reshape_multiclass_margin(logits, num_class, labels.size)
@@ -1085,6 +1161,57 @@ def _decorrelation_loss_components(logits, labels, weights, decor_state, num_cla
 
     if mode == "none":
         return loss, grad, hess
+
+    class_states = decor_state.get("class_states")
+    if class_states is not None:
+        for cls_idx in range(num_class):
+            state = class_states[cls_idx]
+            idx = state["indices"]
+            if idx.size == 0:
+                continue
+            cls_weights = state["weights"]
+            score = logits[idx, cls_idx]
+
+            if mode == "cvm":
+                groups_by_feature = state.get("groups", [])
+                cls_loss = _cvm_flatness_value_from_groups(score, groups_by_feature, cls_weights, power=2.0)
+                cls_grad = np.zeros_like(score)
+                cls_hess = np.zeros_like(score)
+                if need_derivatives:
+                    for groups in groups_by_feature:
+                        if not groups:
+                            continue
+                        # Hard-bin CvM is non-smooth; keep the legacy surrogate gradient but
+                        # make it consistent with the loss recorded below.
+                        cls_grad += -_cvm_flatness_neg_grad_wrt_y(score, groups, cls_weights, power=2.0)
+                    cls_hess = np.maximum(np.abs(cls_grad), 1e-6)
+            elif mode == "smooth_cvm":
+                cls_loss = 0.0
+                cls_grad = np.zeros_like(score)
+                cls_hess = np.zeros_like(score)
+                for feature_state in state.get("features", []):
+                    part_loss, part_grad, part_hess = _smooth_cvm_value_and_grad_1d(
+                        score,
+                        feature_state,
+                        decor_state["score_thresholds"],
+                        decor_state["score_tau"],
+                        need_derivatives=need_derivatives,
+                    )
+                    cls_loss += part_loss
+                    if need_derivatives:
+                        cls_grad += part_grad
+                        cls_hess += part_hess
+                if need_derivatives:
+                    cls_hess = np.maximum(cls_hess, 1e-6)
+            else:
+                raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
+
+            loss += float(decor_scale * cls_loss)
+            if need_derivatives:
+                grad[idx, cls_idx] = decor_scale * cls_grad
+                hess[idx, cls_idx] = decor_scale * cls_hess
+
+        return float(loss), grad, hess
 
     for cls_idx in range(num_class):
         mask_cls = labels == cls_idx
@@ -1110,23 +1237,27 @@ def _decorrelation_loss_components(logits, labels, weights, decor_state, num_cla
             cls_grad = np.zeros_like(score)
             cls_hess = np.zeros_like(score)
             for memberships in decor_state.get("memberships", []):
+                feature_state = _prepare_smooth_cvm_feature_state(memberships, cls_weights)
                 part_loss, part_grad, part_hess = _smooth_cvm_value_and_grad_1d(
                     score,
-                    memberships,
-                    cls_weights,
+                    feature_state,
                     decor_state["score_thresholds"],
                     decor_state["score_tau"],
+                    need_derivatives=need_derivatives,
                 )
                 cls_loss += part_loss
-                cls_grad += part_grad
-                cls_hess += part_hess
-            cls_hess = np.maximum(cls_hess, 1e-6)
+                if need_derivatives:
+                    cls_grad += part_grad
+                    cls_hess += part_hess
+            if need_derivatives:
+                cls_hess = np.maximum(cls_hess, 1e-6)
         else:
             raise ValueError(f"Unsupported decorrelation loss mode: {mode}")
 
         loss += float(decor_scale * cls_loss)
-        grad[:, cls_idx] = decor_scale * cls_grad
-        hess[:, cls_idx] = decor_scale * cls_hess
+        if need_derivatives:
+            grad[:, cls_idx] = decor_scale * cls_grad
+            hess[:, cls_idx] = decor_scale * cls_hess
 
     return float(loss), grad, hess
 
@@ -1144,7 +1275,8 @@ def _loss_components(predt, labels, weights, decor_state, num_class, lam, decor_
         if prediction_mode != "margin":
             raise ValueError("Decorrelation loss requires raw margin predictions.")
         decor_loss_raw, _, _ = _decorrelation_loss_components(
-            predt, labels, weights, decor_state, num_class, decor_scale
+            predt, labels, weights, decor_state, num_class, decor_scale,
+            need_derivatives=False,
         )
     decor_loss = float(lam * decor_loss_raw)
     return {
@@ -1425,7 +1557,9 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     early-stops on test ``total_loss = classification_loss +
     decorrelation_loss``. The sum-scale ``classification_loss``, exact
     native-style ``regularization_loss``, and ``total_loss`` remain
-    diagnostic outputs shared across both stages.
+    diagnostic outputs shared across both stages. When configured,
+    stage 1 and stage 2 both defer early stopping until the dynamic
+    learning-rate schedule has reached ``min_learning_rate``.
 
     Returns ``(stage1_model, stage2_model_or_None, splits, combined_loss_history, stage_boundary)``
     where ``stage_boundary`` is the number of stage-1 iterations kept.
@@ -1497,11 +1631,22 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         disable_default_eval_metric=1,
         tree_method="hist",
     )
+    for optional_param in ("colsample_bylevel", "colsample_bynode", "max_bin"):
+        if optional_param in hp:
+            base_params[optional_param] = hp[optional_param]
 
     # Build decor state on both splits when decor is enabled; stage-1 recorder
     # uses an explicit "none" decor_state so it contributes zero loss/grad/hess.
-    train_decor_state = _build_decor_state(Z_train, DECOR_LOSS_MODE) if use_decor else {"mode": "none"}
-    test_decor_state = _build_decor_state(Z_test, DECOR_LOSS_MODE) if use_decor else {"mode": "none"}
+    if use_decor:
+        train_decor_state = _prepare_decor_state_for_labels(
+            _build_decor_state(Z_train, DECOR_LOSS_MODE), y_train, w_train, NUM_CLASSES
+        )
+        test_decor_state = _prepare_decor_state_for_labels(
+            _build_decor_state(Z_test, DECOR_LOSS_MODE), y_test, w_test, NUM_CLASSES
+        )
+    else:
+        train_decor_state = {"mode": "none"}
+        test_decor_state = {"mode": "none"}
 
     # ---------- Stage 1: native cls-only ----------
     stage1_params = dict(base_params)
@@ -1528,6 +1673,8 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             compact_log=True,
             monitor_metric_key="classification",
             monitor_metric_label="classification_loss",
+            lr_reduce_patience=lr_reduce_patience,
+            min_learning_rate=min_learning_rate,
         )
         train_kwargs = dict(
             params={**stage1_params, **extra_params},
@@ -1558,6 +1705,9 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     if stage1_model.num_boosted_rounds() != stage1_rounds:
         stage1_model = stage1_model[:stage1_rounds]
     stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
+    stage1_reg_loss = _loss_value_at(
+        stage1_history, "train", "regularization", stage1_rounds - 1
+    )
 
     base_path = model_name[:-5] if model_name.endswith(".json") else model_name
     stage1_save_path = f"{base_path}_stage1.json"
@@ -1581,15 +1731,10 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     _, _, _, cls_loss_ref = _multiclass_classification_terms(
         y_train, stage1_logits, w_train, NUM_CLASSES
     )
-    reg_loss_ref = _booster_regularization_loss(
-        stage1_model,
-        stage1_params["reg_lambda"],
-        stage1_params["reg_alpha"],
-        stage1_params["gamma"],
-        stage1_params["eta"],
-    )
+    reg_loss_ref = float(stage1_reg_loss)
     decor_loss_ref_raw, _, _ = _decorrelation_loss_components(
-        stage1_logits, y_train, w_train, train_decor_state, NUM_CLASSES, decor_scale=1.0
+        stage1_logits, y_train, w_train, train_decor_state, NUM_CLASSES,
+        decor_scale=1.0, need_derivatives=False,
     )
     numerator = max(float(cls_loss_ref) + float(reg_loss_ref), _EPS)
     if not np.isfinite(decor_loss_ref_raw) or decor_loss_ref_raw <= _EPS:
