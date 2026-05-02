@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -1522,6 +1523,59 @@ Value evalAggregation(const string& op,
     return makeNumberValue(found ? best : defaultValue);
 }
 
+Value evalNthMaxValue(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error("nth_max_value requires collection, expression, and rank arguments");
+    }
+
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int rank = static_cast<int>(llround(evalNumber(args[2], context)));
+    if (rank < 1) {
+        throw runtime_error("nth_max_value rank must be >= 1");
+    }
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    if (static_cast<int>(collection->objects.size()) < rank) {
+        return makeNumberValue(defaultValue);
+    }
+
+    vector<long double> values;
+    values.reserve(collection->objects.size());
+    for (const auto& object : collection->objects) {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &object;
+        values.push_back(evalNumber(args[1], loop));
+    }
+
+    const auto nth = values.begin() + (rank - 1);
+    nth_element(values.begin(), nth, values.end(), greater<long double>());
+    return makeNumberValue(*nth);
+}
+
+Value evalValueAtMax(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error("value_at_max requires collection, key expression, and value expression arguments");
+    }
+
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    bool found = false;
+    long double bestKey = defaultValue;
+    long double bestValue = defaultValue;
+    for (const auto& object : collection->objects) {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &object;
+        const long double key = evalNumber(args[1], loop);
+        if (!found || key > bestKey) {
+            bestKey = key;
+            bestValue = evalNumber(args[2], loop);
+            found = true;
+        }
+    }
+    return makeNumberValue(found ? bestValue : defaultValue);
+}
+
 Value evalPairwiseMetric(const string& op,
                          const vector<ExprPtr>& args,
                          const EvalContext& context) {
@@ -1665,6 +1719,12 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "sum" || op == "max_value" || op == "min_value") {
         return evalAggregation(op, args, context);
+    }
+    if (op == "nth_max_value") {
+        return evalNthMaxValue(args, context);
+    }
+    if (op == "value_at_max") {
+        return evalValueAtMax(args, context);
     }
     if (op == "mass") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).M());
