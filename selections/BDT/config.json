@@ -45,7 +45,7 @@
     "event_reweight_branches": ["weight_pu"]
   },
   "fat3": {
-    "n_estimators": 2000,
+    "n_estimators": 3000,
     "n_estimators_decorr": 2000,
     "max_depth": 7,
     "gamma": 5,
