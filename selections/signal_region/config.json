@@ -1,8 +1,8 @@
 {
   "lumi": 283.8,
   "n_signal_regions": 5,
-  "bdt_root": "../BDT/fat2_v4",
-  "output_dir": "./output/fat2_v4",
+  "bdt_root": "../BDT/fat3_v4",
+  "output_dir": "./output/fat3_v4",
   "score_axes": "all",
   "min_bkg_weight": 5.0,
   "min_signal_weight": 0.0,
