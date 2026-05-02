@@ -1576,6 +1576,42 @@ Value evalValueAtMax(const vector<ExprPtr>& args, const EvalContext& context) {
     return makeNumberValue(found ? bestValue : defaultValue);
 }
 
+Value evalValueAtNthMax(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 4) {
+        throw runtime_error("value_at_nth_max requires collection, key expression, value expression, and rank arguments");
+    }
+
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int rank = static_cast<int>(llround(evalNumber(args[3], context)));
+    if (rank < 1) {
+        throw runtime_error("value_at_nth_max rank must be >= 1");
+    }
+    const long double defaultValue = (args.size() >= 5) ? evalNumber(args[4], context) : def;
+    if (static_cast<int>(collection->objects.size()) < rank) {
+        return makeNumberValue(defaultValue);
+    }
+
+    vector<pair<long double, long double>> keyedValues;
+    keyedValues.reserve(collection->objects.size());
+    for (const auto& object : collection->objects) {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &object;
+        keyedValues.emplace_back(evalNumber(args[1], loop), evalNumber(args[2], loop));
+    }
+
+    const auto nth = keyedValues.begin() + (rank - 1);
+    nth_element(
+        keyedValues.begin(),
+        nth,
+        keyedValues.end(),
+        [](const auto& lhs, const auto& rhs) {
+            return lhs.first > rhs.first;
+        }
+    );
+    return makeNumberValue(nth->second);
+}
+
 Value evalPairwiseMetric(const string& op,
                          const vector<ExprPtr>& args,
                          const EvalContext& context) {
@@ -1725,6 +1761,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "value_at_max") {
         return evalValueAtMax(args, context);
+    }
+    if (op == "value_at_nth_max") {
+        return evalValueAtNthMax(args, context);
     }
     if (op == "mass") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).M());

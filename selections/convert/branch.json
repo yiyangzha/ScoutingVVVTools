@@ -272,6 +272,12 @@
               "type": "F",
               "formula": "nth_max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
               "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_pt",
+              "type": "F",
+              "formula": "value_at_nth_max(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, ScoutingPFJetRecluster2_pt, 2, -99)",
+              "onlyMC": false
             }
           ]
         }
@@ -428,6 +434,12 @@
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max",
               "type": "F",
               "formula": "nth_max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_pt",
+              "type": "F",
+              "formula": "value_at_nth_max(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, ScoutingPFJetRecluster2_pt, 2, -99)",
               "onlyMC": false
             }
           ]
