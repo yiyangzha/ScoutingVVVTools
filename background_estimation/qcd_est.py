@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gc
+import colorsys
 import json
 import math
 import os
@@ -24,6 +25,46 @@ import xgboost as xgb
 plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["mathtext.rm"] = "serif"
 plt.style.use(hep.style.CMS)
+
+_CLASS_COLOR_BASE = [
+    "#3f90da",
+    "#ffa90e",
+    "#bd1f01",
+    "#94a4a2",
+    "#832db6",
+    "#a96b59",
+    "#e76300",
+    "#b9ac70",
+    "#717581",
+    "#92dadd",
+]
+
+
+def _plot_colors(n: int) -> List[str]:
+    colors = list(_CLASS_COLOR_BASE)
+    used = {color.lower() for color in colors}
+    hue = 0.13
+    while len(colors) < n:
+        rgb = colorsys.hsv_to_rgb(hue % 1.0, 0.72, 0.86)
+        candidate = "#{:02x}{:02x}{:02x}".format(
+            int(round(rgb[0] * 255.0)),
+            int(round(rgb[1] * 255.0)),
+            int(round(rgb[2] * 255.0)),
+        )
+        if candidate.lower() not in used:
+            colors.append(candidate)
+            used.add(candidate.lower())
+        hue += 0.618033988749895
+    return colors[:n]
+
+
+def _group_color_map(extra_names=None) -> Dict[str, str]:
+    names = list(CLASS_NAMES)
+    if extra_names is not None:
+        for name in extra_names:
+            if name not in names:
+                names.append(name)
+    return dict(zip(names, _plot_colors(len(names))))
 
 
 # -------------------- Paths --------------------
@@ -585,10 +626,7 @@ def plot_abcd_region_counts(
     bottom = np.zeros(len(region_labels), dtype=float)
     order = np.argsort([float(np.sum(vals_map[name])) for name in CLASS_NAMES])
     ordered_groups = [CLASS_NAMES[idx] for idx in order]
-    colors = plt.rcParams["axes.prop_cycle"].by_key().get(
-        "color", ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
-    )
-    color_map = {name: colors[i % len(colors)] for i, name in enumerate(CLASS_NAMES)}
+    color_map = _group_color_map()
 
     for name in ordered_groups:
         ax.bar(
@@ -645,10 +683,7 @@ def plot_signal_region_prediction(
     edges = np.arange(n + 1, dtype=float)
     centers = edges[:-1] + 0.5
     widths = np.full(n, 1.0)
-    colors = plt.rcParams["axes.prop_cycle"].by_key().get(
-        "color", ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
-    )
-    color_map = {name: colors[i % len(colors)] for i, name in enumerate(CLASS_NAMES)}
+    color_map = _group_color_map(groups)
 
     fig, (ax, axr) = plt.subplots(
         2,

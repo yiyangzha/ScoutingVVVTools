@@ -4,6 +4,7 @@ import gc
 import pickle
 import time
 import ctypes
+import colorsys
 import subprocess
 import uproot
 import pandas as pd
@@ -18,6 +19,37 @@ from matplotlib.lines import Line2D
 plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
 plt.style.use(hep.style.CMS)
+
+_CLASS_COLOR_BASE = [
+    "#3f90da",
+    "#ffa90e",
+    "#bd1f01",
+    "#94a4a2",
+    "#832db6",
+    "#a96b59",
+    "#e76300",
+    "#b9ac70",
+    "#717581",
+    "#92dadd",
+]
+
+
+def _plot_colors(n):
+    colors = list(_CLASS_COLOR_BASE)
+    used = {color.lower() for color in colors}
+    hue = 0.13
+    while len(colors) < n:
+        rgb = colorsys.hsv_to_rgb(hue % 1.0, 0.72, 0.86)
+        candidate = "#{:02x}{:02x}{:02x}".format(
+            int(round(rgb[0] * 255.0)),
+            int(round(rgb[1] * 255.0)),
+            int(round(rgb[2] * 255.0)),
+        )
+        if candidate.lower() not in used:
+            colors.append(candidate)
+            used.add(candidate.lower())
+        hue += 0.618033988749895
+    return colors[:n]
 
 # _SCRIPT_DIR points to selections/signal_region/.
 # The copied BDT configs still store paths relative to selections/BDT/, where train.py runs.
@@ -537,7 +569,7 @@ def write_signal_region_csv(result):
 
 def plot_score_distributions(proba, y, w):
     """Weighted BDT score distributions per scan axis (one plot per axis)."""
-    palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
+    palette = _plot_colors(NUM_CLASSES)
     bins = np.linspace(0.0, 1.0, 51)
 
     for axis_idx, axis_name in zip(SCORE_AXIS_INDICES, SCORE_AXIS_NAMES):
@@ -592,6 +624,63 @@ def plot_signal_regions_2d(result, proba, y, w):
     vertices = _simplex_vertices(n_classes)
     coords = np.asarray(proba, dtype=float) @ vertices
 
+    def _radial_equalize(points):
+        pts = np.asarray(points, dtype=float)
+        if n_classes < 3 or pts.size == 0:
+            return pts.copy()
+
+        out = pts.copy()
+        radius = np.linalg.norm(pts, axis=1)
+        nonzero = radius > 1e-12
+        if not np.any(nonzero):
+            return out
+
+        dirs = pts[nonzero] / radius[nonzero, None]
+        boundary = np.full(dirs.shape[0], np.inf, dtype=float)
+        for edge_idx in range(n_classes):
+            a = vertices[edge_idx]
+            b = vertices[(edge_idx + 1) % n_classes]
+            edge = b - a
+            denom = dirs[:, 0] * edge[1] - dirs[:, 1] * edge[0]
+            valid = np.abs(denom) > 1e-12
+            if not np.any(valid):
+                continue
+            t_ray = np.full(dirs.shape[0], np.inf, dtype=float)
+            u_edge = np.full(dirs.shape[0], np.inf, dtype=float)
+            t_ray[valid] = (a[0] * edge[1] - a[1] * edge[0]) / denom[valid]
+            u_edge[valid] = (
+                a[0] * dirs[valid, 1] - a[1] * dirs[valid, 0]
+            ) / denom[valid]
+            valid &= (t_ray >= 0.0) & (u_edge >= -1e-10) & (u_edge <= 1.0 + 1e-10)
+            boundary[valid] = np.minimum(boundary[valid], t_ray[valid])
+
+        valid_boundary = np.isfinite(boundary) & (boundary > 1e-12)
+        if not np.any(valid_boundary):
+            return out
+
+        source_idx = np.flatnonzero(nonzero)
+        t_norm = np.clip(radius[nonzero][valid_boundary] / boundary[valid_boundary], 0.0, 1.0)
+        new_radius = np.sqrt(t_norm) * boundary[valid_boundary]
+        out[source_idx[valid_boundary]] = dirs[valid_boundary] * new_radius[:, None]
+        return out
+
+    def _region_draw_points(poly, transform):
+        if transform is None or len(poly) < 2:
+            if len(poly) >= 3:
+                return np.vstack([poly, poly[0]])
+            return poly
+
+        closed = len(poly) >= 3
+        n_segments = len(poly) if closed else len(poly) - 1
+        pieces = []
+        for idx in range(n_segments):
+            p0 = poly[idx]
+            p1 = poly[(idx + 1) % len(poly)]
+            frac = np.linspace(0.0, 1.0, 32, endpoint=False)
+            pieces.append(p0[None, :] + frac[:, None] * (p1 - p0)[None, :])
+        pieces.append(poly[:1] if closed else poly[-1:])
+        return transform(np.vstack(pieces))
+
     def _project_region(bin_info):
         lo_full = np.zeros(n_classes, dtype=float)
         hi_full = np.ones(n_classes, dtype=float)
@@ -620,20 +709,20 @@ def plot_signal_regions_2d(result, proba, y, w):
         projected = np.asarray(candidates, dtype=float) @ vertices
         return _convex_hull(projected)
 
-    def _draw(show_regions, stem):
+    def _draw(show_regions, stem, equalized=False):
         fig, ax = plt.subplots(figsize=(8.5, 8.5))
-        class_cmap = "tab10" if NUM_CLASSES <= 10 else "tab20"
-        class_palette = plt.cm.get_cmap(class_cmap, max(NUM_CLASSES, 3))(
-            np.arange(max(NUM_CLASSES, 3))
-        )
+        transform = _radial_equalize if equalized else None
+        coords_draw = transform(coords) if transform is not None else coords
+        vertices_draw = transform(vertices) if transform is not None else vertices
+        class_palette = _plot_colors(NUM_CLASSES)
 
         for cls_i, cls_name in enumerate(CLASS_NAMES):
             mask = y == cls_i
             if not np.any(mask):
                 continue
             ax.scatter(
-                coords[mask, 0],
-                coords[mask, 1],
+                coords_draw[mask, 0],
+                coords_draw[mask, 1],
                 s=0.8,
                 alpha=0.07,
                 color=class_palette[cls_i],
@@ -641,12 +730,12 @@ def plot_signal_regions_2d(result, proba, y, w):
                 rasterized=True,
             )
 
-        closed_vertices = np.vstack([vertices, vertices[0]])
+        closed_vertices = np.vstack([vertices_draw, vertices_draw[0]])
         ax.plot(closed_vertices[:, 0], closed_vertices[:, 1],
                 color="0.45", linewidth=1.1, alpha=0.8)
-        ax.scatter(vertices[:, 0], vertices[:, 1], s=18, color="0.25", zorder=5)
+        ax.scatter(vertices_draw[:, 0], vertices_draw[:, 1], s=18, color="0.25", zorder=5)
         for cls_i, cls_name in enumerate(CLASS_NAMES):
-            vx, vy = vertices[cls_i]
+            vx, vy = vertices_draw[cls_i]
             ax.text(1.12 * vx, 1.12 * vy, cls_name, ha="center", va="center", fontsize=11)
 
         handles = [
@@ -663,17 +752,14 @@ def plot_signal_regions_2d(result, proba, y, w):
         ]
 
         if show_regions and result["top_bins"]:
-            sr_palette = plt.cm.get_cmap("Set1", max(len(result["top_bins"]), 3))
+            sr_palette = _plot_colors(NUM_CLASSES + len(result["top_bins"]))[NUM_CLASSES:]
             for i, b in enumerate(result["top_bins"]):
                 poly = _project_region(b)
                 if poly is None or len(poly) < 2:
                     continue
-                color = sr_palette(i)
-                if len(poly) >= 3:
-                    poly_draw = np.vstack([poly, poly[0]])
-                    ax.plot(poly_draw[:, 0], poly_draw[:, 1], color=color, linewidth=2.0)
-                else:
-                    ax.plot(poly[:, 0], poly[:, 1], color=color, linewidth=2.0)
+                color = sr_palette[i]
+                poly_draw = _region_draw_points(poly, transform)
+                ax.plot(poly_draw[:, 0], poly_draw[:, 1], color=color, linewidth=2.0)
                 handles.append(
                     Line2D(
                         [0], [0],
@@ -683,17 +769,29 @@ def plot_signal_regions_2d(result, proba, y, w):
                     )
                 )
 
-        ax.set_xlabel("simplex projection x")
-        ax.set_ylabel("simplex projection y")
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(-1.25, 1.25)
         ax.set_ylim(-1.25, 1.25)
-        ax.grid(True, linestyle="--", alpha=0.25)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.tick_params(
+            left=False,
+            bottom=False,
+            labelleft=False,
+            labelbottom=False,
+        )
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.grid(False)
         ax.legend(handles=handles, fontsize=9, loc="upper right", framealpha=0.95)
         _savefig(stem)
 
     _draw(False, "scores_no_regions")
     _draw(True, "scores")
+    _draw(False, "scores_no_regions_radial_equalized", equalized=True)
+    _draw(True, "scores_radial_equalized", equalized=True)
 
 
 # -------------------- Signal-region scan --------------------
