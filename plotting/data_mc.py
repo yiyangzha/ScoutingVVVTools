@@ -618,10 +618,19 @@ def _weighted_hist(vals, weights, edges):
 def _ratio_data_over_mc(data_vals, data_vars, mc_vals, mc_vars):
     with np.errstate(divide="ignore", invalid="ignore"):
         r  = np.where(mc_vals > 0, data_vals / mc_vals, np.nan)
-        tm = np.where(mc_vals   > 0, mc_vars   / np.maximum(mc_vals,   1e-300) ** 2, 0.0)
-        td = np.where(data_vals > 0, data_vars / np.maximum(data_vals, 1e-300) ** 2, 0.0)
-        sigma = np.abs(r) * np.sqrt(tm + td)
-    return r, sigma
+        data_sigma = np.where(mc_vals > 0, np.sqrt(np.maximum(data_vars, 0.0)) / mc_vals, np.nan)
+        mc_sigma = np.where(mc_vals > 0, np.sqrt(np.maximum(mc_vars, 0.0)) / mc_vals, np.nan)
+    return r, data_sigma, mc_sigma
+
+
+def _smallest_stack_component_peak(mc_per_cls):
+    peaks = []
+    for h, _ in mc_per_cls.values():
+        positive = np.asarray(h, dtype=float)
+        positive = positive[positive > 0]
+        if positive.size:
+            peaks.append(float(np.max(positive)))
+    return min(peaks) if peaks else None
 
 
 def _unit_normalized_histograms(mc_per_cls, mc_total_v, mc_total_w2, data_v, data_w2):
@@ -721,6 +730,9 @@ def _draw_data_mc_plot(
             if logy_floor is None:
                 positive = np.concatenate([mc_total_v[mc_total_v > 0], data_v[data_v > 0]])
                 ymin = max(float(np.min(positive)) / 5.0, 1e-12) if positive.size else 1e-6
+                smallest_component_peak = _smallest_stack_component_peak(mc_per_cls)
+                if smallest_component_peak is not None:
+                    ymin = min(ymin, smallest_component_peak / 5.0)
             else:
                 ymin = float(logy_floor)
             ax.set_ylim(ymin, max(ymin * 10.0, ymax * 5.0))
@@ -737,19 +749,31 @@ def _draw_data_mc_plot(
         labels.append(labels.pop(i))
     ax.legend(handles, labels, loc="best", fontsize=17, frameon=False, ncol=2)
 
-    ratio, r_err = _ratio_data_over_mc(data_v, data_w2, mc_total_v, mc_total_w2)
+    ratio, data_r_err, mc_r_err = _ratio_data_over_mc(data_v, data_w2, mc_total_v, mc_total_w2)
+    mc_band_low = 1.0 - mc_r_err
+    mc_band_high = 1.0 + mc_r_err
+    axr.fill_between(
+        bin_centers, mc_band_low, mc_band_high, step="mid",
+        color="gray", alpha=0.35, linewidth=0,
+    )
     axr.errorbar(
-        bin_centers, ratio, yerr=r_err,
+        bin_centers, ratio, yerr=data_r_err,
         fmt="o", ms=7.6, color="black", mfc="black", mec="black",
         elinewidth=1.5, capsize=0,
     )
     axr.axhline(1.0, color="black", linestyle="--", linewidth=1.5)
 
     finite = np.isfinite(ratio)
-    if np.any(finite):
-        safe_err = np.nan_to_num(r_err[finite], nan=0.0)
-        rmax = float(np.nanmax(ratio[finite] + safe_err))
-        rmin = float(np.nanmin(ratio[finite] - safe_err))
+    band_finite = np.isfinite(mc_band_low) & np.isfinite(mc_band_high)
+    if np.any(finite) or np.any(band_finite):
+        ratio_high = ratio[finite] + np.nan_to_num(data_r_err[finite], nan=0.0)
+        ratio_low = ratio[finite] - np.nan_to_num(data_r_err[finite], nan=0.0)
+        high_values = [ratio_high, mc_band_high[band_finite]]
+        low_values = [ratio_low, mc_band_low[band_finite]]
+        high_values = [values for values in high_values if values.size]
+        low_values = [values for values in low_values if values.size]
+        rmax = float(np.nanmax(np.concatenate(high_values))) if high_values else 1.0
+        rmin = float(np.nanmin(np.concatenate(low_values))) if low_values else 0.0
         if not np.isfinite(rmax) or rmax <= 0:
             rmax = 1.0
         if rmax < 5.0:
