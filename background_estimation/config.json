@@ -5,8 +5,8 @@
   "output_dir": "./output/fat2_UParTv2_v3",
   "root_file_name": "qcd_abcd_yields.root",
   "qcd_predict_scale_multipliers": {
-    "fat2": 6.67,
-    "fat3": 6.35
+    "fat2": 6.4,
+    "fat3": 5.9
   },
   "abcd_branches": {
     "fat2": ["ScoutingFatPFJetRecluster_msoftdrop_1"],

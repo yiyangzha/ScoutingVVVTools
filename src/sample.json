@@ -33,7 +33,7 @@
       "sample_ID": 0,
       "is_MC": true,
       "is_signal": true,
-      "xsection": 208.6,
+      "xsection": 232.8,
       "lumi": -1,
       "raw_entries": 4299284
     },
@@ -43,7 +43,7 @@
       "sample_ID": 1,
       "is_MC": true,
       "is_signal": true,
-      "xsection": 165.1,
+      "xsection": 185.1,
       "lumi": -1,
       "raw_entries": 16197159
     },
@@ -53,7 +53,7 @@
       "sample_ID": 2,
       "is_MC": true,
       "is_signal": true,
-      "xsection": 55.65,
+      "xsection": 62.06,
       "lumi": -1,
       "raw_entries": 16199286
     },
@@ -63,7 +63,7 @@
       "sample_ID": 3,
       "is_MC": true,
       "is_signal": true,
-      "xsection": 13.98,
+      "xsection": 15.91,
       "lumi": -1,
       "raw_entries": 16192091
     },
@@ -113,7 +113,7 @@
       "sample_ID": 10,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 0,
+      "xsection": 312300000000,
       "lumi": -1,
       "raw_entries": 110777315
     },
@@ -123,7 +123,7 @@
       "sample_ID": 11,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 0,
+      "xsection": 58470000000,
       "lumi": -1,
       "raw_entries": 108584880
     },
@@ -133,7 +133,7 @@
       "sample_ID": 12,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 23630000000,
+      "xsection": 25310000000,
       "lumi": -1,
       "raw_entries": 120388125
     },
@@ -143,7 +143,7 @@
       "sample_ID": 13,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 1961000000,
+      "xsection": 1960000000,
       "lumi": -1,
       "raw_entries": 115255250
     },
@@ -153,7 +153,7 @@
       "sample_ID": 14,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 95620000,
+      "xsection": 97400000,
       "lumi": -1,
       "raw_entries": 101684185
     },
@@ -173,7 +173,7 @@
       "sample_ID": 16,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 3033000,
+      "xsection": 3010000,
       "lumi": -1,
       "raw_entries": 125216445
     },
@@ -183,7 +183,7 @@
       "sample_ID": 17,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 883700,
+      "xsection": 890300,
       "lumi": -1,
       "raw_entries": 111207023
     },
@@ -193,7 +193,7 @@
       "sample_ID": 18,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 383500,
+      "xsection": 384800,
       "lumi": -1,
       "raw_entries": 50159537
     },
@@ -203,7 +203,7 @@
       "sample_ID": 19,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 125200,
+      "xsection": 127300,
       "lumi": -1,
       "raw_entries": 91377143
     },
@@ -213,7 +213,7 @@
       "sample_ID": 20,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 26490,
+      "xsection": 26260,
       "lumi": -1,
       "raw_entries": 97803060
     },
@@ -223,7 +223,7 @@
       "sample_ID": 21,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 378900,
+      "xsection": 419657,
       "lumi": -1,
       "raw_entries": 468776258
     },
@@ -233,7 +233,7 @@
       "sample_ID": 22,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 366300,
+      "xsection": 405702,
       "lumi": -1,
       "raw_entries": 484298177
     },
@@ -243,7 +243,7 @@
       "sample_ID": 23,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 75950,
+      "xsection": 80230,
       "lumi": -1,
       "raw_entries": 63994208
     },
@@ -253,7 +253,7 @@
       "sample_ID": 24,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 27950,
+      "xsection": 29100,
       "lumi": -1,
       "raw_entries": 30260725
     },
@@ -263,7 +263,7 @@
       "sample_ID": 25,
       "is_MC": true,
       "is_signal": false,
-      "xsection": 12170,
+      "xsection": 12750,
       "lumi": -1,
       "raw_entries": 4800000
     },
