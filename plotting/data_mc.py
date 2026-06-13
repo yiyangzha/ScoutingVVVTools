@@ -20,6 +20,7 @@ import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, FuncFormatter
 import mplhep as hep
 import uproot
 
@@ -75,6 +76,7 @@ OUTPUT_ROOT_PATT = plot_cfg.get("output_root", "./pre-selection/{tree_name}")
 BDT_ROOT_PATT    = plot_cfg["bdt_root"]
 VALIDATE_BDT_TEST_SCORES = bool(plot_cfg.get("validate_bdt_test_scores", True))
 PLOT_BDT_SCORES = bool(plot_cfg.get("plot_bdt_scores", True))
+STREAM_STEP_SIZE = "100 MB"
 
 SAMPLE_CFG_PATH         = _resolve(plot_cfg["sample_config"], _SCRIPT_DIR)
 CONVERT_BRANCH_CFG_PATH = _resolve(plot_cfg["convert_branch_config"], _SCRIPT_DIR)
@@ -207,20 +209,13 @@ def _concat_parts(parts):
     return df
 
 
-def _load_tree(files, tree_name, branches, max_entries=None):
-    parts = []
-    remaining = None
-    if max_entries is not None:
-        remaining = max(0, int(max_entries))
-        if remaining == 0:
-            return None
+def _iter_tree_chunks(files, tree_name, branches):
+    branches = list(branches)
     for fpath in files:
-        if remaining is not None and remaining <= 0:
-            break
         with uproot.open(fpath) as uf:
             if tree_name not in uf:
                 continue
-            tree  = uf[tree_name]
+            tree = uf[tree_name]
             avail = set(tree.keys())
             missing = [b for b in branches if b not in avail]
             if missing:
@@ -228,24 +223,21 @@ def _load_tree(files, tree_name, branches, max_entries=None):
                     f"Missing branches in {fpath}:{tree_name}: "
                     f"{', '.join(missing[:10])}" + (" ..." if len(missing) > 10 else "")
                 )
-            entry_stop = int(tree.num_entries)
-            if remaining is not None:
-                entry_stop = min(entry_stop, remaining)
-            if entry_stop <= 0:
-                continue
-            df_part = tree.arrays(
+            for df_part in tree.iterate(
                 branches,
                 library="pd",
-                entry_start=0,
-                entry_stop=entry_stop,
-            )
-            parts.append(df_part)
-            if remaining is not None:
-                remaining -= len(df_part)
-    return _concat_parts(parts)
+                step_size=STREAM_STEP_SIZE,
+            ):
+                if df_part is None or len(df_part) == 0:
+                    continue
+                yield df_part
 
 
 # -------------------- Threshold and clip filtering --------------------
+def _missing_value_mask(arr):
+    return np.isclose(np.asarray(arr, dtype=float), -99.0)
+
+
 def _mask_from_cond(col, cond):
     idx = col.index
     if cond is None:
@@ -308,24 +300,13 @@ def _apply_clip(df, clip_ranges):
         if col not in df.columns:
             continue
         arr   = df[col].values.astype(float, copy=True)
-        valid = arr >= -990
+        valid = (arr >= -990) & (~_missing_value_mask(arr))
         lo, hi = rng
         if lo is not None:
             arr[valid & (arr < lo)] = lo
         if hi is not None:
             arr[valid & (arr > hi)] = hi
         df[col] = arr
-    return df
-
-
-def _drop_unneeded_columns(df, keep_columns):
-    if df is None or len(df) == 0:
-        return df
-    keep = set(keep_columns)
-    drop_cols = [col for col in df.columns if col not in keep]
-    if drop_cols:
-        df = df.drop(columns=drop_cols)
-        gc.collect()
     return df
 
 
@@ -432,53 +413,6 @@ def _compare_score_reference(path, feature_names, sample_labels, class_idx, weig
 
 
 # -------------------- Weight assignment --------------------
-def _assign_mc_weight(df, sample_name, tree_entries_total, n_loaded, reweight_branches=None):
-    """Assign per-event weight for an MC sample.
-
-    Per event:
-        raw_w  = product of reweight_branches (1.0 if empty)
-        target_total = lumi_total * xsection * tree_entries_total / raw_entries
-        weight = raw_w * target_total / sum(raw_w_loaded)
-
-    So the sample's total weight sums to ``target_total`` regardless of raw_w's
-    magnitude; raw_w only shapes the per-event distribution inside the sample.
-
-    Reweight branches are read on raw values (before clip/log/threshold) and
-    dropped from ``df`` once raw_w is computed. Computed before any filtering;
-    the weights are unchanged afterwards.
-    """
-    reweight_branches = list(reweight_branches or [])
-    if reweight_branches:
-        missing = [rb for rb in reweight_branches if rb not in df.columns]
-        if missing:
-            raise KeyError(
-                f"Sample '{sample_name}' missing reweight branches: {', '.join(missing)}"
-            )
-        raw_w = np.ones(n_loaded, dtype=float)
-        for rb in reweight_branches:
-            raw_w *= df[rb].to_numpy(dtype=float, copy=False)
-        df = df.drop(columns=reweight_branches)
-    else:
-        raw_w = np.ones(n_loaded, dtype=float)
-
-    info        = SAMPLE_INFO[sample_name]
-    xsec        = float(info.get("xsection", 0.0))
-    raw_entries = float(info.get("raw_entries", 0.0))
-    if raw_entries <= 0.0:
-        raise RuntimeError(f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json")
-    if n_loaded == 0 or tree_entries_total == 0:
-        df["weight"] = 0.0
-        return df
-    target_total = LUMI_TOTAL * xsec * float(tree_entries_total) / raw_entries
-    raw_w_sum = float(raw_w.sum())
-    if raw_w_sum <= 0.0:
-        raise RuntimeError(
-            f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
-        )
-    df["weight"] = raw_w * (target_total / raw_w_sum)
-    return df
-
-
 def _load_test_segments(tree_name, branches, sample_meta):
     parts = []
     for seg in sample_meta["test_segments"]:
@@ -548,6 +482,30 @@ def _add_score_columns(df, proba, class_names):
     return out
 
 
+def _mc_target_total(sample_name, tree_entries_total):
+    info        = SAMPLE_INFO[sample_name]
+    xsec        = float(info.get("xsection", 0.0))
+    raw_entries = float(info.get("raw_entries", 0.0))
+    if raw_entries <= 0.0:
+        raise RuntimeError(f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json")
+    return LUMI_TOTAL * xsec * float(tree_entries_total) / raw_entries
+
+
+def _raw_weight_array(df, reweight_branches, sample_name):
+    n_loaded = len(df)
+    if not reweight_branches:
+        return np.ones(n_loaded, dtype=float)
+    missing = [rb for rb in reweight_branches if rb not in df.columns]
+    if missing:
+        raise KeyError(
+            f"Sample '{sample_name}' missing reweight branches: {', '.join(missing)}"
+        )
+    raw_w = np.ones(n_loaded, dtype=float)
+    for rb in reweight_branches:
+        raw_w *= df[rb].to_numpy(dtype=float, copy=False)
+    return raw_w
+
+
 # -------------------- Binning --------------------
 def _branch_override(tree_name, branch):
     tree_ov = _tree_plot_cfg(tree_name)
@@ -559,28 +517,7 @@ def _branch_override(tree_name, branch):
     return override if isinstance(override, dict) else {}
 
 
-def _auto_range(arrs, logx):
-    mins, maxs = [], []
-    for arr in arrs:
-        if arr is None:
-            continue
-        a = np.asarray(arr, dtype=float)
-        valid = a[a >= -990]
-        if logx:
-            valid = valid[valid > 0]
-        if valid.size == 0:
-            continue
-        mins.append(float(valid.min()))
-        maxs.append(float(valid.max()))
-    if not mins:
-        return None
-    lo, hi = min(mins), max(maxs)
-    if lo >= hi:
-        hi = lo + 1.0
-    return lo, hi
-
-
-def _resolve_binning(tree_name, branch, arrs, log_tf_set):
+def _branch_binning_settings(tree_name, branch, log_tf_set):
     override = _branch_override(tree_name, branch)
     bins     = int(override.get("bins", DEFAULT_BINS))
     logx     = bool(override.get("logx", False if branch.startswith("score_") else branch in log_tf_set))
@@ -593,13 +530,55 @@ def _resolve_binning(tree_name, branch, arrs, log_tf_set):
     elif branch.startswith("score_"):
         x_range = (0.0, 1.0)
     else:
-        x_range = _auto_range(arrs, logx)
-        if x_range is None:
-            return None
+        x_range = None
     return bins, x_range, logx, logy, y_range
 
 
-def _bin_edges(bins, x_range, logx):
+def _auto_range(arrs, logx):
+    state = {"lo": None, "hi": None, "has_missing": False}
+    for arr in arrs:
+        if arr is None:
+            continue
+        _update_range_state_for_array(state, arr, logx)
+    if state["lo"] is None and not state["has_missing"]:
+        return None
+    return state["lo"], state["hi"], state["has_missing"]
+
+
+def _make_range_state(branches):
+    return {branch: {"lo": None, "hi": None, "has_missing": False} for branch in branches}
+
+
+def _update_range_state_for_array(state, arr, logx):
+    a = np.asarray(arr, dtype=float)
+    if a.size == 0:
+        return
+    missing = _missing_value_mask(a)
+    if missing.any():
+        state["has_missing"] = True
+    valid = (a >= -990) & (~missing)
+    if logx:
+        valid &= a > 0
+    a = a[valid]
+    if a.size == 0:
+        return
+    lo = float(a.min())
+    hi = float(a.max())
+    state["lo"] = lo if state["lo"] is None else min(state["lo"], lo)
+    state["hi"] = hi if state["hi"] is None else max(state["hi"], hi)
+
+
+def _update_range_state_from_df(range_state, df, branches, log_tf_set, tree_name):
+    if df is None or len(df) == 0:
+        return
+    for branch in branches:
+        if branch not in df.columns:
+            continue
+        _, _, logx, _, _ = _branch_binning_settings(tree_name, branch, log_tf_set)
+        _update_range_state_for_array(range_state[branch], df[branch].to_numpy(copy=False), logx)
+
+
+def _regular_bin_edges(bins, x_range, logx):
     lo, hi = x_range
     if logx:
         if lo <= 0:
@@ -608,15 +587,269 @@ def _bin_edges(bins, x_range, logx):
     return np.linspace(lo, hi, bins + 1)
 
 
-def _weighted_hist(vals, weights, edges):
+def _plot_edges_with_missing_bin(edges, logx):
+    if len(edges) < 2:
+        raise ValueError("Cannot build missing-value bin without at least one regular bin")
+    first_width = edges[1] - edges[0]
+    if logx:
+        ratio = edges[1] / edges[0] if edges[0] > 0 else 10.0
+        if not np.isfinite(ratio) or ratio <= 1.0:
+            ratio = 10.0
+        left = edges[0] / ratio
+    else:
+        left = edges[0] - first_width
+    return np.concatenate([[left], edges])
+
+
+def _build_binning(bins, x_range, logx, logy, y_range, has_missing):
+    lo, hi = x_range
+    if lo >= hi:
+        hi = lo + 1.0
+    regular_edges = _regular_bin_edges(bins, (lo, hi), logx)
+    if has_missing:
+        edges = _plot_edges_with_missing_bin(regular_edges, logx)
+        regular_offset = 1
+        x_range = (float(edges[0]), float(edges[-1]))
+    else:
+        edges = regular_edges
+        regular_offset = 0
+        x_range = (float(regular_edges[0]), float(regular_edges[-1]))
+    return {
+        "bins": int(bins),
+        "edges": edges,
+        "regular_edges": regular_edges,
+        "bin_centers": 0.5 * (edges[:-1] + edges[1:]),
+        "bin_widths": edges[1:] - edges[:-1],
+        "x_range": x_range,
+        "logx": logx,
+        "logy": logy,
+        "y_range": y_range,
+        "has_missing_bin": bool(has_missing),
+        "regular_offset": regular_offset,
+        "missing_center": 0.5 * (edges[0] + edges[1]) if has_missing else None,
+        "missing_separator": float(edges[1]) if has_missing else None,
+        "regular_x_range": (float(regular_edges[0]), float(regular_edges[-1])),
+    }
+
+
+def _resolve_binning(tree_name, branch, arrs, log_tf_set):
+    bins, x_range, logx, logy, y_range = _branch_binning_settings(tree_name, branch, log_tf_set)
+    scanned = _auto_range(arrs, logx)
+    has_missing = scanned[2] if scanned is not None else False
+    if x_range is None:
+        if scanned is None or scanned[0] is None:
+            return None
+        x_range = (scanned[0], scanned[1])
+    return _build_binning(bins, x_range, logx, logy, y_range, has_missing)
+
+
+def _resolve_binning_from_state(tree_name, branch, range_state, log_tf_set):
+    bins, x_range, logx, logy, y_range = _branch_binning_settings(tree_name, branch, log_tf_set)
+    state = range_state.get(branch, {})
+    has_missing = bool(state.get("has_missing", False))
+    if x_range is None:
+        if state.get("lo") is None:
+            return None
+        x_range = (state["lo"], state["hi"])
+    return _build_binning(bins, x_range, logx, logy, y_range, has_missing)
+
+
+def _weighted_hist(vals, weights, binning):
     v = np.asarray(vals,    dtype=float)
     w = np.asarray(weights, dtype=float)
-    valid = v >= -990
+    edges = binning["edges"]
+    h = np.zeros(len(edges) - 1, dtype=float)
+    h2 = np.zeros(len(edges) - 1, dtype=float)
+
+    missing = _missing_value_mask(v)
+    if binning["has_missing_bin"] and missing.any():
+        mw = w[missing]
+        h[0] = float(np.sum(mw))
+        h2[0] = float(np.sum(mw * mw))
+
+    valid = (v >= -990) & (~missing)
+    if binning["logx"]:
+        valid &= v > 0
     v = v[valid]
     w = w[valid]
-    h,  _ = np.histogram(v, bins=edges, weights=w)
-    h2, _ = np.histogram(v, bins=edges, weights=w * w)
-    return h.astype(float), h2.astype(float)
+    if v.size:
+        rh,  _ = np.histogram(v, bins=binning["regular_edges"], weights=w)
+        rh2, _ = np.histogram(v, bins=binning["regular_edges"], weights=w * w)
+        offset = int(binning["regular_offset"])
+        h[offset:offset + len(rh)] += rh.astype(float)
+        h2[offset:offset + len(rh2)] += rh2.astype(float)
+    return h, h2
+
+
+def _prepare_ordinary_chunk(df, thresholds, clip_ranges):
+    if df is None or len(df) == 0:
+        return df
+    df = _apply_thresholds(df, thresholds)
+    df = _apply_clip(df, clip_ranges)
+    return df
+
+
+def _prepare_ordinary_chunk_with_weights(df, weights, thresholds, clip_ranges):
+    if df is None or len(df) == 0:
+        return df, weights
+    if thresholds:
+        mask = _threshold_mask(df, thresholds)
+        keep = mask.to_numpy(dtype=bool, copy=False)
+        df = df.loc[mask].reset_index(drop=True)
+        weights = weights[keep]
+    df = _apply_clip(df, clip_ranges)
+    return df, weights
+
+
+def _scan_ordinary_inputs(
+    *,
+    tree_name,
+    root_plot_branches,
+    log_tf_set,
+    thresholds,
+    clip_ranges,
+    mc_sources,
+    data_sources,
+    mc_need_load,
+    data_need_load,
+    reweight_branches,
+):
+    range_state = _make_range_state(root_plot_branches)
+    mc_weight_scales = {}
+
+    log_message(f"Streaming MC range scan for {len(mc_sources)} samples")
+    for source in mc_sources:
+        sample_name = source["sample"]
+        raw_w_sum = 0.0
+        n_loaded = 0
+        n_after = 0
+        for df in _iter_tree_chunks(source["files"], tree_name, mc_need_load):
+            raw_w = _raw_weight_array(df, reweight_branches, sample_name)
+            raw_w_sum += float(raw_w.sum())
+            n_loaded += len(df)
+            df = _prepare_ordinary_chunk(df, thresholds, clip_ranges)
+            n_after += 0 if df is None else len(df)
+            _update_range_state_from_df(range_state, df, root_plot_branches, log_tf_set, tree_name)
+            del df, raw_w
+        if n_loaded == 0 or source["entries"] == 0:
+            mc_weight_scales[sample_name] = 0.0
+        elif raw_w_sum <= 0.0:
+            raise RuntimeError(
+                f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
+            )
+        else:
+            mc_weight_scales[sample_name] = _mc_target_total(sample_name, source["entries"]) / raw_w_sum
+        log_message(
+            f"  {sample_name}: class={source['class']}, tree_entries={source['entries']}, "
+            f"loaded={n_loaded}, after_filter={n_after}, "
+            f"weight_sum={raw_w_sum * mc_weight_scales[sample_name]:.6g}"
+        )
+        gc.collect()
+
+    log_message(f"Streaming data range scan for {len(data_sources)} samples")
+    for source in data_sources:
+        n_loaded = 0
+        n_after = 0
+        for df in _iter_tree_chunks(source["files"], tree_name, data_need_load):
+            n_loaded += len(df)
+            df = _prepare_ordinary_chunk(df, thresholds, clip_ranges)
+            n_after += 0 if df is None else len(df)
+            _update_range_state_from_df(range_state, df, root_plot_branches, log_tf_set, tree_name)
+            del df
+        if n_loaded == 0:
+            log_message(f"  [WARN] data sample '{source['sample']}' has zero entries in tree '{tree_name}'")
+        log_message(f"  data {source['sample']}: loaded={n_loaded}, after_filter={n_after}")
+        gc.collect()
+
+    return range_state, mc_weight_scales
+
+
+def _book_ordinary_histograms(class_names, binnings):
+    mc_hists = {}
+    data_hists = {}
+    for branch, binning in binnings.items():
+        n_bins = len(binning["edges"]) - 1
+        mc_hists[branch] = {
+            cls: (np.zeros(n_bins, dtype=float), np.zeros(n_bins, dtype=float))
+            for cls in class_names
+        }
+        data_hists[branch] = (np.zeros(n_bins, dtype=float), np.zeros(n_bins, dtype=float))
+    return mc_hists, data_hists
+
+
+def _fill_hist_pair(target, vals, weights, binning):
+    h, h2 = _weighted_hist(vals, weights, binning)
+    target[0][:] += h
+    target[1][:] += h2
+
+
+def _fill_ordinary_histograms(
+    *,
+    tree_name,
+    root_plot_branches,
+    thresholds,
+    clip_ranges,
+    mc_sources,
+    data_sources,
+    mc_need_load,
+    data_need_load,
+    reweight_branches,
+    mc_weight_scales,
+    binnings,
+    mc_hists,
+    data_hists,
+):
+    if not binnings:
+        return
+
+    log_message(f"Streaming MC histogram fill for {len(mc_sources)} samples")
+    for source in mc_sources:
+        sample_name = source["sample"]
+        cls_name = source["class"]
+        scale = float(mc_weight_scales.get(sample_name, 0.0))
+        n_after = 0
+        for df in _iter_tree_chunks(source["files"], tree_name, mc_need_load):
+            raw_w = _raw_weight_array(df, reweight_branches, sample_name) * scale
+            df, raw_w = _prepare_ordinary_chunk_with_weights(df, raw_w, thresholds, clip_ranges)
+            if df is None or len(df) == 0:
+                del df, raw_w
+                continue
+            n_after += len(df)
+            for branch in root_plot_branches:
+                if branch not in binnings or branch not in df.columns:
+                    continue
+                _fill_hist_pair(
+                    mc_hists[branch][cls_name],
+                    df[branch].to_numpy(copy=False),
+                    raw_w,
+                    binnings[branch],
+                )
+            del df, raw_w
+        log_message(f"  filled MC {sample_name}: class={cls_name}, after_filter={n_after}")
+        gc.collect()
+
+    log_message(f"Streaming data histogram fill for {len(data_sources)} samples")
+    for source in data_sources:
+        n_after = 0
+        for df in _iter_tree_chunks(source["files"], tree_name, data_need_load):
+            df = _prepare_ordinary_chunk(df, thresholds, clip_ranges)
+            if df is None or len(df) == 0:
+                del df
+                continue
+            weights = np.ones(len(df), dtype=float)
+            n_after += len(df)
+            for branch in root_plot_branches:
+                if branch not in binnings or branch not in df.columns:
+                    continue
+                _fill_hist_pair(
+                    data_hists[branch],
+                    df[branch].to_numpy(copy=False),
+                    weights,
+                    binnings[branch],
+                )
+            del df, weights
+        log_message(f"  filled data {source['sample']}: after_filter={n_after}")
+        gc.collect()
 
 
 # -------------------- Ratio --------------------
@@ -677,6 +910,9 @@ def _draw_data_mc_plot(
     y_label,
     out_path,
     logy_floor=0.1,
+    missing_center=None,
+    missing_separator=None,
+    regular_x_range=None,
 ):
     bins = len(bin_centers)
     fig, (ax, axr) = plt.subplots(
@@ -722,6 +958,9 @@ def _draw_data_mc_plot(
         ax.set_yscale("log")
     ax.set_xlim(*x_range)
     axr.set_xlim(*x_range)
+    if missing_separator is not None:
+        ax.axvline(missing_separator, color="black", linestyle="-", linewidth=1.5)
+        axr.axvline(missing_separator, color="black", linestyle="-", linewidth=1.5)
 
     if y_range is not None:
         ax.set_ylim(*y_range)
@@ -791,6 +1030,20 @@ def _draw_data_mc_plot(
     axr.set_ylabel(r"$\frac{Data}{MC}$", fontsize=26)
     axr.yaxis.set_label_coords(-0.05, 0.6)
     axr.set_xlabel(branch, fontsize=24)
+    if missing_center is not None and regular_x_range is not None:
+        base_formatter = axr.xaxis.get_major_formatter()
+        lo, hi = regular_x_range
+        ticks = np.asarray(axr.get_xticks(), dtype=float)
+        ticks = ticks[np.isfinite(ticks) & (ticks >= lo) & (ticks <= hi)]
+        ticks = np.concatenate([[float(missing_center)], ticks])
+
+        def _fmt_tick(value, pos):
+            if np.isclose(value, missing_center):
+                return "-99"
+            return base_formatter(value, pos)
+
+        axr.xaxis.set_major_locator(FixedLocator(ticks))
+        axr.xaxis.set_major_formatter(FuncFormatter(_fmt_tick))
 
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -851,12 +1104,11 @@ def _process_tree(tree_name):
     os.makedirs(out_dir, exist_ok=True)
     log_message(f"Output directory: {out_dir}")
 
-    # Load the MC events for each class.
-    log_message(f"Loading MC samples for {len(class_names)} classes")
-    class_dfs = {}
+    # Ordinary ROOT branches are streamed into histograms instead of held as
+    # per-sample DataFrames, which keeps large data samples bounded by one
+    # uproot chunk plus the small histogram arrays.
+    mc_sources = []
     for cls_name, samples in class_groups.items():
-        log_message(f"  Loading class '{cls_name}' with {len(samples)} samples")
-        dfs = []
         for sname in samples:
             if sname not in SAMPLE_INFO:
                 raise RuntimeError(f"MC sample '{sname}' not found in sample.json")
@@ -866,46 +1118,72 @@ def _process_tree(tree_name):
             n_total = _tree_entries_total(files, tree_name)
             if n_total <= 0:
                 raise RuntimeError(f"Empty tree '{tree_name}' for MC sample '{sname}'")
-            df = _load_tree(files, tree_name, mc_need_load)
-            if df is None or len(df) == 0:
-                raise RuntimeError(f"No events loaded for MC sample '{sname}' in tree '{tree_name}'")
-            df = _assign_mc_weight(df, sname, n_total, len(df), reweight_branches)
-            dfs.append(df)
-            log_message(
-                f"  {sname}: class={cls_name}, tree_entries={n_total}, "
-                f"loaded={len(df)}, entry_cap=none, "
-                f"weight_sum={float(df['weight'].sum()):.6g}"
-            )
-        if dfs:
-            class_dfs[cls_name] = _concat_parts(dfs)
-            log_message(f"  Loaded class '{cls_name}': events={len(class_dfs[cls_name])}")
-        else:
-            raise RuntimeError(f"MC class '{cls_name}' has no usable events")
+            mc_sources.append({
+                "class": cls_name,
+                "sample": sname,
+                "files": files,
+                "entries": n_total,
+            })
+    if not mc_sources and root_plot_branches:
+        raise RuntimeError(f"No MC samples available for ordinary plots in tree '{tree_name}'")
 
-    # Load the data events.
-    log_message(f"Loading data samples: n={len(DATA_SAMPLES)}")
-    data_dfs = []
+    data_sources = []
     for sname in DATA_SAMPLES:
         files = _input_files(sname, input_root, input_pattern)
         if not files:
             raise RuntimeError(f"No ROOT files found for data sample '{sname}'")
-        df = _load_tree(files, tree_name, need_load)
-        if df is None or len(df) == 0:
-            log_message(f"  [WARN] data sample '{sname}' has zero entries in tree '{tree_name}'")
-            continue
-        df["weight"] = 1.0
-        data_dfs.append(df)
-        log_message(f"  data {sname}: loaded={len(df)}")
-    data_df = _concat_parts(data_dfs) if data_dfs else None
-    if data_df is None:
-        log_message("Loaded data events: 0")
-    else:
-        log_message(f"Loaded data events: {len(data_df)}")
+        data_sources.append({
+            "sample": sname,
+            "files": files,
+        })
+
+    ordinary_binnings = {}
+    ordinary_mc_hists = {}
+    ordinary_data_hists = {}
+    if root_plot_branches:
+        range_state, mc_weight_scales = _scan_ordinary_inputs(
+            tree_name=tree_name,
+            root_plot_branches=root_plot_branches,
+            log_tf_set=log_tf_set,
+            thresholds=thresholds,
+            clip_ranges=clip_ranges,
+            mc_sources=mc_sources,
+            data_sources=data_sources,
+            mc_need_load=mc_need_load,
+            data_need_load=need_load,
+            reweight_branches=reweight_branches,
+        )
+        for branch in root_plot_branches:
+            binning = _resolve_binning_from_state(tree_name, branch, range_state, log_tf_set)
+            if binning is None:
+                log_message(f"  [WARN] no data for {tree_name}:{branch}, skipping")
+                continue
+            ordinary_binnings[branch] = binning
+        ordinary_mc_hists, ordinary_data_hists = _book_ordinary_histograms(
+            class_names,
+            ordinary_binnings,
+        )
+        _fill_ordinary_histograms(
+            tree_name=tree_name,
+            root_plot_branches=root_plot_branches,
+            thresholds=thresholds,
+            clip_ranges=clip_ranges,
+            mc_sources=mc_sources,
+            data_sources=data_sources,
+            mc_need_load=mc_need_load,
+            data_need_load=need_load,
+            reweight_branches=reweight_branches,
+            mc_weight_scales=mc_weight_scales,
+            binnings=ordinary_binnings,
+            mc_hists=ordinary_mc_hists,
+            data_hists=ordinary_data_hists,
+        )
 
     # Build derived model score branches. MC scores use the saved test split;
     # data scores use the full configured data input, matching ordinary plots.
     score_class_dfs = {}
-    score_data_df = None
+    score_binnings = {}
+    score_data_hists = {}
     if score_branches:
         log_message("Preparing model score branches")
         clf = _load_score_model(bdt_root_dir, bdt_cfg, tree_name)
@@ -982,58 +1260,59 @@ def _process_tree(tree_name):
             log_message("Skipping score prediction reference validation")
         gc.collect()
 
+        for branch in score_branches:
+            binning = _resolve_binning(tree_name, branch, [], log_tf_set)
+            if binning is None:
+                log_message(f"  [WARN] no score binning for {tree_name}:{branch}, skipping")
+                continue
+            score_binnings[branch] = binning
+            n_bins = len(binning["edges"]) - 1
+            score_data_hists[branch] = (
+                np.zeros(n_bins, dtype=float),
+                np.zeros(n_bins, dtype=float),
+            )
+
         if DATA_SAMPLES:
             score_data_load = sorted(set(model_branches) | set(thresholds.keys()))
-            score_data_parts = []
             log_message(f"Loading data score samples: n={len(DATA_SAMPLES)}")
+            total_score_data = 0
             for sname in DATA_SAMPLES:
                 files = _input_files(sname, input_root, input_pattern)
                 if not files:
                     raise RuntimeError(f"No ROOT files found for data score sample '{sname}'")
-                df = _load_tree(files, tree_name, score_data_load)
-                if df is None or len(df) == 0:
+                sample_score_data = 0
+                loaded_any = False
+                for df in _iter_tree_chunks(files, tree_name, score_data_load):
+                    loaded_any = True
+                    df = _apply_thresholds(df, thresholds)
+                    if df is None or len(df) == 0:
+                        continue
+                    weights = np.ones(len(df), dtype=float)
+                    X_model = _standardize_model_X(df[model_branches].copy(), clip_ranges, list(log_tf_set))
+                    X_model = _drop_decorrelated_features(X_model, decorrelate)
+                    proba = _predict_model_proba(clf, X_model, len(class_names))
+                    score_df = _add_score_columns(df, proba, class_names)
+                    for branch in score_branches:
+                        if branch not in score_binnings:
+                            continue
+                        _fill_hist_pair(
+                            score_data_hists[branch],
+                            score_df[branch].to_numpy(copy=False),
+                            weights,
+                            score_binnings[branch],
+                        )
+                    sample_score_data += len(df)
+                    del df, weights, X_model, proba, score_df
+                if not loaded_any:
                     log_message(f"  [WARN] data score sample '{sname}' has zero entries")
                     continue
-                df = _apply_thresholds(df, thresholds)
-                if df is None or len(df) == 0:
+                if sample_score_data == 0:
                     log_message(f"  [WARN] data score sample '{sname}' has zero events after filtering")
                     continue
-                df["weight"] = 1.0
-                X_model = _standardize_model_X(df[model_branches].copy(), clip_ranges, list(log_tf_set))
-                X_model = _drop_decorrelated_features(X_model, decorrelate)
-                proba = _predict_model_proba(clf, X_model, len(class_names))
-                score_data_parts.append(_add_score_columns(df, proba, class_names))
-                log_message(f"  data score {sname}: events={len(df)}")
-            if score_data_parts:
-                score_data_df = _concat_parts(score_data_parts)
-                log_message(f"Loaded data score events: {len(score_data_df)}")
-            else:
-                log_message("Loaded data score events: 0")
-
-    # Apply thresholds and then clip ranges; the weights stay fixed.
-    def _prepare(df):
-        if df is None or len(df) == 0:
-            return df
-        df = _apply_thresholds(df, thresholds)
-        df = _apply_clip(df, clip_ranges)
-        df = _drop_unneeded_columns(df, set(root_plot_branches) | {"weight"})
-        return df
-
-    log_message("Applying thresholds and clip ranges")
-    for cls in list(class_dfs.keys()):
-        class_dfs[cls] = _prepare(class_dfs[cls])
-        if class_dfs[cls] is None or len(class_dfs[cls]) == 0:
-            class_dfs.pop(cls)
-            log_message(f"  [WARN] class '{cls}' became empty after filtering")
-        else:
-            log_message(f"  class '{cls}' after filtering: events={len(class_dfs[cls])}")
-    if data_df is not None:
-        data_df = _prepare(data_df)
-        if data_df is None or len(data_df) == 0:
-            data_df = None
-            log_message("  data after filtering: 0 events")
-        else:
-            log_message(f"  data after filtering: events={len(data_df)}")
+                total_score_data += sample_score_data
+                log_message(f"  data score {sname}: events={sample_score_data}")
+                gc.collect()
+            log_message(f"Loaded data score events: {total_score_data}")
 
     # Plot each requested branch.
     log_message(f"Plotting branches: total={len(branches_to_plot)}")
@@ -1045,68 +1324,66 @@ def _process_tree(tree_name):
     for idx, branch in enumerate(branches_to_plot, start=1):
         log_message(f"Plotting branch {idx}/{len(branches_to_plot)}: {branch}")
         is_score_branch = branch in score_branches
-        plot_class_dfs = score_class_dfs if is_score_branch else class_dfs
-        plot_data_df = score_data_df if is_score_branch else data_df
-        arrs = []
-        for cls in class_names:
-            if cls in plot_class_dfs and branch in plot_class_dfs[cls].columns:
-                arrs.append(plot_class_dfs[cls][branch].values)
-        if plot_data_df is not None and branch in plot_data_df.columns:
-            arrs.append(plot_data_df[branch].values)
+        if is_score_branch:
+            if branch not in score_binnings:
+                continue
+            plot_class_dfs = score_class_dfs
+            binning = score_binnings[branch]
 
-        binning = _resolve_binning(tree_name, branch, arrs, log_tf_set)
-        if binning is None:
-            log_message(f"  [WARN] no data for {tree_name}:{branch}, skipping")
-            continue
-        bins, x_range, logx, logy, y_range = binning
-        edges       = _bin_edges(bins, x_range, logx)
-        bin_centers = 0.5 * (edges[:-1] + edges[1:])
-        bin_widths  = edges[1:] - edges[:-1]
+            mc_total_v  = np.zeros(len(binning["edges"]) - 1)
+            mc_total_w2 = np.zeros(len(binning["edges"]) - 1)
+            mc_per_cls  = {}
+            for cls in class_names:
+                if cls in plot_class_dfs and branch in plot_class_dfs[cls].columns:
+                    h, h2 = _weighted_hist(
+                        plot_class_dfs[cls][branch].values,
+                        plot_class_dfs[cls]["weight"].values,
+                        binning,
+                    )
+                else:
+                    h  = np.zeros(len(binning["edges"]) - 1)
+                    h2 = np.zeros(len(binning["edges"]) - 1)
+                mc_per_cls[cls] = (h, h2)
+                mc_total_v  += h
+                mc_total_w2 += h2
 
-        mc_total_v  = np.zeros(bins)
-        mc_total_w2 = np.zeros(bins)
-        mc_per_cls  = {}
-        for cls in class_names:
-            if cls in plot_class_dfs and branch in plot_class_dfs[cls].columns:
-                h, h2 = _weighted_hist(
-                    plot_class_dfs[cls][branch].values,
-                    plot_class_dfs[cls]["weight"].values, edges
-                )
-            else:
-                h  = np.zeros(bins)
-                h2 = np.zeros(bins)
-            mc_per_cls[cls] = (h, h2)
-            mc_total_v  += h
-            mc_total_w2 += h2
-
-        if plot_data_df is not None and branch in plot_data_df.columns:
-            data_v, data_w2 = _weighted_hist(
-                plot_data_df[branch].values, plot_data_df["weight"].values, edges
-            )
+            data_v, data_w2 = score_data_hists[branch]
         else:
-            data_v  = np.zeros(bins)
-            data_w2 = np.zeros(bins)
+            if branch not in ordinary_binnings:
+                continue
+            binning = ordinary_binnings[branch]
+            mc_per_cls = ordinary_mc_hists[branch]
+            mc_total_v = np.zeros(len(binning["edges"]) - 1)
+            mc_total_w2 = np.zeros(len(binning["edges"]) - 1)
+            for cls in class_names:
+                h, h2 = mc_per_cls[cls]
+                mc_total_v += h
+                mc_total_w2 += h2
+            data_v, data_w2 = ordinary_data_hists[branch]
 
         out_path = os.path.join(out_dir, f"{tree_name}_{branch}.pdf")
         _draw_data_mc_plot(
             class_names=class_names,
             color_map=color_map,
-            edges=edges,
-            bin_centers=bin_centers,
-            bin_widths=bin_widths,
+            edges=binning["edges"],
+            bin_centers=binning["bin_centers"],
+            bin_widths=binning["bin_widths"],
             mc_per_cls=mc_per_cls,
             mc_total_v=mc_total_v,
             mc_total_w2=mc_total_w2,
             data_v=data_v,
             data_w2=data_w2,
             branch=branch,
-            x_range=x_range,
-            logx=logx,
-            logy=logy,
-            y_range=y_range,
+            x_range=binning["x_range"],
+            logx=binning["logx"],
+            logy=binning["logy"],
+            y_range=binning["y_range"],
             y_label="Events",
             out_path=out_path,
             logy_floor=0.1,
+            missing_center=binning["missing_center"],
+            missing_separator=binning["missing_separator"],
+            regular_x_range=binning["regular_x_range"],
         )
         log_message(f"Wrote plot file: {out_path}")
 
@@ -1121,22 +1398,25 @@ def _process_tree(tree_name):
         _draw_data_mc_plot(
             class_names=class_names,
             color_map=color_map,
-            edges=edges,
-            bin_centers=bin_centers,
-            bin_widths=bin_widths,
+            edges=binning["edges"],
+            bin_centers=binning["bin_centers"],
+            bin_widths=binning["bin_widths"],
             mc_per_cls=mc_per_cls_norm,
             mc_total_v=mc_total_v_norm,
             mc_total_w2=mc_total_w2_norm,
             data_v=data_v_norm,
             data_w2=data_w2_norm,
             branch=branch,
-            x_range=x_range,
-            logx=logx,
-            logy=logy,
-            y_range=y_range,
+            x_range=binning["x_range"],
+            logx=binning["logx"],
+            logy=binning["logy"],
+            y_range=binning["y_range"],
             y_label="A.U.",
             out_path=out_path_normal,
             logy_floor=None,
+            missing_center=binning["missing_center"],
+            missing_separator=binning["missing_separator"],
+            regular_x_range=binning["regular_x_range"],
         )
         log_message(f"Wrote plot file: {out_path_normal}")
     log_message(f"Finished data_mc.py for tree={tree_name}")
