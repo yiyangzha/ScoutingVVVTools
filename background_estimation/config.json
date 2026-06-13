@@ -6,8 +6,8 @@
   "root_file_name": "qcd_abcd_yields.root",
   "validate_bdt_test_scores": true,
   "qcd_predict_scale_multipliers": {
-    "fat2": 6.4,
-    "fat3": 5.9
+    "fat2": 6.5,
+    "fat3": 6.1
   },
   "abcd_branches": {
     "fat2": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
