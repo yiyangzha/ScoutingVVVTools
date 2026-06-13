@@ -631,7 +631,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
     """Apply per-branch threshold cuts.
 
     Only branches that appear as keys in ``thresholds`` are inspected: for each
-    such branch, events with sentinel values (< -990) are dropped (when
+    such branch, events with sentinel values (<= -99) are dropped (when
     ``apply_to_sentinel`` is True) and the threshold condition is enforced.
     Branches not listed in ``thresholds`` are left untouched, so an event with
     a sentinel value in (for example) a lepton branch is still kept as long as
@@ -685,7 +685,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
         if b not in X.columns:
             raise KeyError(f"Column {b!r} not found in X")
         col      = X[b]
-        sentinel = col < -990
+        sentinel = col <= -99
 
         if apply_to_sentinel:
             mask &= ~sentinel
@@ -710,7 +710,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
 
 # -------------------- Feature standardization --------------------
 def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd.DataFrame:
-    """Clip values and apply log transform in-place; sentinel values (< -990) are untouched."""
+    """Clip values and apply log transform in-place; sentinel values (<= -99) are untouched."""
     log_set = set(log_transform)
     for col in X.columns:
         arr = X[col].to_numpy(copy=False)
@@ -719,7 +719,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
             arr = arr.copy()
             needs_assign = True
         changed = False
-        mask = arr < -990   # Sentinel placeholder values.
+        mask = arr <= -99   # Sentinel placeholder values.
         valid = ~mask
         if not valid.any():
             if needs_assign:
@@ -753,7 +753,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
 
 
 def _clip_only_X(X: pd.DataFrame, clip_ranges: dict) -> pd.DataFrame:
-    """Apply clip_ranges only (no log_transform); sentinel values (< -990) untouched."""
+    """Apply clip_ranges only (no log_transform); sentinel values (<= -99) untouched."""
     X = X.copy()
     for col in X.columns:
         arr = X[col].to_numpy(copy=False)
@@ -762,7 +762,7 @@ def _clip_only_X(X: pd.DataFrame, clip_ranges: dict) -> pd.DataFrame:
             arr = arr.copy()
             needs_assign = True
         changed = False
-        mask = arr < -990
+        mask = arr <= -99
         valid = ~mask
         if not valid.any():
             if needs_assign:
@@ -787,7 +787,7 @@ def _clip_only_X(X: pd.DataFrame, clip_ranges: dict) -> pd.DataFrame:
 def _clipped_column_values(X: pd.DataFrame, col: str, clip_ranges: dict) -> np.ndarray:
     """Return one clipped column as float values without copying the full DataFrame."""
     arr = X[col].to_numpy(copy=True)
-    mask = arr < -990
+    mask = arr <= -99
     valid = ~mask
     if not valid.any():
         return arr.astype(float, copy=False)
@@ -846,7 +846,7 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
             _clipped_column_values(X_train, col, clip_ranges),
             _clipped_column_values(X_test, col, clip_ranges),
         ])
-        valid = v_all > -990
+        valid = v_all > -99
         if not np.any(valid):
             log_warning(f"branch '{col}' has no valid entries to plot, skipping")
             continue
@@ -2996,7 +2996,7 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                 mask = (
                     class_mask
                     & np.isfinite(x)
-                    & (x > -990.0)
+                    & (x > -99.0)
                     & np.isfinite(s)
                     & np.isfinite(wv_all)
                     & (wv_all > 0.0)
@@ -3063,7 +3063,7 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
                 continue
             for branch_name in decor_plot_names:
                 x = decor_plot_df[branch_name].to_numpy(dtype=float, copy=False)
-                base_x_mask = class_mask & np.isfinite(x) & (x > -990.0) & np.isfinite(wv_all) & (wv_all > 0.0)
+                base_x_mask = class_mask & np.isfinite(x) & (x > -99.0) & np.isfinite(wv_all) & (wv_all > 0.0)
                 edges = _hist_edges(x[base_x_mask])
                 if edges is None:
                     raise RuntimeError(

@@ -235,7 +235,7 @@ def _iter_tree_chunks(files, tree_name, branches):
 
 # -------------------- Threshold and clip filtering --------------------
 def _missing_value_mask(arr):
-    return np.isclose(np.asarray(arr, dtype=float), -99.0)
+    return np.asarray(arr, dtype=float) <= -99.0
 
 
 def _mask_from_cond(col, cond):
@@ -280,7 +280,7 @@ def _threshold_mask(df, thresholds):
         if b not in df.columns:
             continue
         col = df[b]
-        sentinel = col < -990
+        sentinel = _missing_value_mask(col)
         mask &= ~sentinel
         mask &= _mask_from_cond(col, cond)
     return mask
@@ -300,7 +300,7 @@ def _apply_clip(df, clip_ranges):
         if col not in df.columns:
             continue
         arr   = df[col].values.astype(float, copy=True)
-        valid = (arr >= -990) & (~_missing_value_mask(arr))
+        valid = ~_missing_value_mask(arr)
         lo, hi = rng
         if lo is not None:
             arr[valid & (arr < lo)] = lo
@@ -314,7 +314,7 @@ def _standardize_model_X(X, clip_ranges, log_transform):
     log_set = set(log_transform)
     for col in X.columns:
         arr = X[col].values.copy()
-        sentinel = arr < -990
+        sentinel = _missing_value_mask(arr)
         valid = ~sentinel
         if not valid.any():
             continue
@@ -556,7 +556,7 @@ def _update_range_state_for_array(state, arr, logx):
     missing = _missing_value_mask(a)
     if missing.any():
         state["has_missing"] = True
-    valid = (a >= -990) & (~missing)
+    valid = ~missing
     if logx:
         valid &= a > 0
     a = a[valid]
@@ -667,7 +667,7 @@ def _weighted_hist(vals, weights, binning):
         h[0] = float(np.sum(mw))
         h2[0] = float(np.sum(mw * mw))
 
-    valid = (v >= -990) & (~missing)
+    valid = ~missing
     if binning["logx"]:
         valid &= v > 0
     v = v[valid]

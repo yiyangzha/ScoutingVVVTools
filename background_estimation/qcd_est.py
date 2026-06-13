@@ -341,7 +341,7 @@ def _threshold_mask(
         if name not in X.columns:
             raise KeyError(f"Column {name!r} not found in X")
         col = X[name]
-        sentinel = col < -990
+        sentinel = col <= -99
         if apply_to_sentinel:
             mask &= ~sentinel
             if cond is not None:
@@ -385,7 +385,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     log_set = set(log_transform)
     for col in X.columns:
         arr = X[col].values.copy()
-        sentinel = arr < -990
+        sentinel = arr <= -99
         valid = ~sentinel
         if not valid.any():
             continue
@@ -801,7 +801,7 @@ def _abcd_pass_fail_masks(df: pd.DataFrame, abcd_thresholds: dict) -> Tuple[np.n
             raise KeyError(f"ABCD threshold branch {name!r} not found in DataFrame")
         col = df[name]
         values = col.to_numpy(dtype=float, copy=False)
-        sentinel = values < -990
+        sentinel = values <= -99
         finite = np.isfinite(values)
         branch_valid = (~sentinel) & finite
         cond_mask = _mask_from_cond(col, cond).to_numpy(dtype=bool)

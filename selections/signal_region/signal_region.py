@@ -345,7 +345,7 @@ def standardize_X(X: pd.DataFrame, clip_ranges: dict, log_transform: list) -> pd
     log_set = set(log_transform)
     for col in X.columns:
         arr   = X[col].values.copy()
-        mask  = arr < -990
+        mask  = arr <= -99
         valid = ~mask
         if not valid.any():
             continue
@@ -430,7 +430,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
     """Apply per-branch threshold cuts.
 
     Only branches that appear as keys in ``thresholds`` are inspected: for each
-    such branch, events with sentinel values (< -990) are dropped (when
+    such branch, events with sentinel values (<= -99) are dropped (when
     ``apply_to_sentinel`` is True) and the threshold condition is enforced.
     Branches not listed in ``thresholds`` are left untouched, so an event with
     a sentinel value in some other branch is still kept. The ``branch``
@@ -480,7 +480,7 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
         if b not in X.columns:
             raise KeyError(f"Column {b!r} not found in X")
         col      = X[b]
-        sentinel = col < -990
+        sentinel = col <= -99
         if apply_to_sentinel:
             mask &= ~sentinel
             if cond is not None:

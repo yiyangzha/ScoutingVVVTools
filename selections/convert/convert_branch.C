@@ -45,7 +45,7 @@ using JsonValue = simple_json::Value;
 namespace {
 
 const float def = -99.f;
-const double kMissingDistance = -999.;
+const double kMissingDistance = -99.;
 const double kLargeDistance = 999.;
 const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
 
