@@ -4,6 +4,7 @@
   "signal_region_csv": "../selections/signal_region/output/fat2_UParTv2_v3/signal_region.csv",
   "output_dir": "./output/fat2_UParTv2_v3",
   "root_file_name": "qcd_abcd_yields.root",
+  "validate_bdt_test_scores": true,
   "qcd_predict_scale_multipliers": {
     "fat2": 6.4,
     "fat3": 5.9

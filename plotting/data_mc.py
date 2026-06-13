@@ -7,7 +7,8 @@ Reads convert_branch.C output ROOT files directly for ordinary branches,
 including branches that are not BDT inputs, applies the trained-model
 selection.json clip/threshold cuts (no log transform), and draws a stacked MC +
 data panel with a Data/MC ratio sub-panel. Derived model score branches use the
-saved MC test split and validate against the trained-model prediction reference.
+saved MC test split and optionally validate against the trained-model prediction
+reference.
 """
 
 import gc
@@ -72,6 +73,8 @@ DATA_SAMPLES     = list(plot_cfg.get("data_samples", []))
 DEFAULT_BINS     = int(plot_cfg.get("default_bins", 10))
 OUTPUT_ROOT_PATT = plot_cfg.get("output_root", "./pre-selection/{tree_name}")
 BDT_ROOT_PATT    = plot_cfg["bdt_root"]
+VALIDATE_BDT_TEST_SCORES = bool(plot_cfg.get("validate_bdt_test_scores", True))
+PLOT_BDT_SCORES = bool(plot_cfg.get("plot_bdt_scores", True))
 
 SAMPLE_CFG_PATH         = _resolve(plot_cfg["sample_config"], _SCRIPT_DIR)
 CONVERT_BRANCH_CFG_PATH = _resolve(plot_cfg["convert_branch_config"], _SCRIPT_DIR)
@@ -151,12 +154,14 @@ def _bdt_root_for_tree(tree_name):
     return _resolve(BDT_ROOT_PATT.format(tree_name=tree_name), _SCRIPT_DIR)
 
 
-def _bdt_configs_for_tree(tree_name):
+def _bdt_configs_for_tree(tree_name, load_test_ranges=True):
     bdt_root = _bdt_root_for_tree(tree_name)
     cfg = _load_json(os.path.join(bdt_root, "config.json"))
     br = _load_json(os.path.join(bdt_root, "branch.json"))
     sel = _load_json(os.path.join(bdt_root, "selection.json"))
-    meta = _load_json(os.path.join(bdt_root, "test_ranges.json"))
+    meta = None
+    if load_test_ranges:
+        meta = _load_json(os.path.join(bdt_root, "test_ranges.json"))
     return cfg, br, sel, meta
 
 
@@ -796,16 +801,18 @@ def _process_tree(tree_name):
     log_message(f"Running data_mc.py: tree={tree_name}")
 
     log_message("Loading trained-model config copies")
-    bdt_cfg, bdt_br, bdt_sel, test_meta = _bdt_configs_for_tree(tree_name)
-    class_groups     = bdt_cfg["class_groups"]
+    bdt_cfg, bdt_br, bdt_sel, test_meta = _bdt_configs_for_tree(
+        tree_name,
+        load_test_ranges=PLOT_BDT_SCORES,
+    )
+    class_groups = (
+        bdt_cfg["class_groups"]
+        if PLOT_BDT_SCORES
+        else plot_cfg.get("class_groups", bdt_cfg["class_groups"])
+    )
     class_names      = list(class_groups.keys())
-    model_branches   = [item["name"] for item in bdt_br[tree_name]]
-    score_branches   = [_score_branch_name(class_name) for class_name in class_names]
-    entries_per_sample = int(bdt_cfg.get("entries_per_sample", 1_000_000) * 0.5)
-    if entries_per_sample <= 0:
-        raise RuntimeError(
-            f"bdt_root config entries_per_sample must be positive, got {entries_per_sample}"
-        )
+    model_branches   = [item["name"] for item in bdt_br[tree_name]] if PLOT_BDT_SCORES else []
+    score_branches   = [_score_branch_name(class_name) for class_name in class_names] if PLOT_BDT_SCORES else []
 
     # Resolve input_root relative to the BDT script directory used by train.py.
     bdt_root_dir   = _bdt_root_for_tree(tree_name)
@@ -838,7 +845,7 @@ def _process_tree(tree_name):
         f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}, "
         f"reweight_branches={len(reweight_branches)}, score_branches={len(score_branches)}"
     )
-    log_message(f"Ordinary MC branch entry cap per sample: {entries_per_sample}")
+    log_message("Ordinary MC branch entry cap per sample: none")
 
     out_dir = _resolve(OUTPUT_ROOT_PATT.format(tree_name=tree_name), _SCRIPT_DIR)
     os.makedirs(out_dir, exist_ok=True)
@@ -859,14 +866,14 @@ def _process_tree(tree_name):
             n_total = _tree_entries_total(files, tree_name)
             if n_total <= 0:
                 raise RuntimeError(f"Empty tree '{tree_name}' for MC sample '{sname}'")
-            df = _load_tree(files, tree_name, mc_need_load, max_entries=entries_per_sample)
+            df = _load_tree(files, tree_name, mc_need_load)
             if df is None or len(df) == 0:
                 raise RuntimeError(f"No events loaded for MC sample '{sname}' in tree '{tree_name}'")
             df = _assign_mc_weight(df, sname, n_total, len(df), reweight_branches)
             dfs.append(df)
             log_message(
                 f"  {sname}: class={cls_name}, tree_entries={n_total}, "
-                f"loaded={len(df)}, entry_cap={entries_per_sample}, "
+                f"loaded={len(df)}, entry_cap=none, "
                 f"weight_sum={float(df['weight'].sum()):.6g}"
             )
         if dfs:
@@ -895,9 +902,8 @@ def _process_tree(tree_name):
     else:
         log_message(f"Loaded data events: {len(data_df)}")
 
-    # Build derived model score branches. MC scores use the saved test split and
-    # are validated against train.py's signal-region reference; data scores use
-    # the full configured data input, matching the ordinary branch plots.
+    # Build derived model score branches. MC scores use the saved test split;
+    # data scores use the full configured data input, matching ordinary plots.
     score_class_dfs = {}
     score_data_df = None
     if score_branches:
@@ -913,10 +919,10 @@ def _process_tree(tree_name):
                 sample_to_class_idx[sample_name] = idx
 
         score_parts_by_class = {cls_name: [] for cls_name in class_names}
-        ref_sample_labels = []
-        ref_class_idx = []
-        ref_weights = []
-        ref_proba_parts = []
+        ref_sample_labels = [] if VALIDATE_BDT_TEST_SCORES else None
+        ref_class_idx = [] if VALIDATE_BDT_TEST_SCORES else None
+        ref_weights = [] if VALIDATE_BDT_TEST_SCORES else None
+        ref_proba_parts = [] if VALIDATE_BDT_TEST_SCORES else None
         ref_feature_names = None
 
         log_message(f"Loading MC score test split samples: n={len(test_meta['samples'])}")
@@ -940,15 +946,16 @@ def _process_tree(tree_name):
             X_model = _standardize_model_X(df[model_branches].copy(), clip_ranges, list(log_tf_set))
             X_model = _drop_decorrelated_features(X_model, decorrelate)
             proba = _predict_model_proba(clf, X_model, len(class_names))
-            if ref_feature_names is None:
+            if VALIDATE_BDT_TEST_SCORES and ref_feature_names is None:
                 ref_feature_names = list(X_model.columns)
             score_df = _add_score_columns(df, proba, class_names)
             cls_name = sample_to_class_name[sample_name]
             score_parts_by_class[cls_name].append(score_df)
-            ref_sample_labels.extend([sample_name] * len(df))
-            ref_class_idx.extend([sample_to_class_idx[sample_name]] * len(df))
-            ref_weights.extend(score_df["weight"].to_numpy(dtype=float, copy=False))
-            ref_proba_parts.append(proba)
+            if VALIDATE_BDT_TEST_SCORES:
+                ref_sample_labels.extend([sample_name] * len(df))
+                ref_class_idx.extend([sample_to_class_idx[sample_name]] * len(df))
+                ref_weights.extend(score_df["weight"].to_numpy(dtype=float, copy=False))
+                ref_proba_parts.append(proba)
             log_message(
                 f"  score {sample_name}: class={cls_name}, test_loaded={len(df)}, "
                 f"weight_sum={float(score_df['weight'].sum()):.6g}"
@@ -958,18 +965,21 @@ def _process_tree(tree_name):
             if parts:
                 score_class_dfs[cls_name] = _concat_parts(parts)
 
-        if not ref_proba_parts:
+        if not score_class_dfs:
             raise RuntimeError(f"No MC score events after filtering for tree '{tree_name}'")
-        score_proba_ref = np.concatenate(ref_proba_parts, axis=0)
-        _compare_score_reference(
-            os.path.join(bdt_root_dir, "test_reference_signal_region.npz"),
-            ref_feature_names,
-            ref_sample_labels,
-            ref_class_idx,
-            ref_weights,
-            score_proba_ref,
-        )
-        del ref_sample_labels, ref_class_idx, ref_weights, ref_proba_parts, score_proba_ref
+        if VALIDATE_BDT_TEST_SCORES:
+            score_proba_ref = np.concatenate(ref_proba_parts, axis=0)
+            _compare_score_reference(
+                os.path.join(bdt_root_dir, "test_reference_signal_region.npz"),
+                ref_feature_names,
+                ref_sample_labels,
+                ref_class_idx,
+                ref_weights,
+                score_proba_ref,
+            )
+            del ref_sample_labels, ref_class_idx, ref_weights, ref_proba_parts, score_proba_ref
+        else:
+            log_message("Skipping score prediction reference validation")
         gc.collect()
 
         if DATA_SAMPLES:

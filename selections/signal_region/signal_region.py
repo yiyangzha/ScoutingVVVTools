@@ -94,6 +94,7 @@ MIN_BKG_WEIGHT   = float(scan_cfg.get("min_bkg_weight", 5.0))
 MIN_SIGNAL_WEIGHT = float(scan_cfg.get("min_signal_weight", 0.0))
 MIN_SIGNAL_ENTRIES = max(0, int(scan_cfg.get("min_signal_entries", 0)))
 MIN_BKG_ENTRIES = max(0, int(scan_cfg.get("min_bkg_entries", 0)))
+VALIDATE_BDT_TEST_SCORES = bool(scan_cfg.get("validate_bdt_test_scores", True))
 MAX_EDGE_CANDIDATES_PER_AXIS = max(8, int(scan_cfg.get("max_edge_candidates_per_axis", 120)))
 BEAM_WIDTH = max(1, int(scan_cfg.get("beam_width", 48)))
 TOP_INTERVALS_PER_AXIS = max(1, int(scan_cfg.get("top_intervals_per_axis", 8)))
@@ -2413,15 +2414,18 @@ def main():
     log_message("Running model prediction")
     proba = _predict_model_proba(clf, X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
-    log_message("Validating test-set prediction reference")
-    _compare_prediction_reference(
-        TEST_REFERENCE_SIGNAL_REGION,
-        X_model.columns if hasattr(X_model, "columns") else [f"f{i}" for i in range(X_model.shape[1])],
-        sample_labels,
-        y,
-        w,
-        proba,
-    )
+    if VALIDATE_BDT_TEST_SCORES:
+        log_message("Validating test-set prediction reference")
+        _compare_prediction_reference(
+            TEST_REFERENCE_SIGNAL_REGION,
+            X_model.columns if hasattr(X_model, "columns") else [f"f{i}" for i in range(X_model.shape[1])],
+            sample_labels,
+            y,
+            w,
+            proba,
+        )
+    else:
+        log_message("Skipping test-set prediction reference validation")
 
     # Plot the weighted score distributions.
     log_message("Plotting score distributions")

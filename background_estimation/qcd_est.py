@@ -145,6 +145,7 @@ BDT_ROOT = _resolve(qcd_cfg["bdt_root"], _SCRIPT_DIR)
 OUTPUT_DIR = _resolve(qcd_cfg.get("output_dir", "./output"), _SCRIPT_DIR)
 ROOT_FILE_NAME = qcd_cfg.get("root_file_name", "qcd_abcd_yields.root")
 SIGNAL_REGION_CSV_PATH = _resolve(qcd_cfg["signal_region_csv"], _SCRIPT_DIR)
+VALIDATE_BDT_TEST_SCORES = bool(qcd_cfg.get("validate_bdt_test_scores", True))
 TEST_REFERENCE_QCD_EST = os.path.join(BDT_ROOT, "test_reference_qcd_est.npz")
 TEST_REFERENCE_QCD_EST_FULL = os.path.join(BDT_ROOT, "test_reference_qcd_est_full.npz")
 
@@ -1426,12 +1427,17 @@ def main() -> None:
     gc.collect()
 
     clf = _load_model()
-    have_full_reference = os.path.exists(TEST_REFERENCE_QCD_EST_FULL)
-    log_message(
-        f"Prediction reference availability: full_reference={have_full_reference}, "
-        f"full_path={TEST_REFERENCE_QCD_EST_FULL}, "
-        f"full_size={_file_size_text(TEST_REFERENCE_QCD_EST_FULL) if have_full_reference else 'missing'}"
+    have_full_reference = (
+        VALIDATE_BDT_TEST_SCORES and os.path.exists(TEST_REFERENCE_QCD_EST_FULL)
     )
+    if VALIDATE_BDT_TEST_SCORES:
+        log_message(
+            f"Prediction reference availability: full_reference={have_full_reference}, "
+            f"full_path={TEST_REFERENCE_QCD_EST_FULL}, "
+            f"full_size={_file_size_text(TEST_REFERENCE_QCD_EST_FULL) if have_full_reference else 'missing'}"
+        )
+    else:
+        log_message("Skipping test-set prediction reference validation")
     proba_full = None
     proba = None
     if have_full_reference:
@@ -1572,26 +1578,27 @@ def main() -> None:
             f"Predicted probabilities: shape={proba.shape}, size={_array_size_text(proba)}, "
             f"elapsed={_format_seconds(step_start)}"
         )
-        log_warning(
-            "Full qcd_est reference missing; using legacy filtered reference. "
-            "Re-run train.py to produce test_reference_qcd_est_full.npz for configurable ABCD branches."
-        )
-        log_message(
-            f"Validating filtered test-set prediction reference: path={TEST_REFERENCE_QCD_EST}, "
-            f"size={_file_size_text(TEST_REFERENCE_QCD_EST)}"
-        )
-        step_start = time.perf_counter()
-        _compare_prediction_reference(
-            TEST_REFERENCE_QCD_EST,
-            X_model.columns
-            if hasattr(X_model, "columns")
-            else [f"f{i}" for i in range(X_model.shape[1])],
-            sample_labels,
-            y,
-            w,
-            proba,
-        )
-        log_message(f"Finished filtered test-set reference comparison: elapsed={_format_seconds(step_start)}")
+        if VALIDATE_BDT_TEST_SCORES:
+            log_warning(
+                "Full qcd_est reference missing; using legacy filtered reference. "
+                "Re-run train.py to produce test_reference_qcd_est_full.npz for configurable ABCD branches."
+            )
+            log_message(
+                f"Validating filtered test-set prediction reference: path={TEST_REFERENCE_QCD_EST}, "
+                f"size={_file_size_text(TEST_REFERENCE_QCD_EST)}"
+            )
+            step_start = time.perf_counter()
+            _compare_prediction_reference(
+                TEST_REFERENCE_QCD_EST,
+                X_model.columns
+                if hasattr(X_model, "columns")
+                else [f"f{i}" for i in range(X_model.shape[1])],
+                sample_labels,
+                y,
+                w,
+                proba,
+            )
+            log_message(f"Finished filtered test-set reference comparison: elapsed={_format_seconds(step_start)}")
 
     log_message("Building ABCD regions")
     region_score_masks = []

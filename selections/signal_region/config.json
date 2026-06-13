@@ -4,6 +4,7 @@
   "bdt_root": "../BDT/fat2_UParTv2_v3",
   "output_dir": "./output/fat2_UParTv2_v3",
   "score_axes": "all",
+  "validate_bdt_test_scores": true,
   "min_bkg_weight": 5.0,
   "min_signal_weight": 0.0,
   "min_signal_entries": 0,

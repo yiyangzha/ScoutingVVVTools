@@ -6,8 +6,20 @@
   "output_root": "./pre-selection/{tree_name}_UParTv2_v3",
   "data_samples": ["2024B", "2024I"],
   "default_bins": 50,
+  "validate_bdt_test_scores": false,
+  "plot_bdt_scores": false,
   "event_reweight_branches": {
     "fat2": ["weight_pu"],
     "fat3": ["weight_pu"]
-  }
+  },
+  "class_groups": {
+    "VVV": ["www", "wwz", "wzz", "zzz"],
+    "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
+    "Top": ["ttbar_had", "ttbar_semilep"],
+    "VT": ["tbarwplus_had", "twminus_had"],
+    "VV":  ["ww", "wz", "zz"],
+    "QCD": ["qcd_ht40to70", "qcd_ht70to100", "qcd_ht100to200", "qcd_ht200to400", 
+            "qcd_ht400to600", "qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200", 
+            "qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
+  },
 }
