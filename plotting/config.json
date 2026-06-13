@@ -6,8 +6,8 @@
   "output_root": "./pre-selection/{tree_name}_UParTv2_v3",
   "data_samples": ["2024B", "2024I"],
   "default_bins": 50,
-  "validate_bdt_test_scores": false,
-  "plot_bdt_scores": false,
+  "validate_bdt_test_scores": true,
+  "plot_bdt_scores": true,
   "event_reweight_branches": {
     "fat2": ["weight_pu"],
     "fat3": ["weight_pu"]
