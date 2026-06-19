@@ -7,6 +7,8 @@
       { "name": "bunchCrossing", "type": "UI", "onlyMC": false },
       { "name": "orbitNumber", "type": "UI", "onlyMC": false },
       { "name": "DST_PFScouting_JetHT", "type": "O", "onlyMC": false },
+      { "name": "ScoutingMET_pt", "type": "F", "onlyMC": false },
+      { "name": "ScoutingMET_phi", "type": "F", "onlyMC": false },
       { "name": "Pileup_nTrueInt", "type": "F", "onlyMC": true },
       { "name": "nScoutingFatPFJetRecluster", "type": "I", "onlyMC": false },
       { "name": "nScoutingPFJetRecluster2", "type": "I", "onlyMC": false },
@@ -136,6 +138,8 @@
             { "name": "event", "type": "UL64", "formula": "event", "onlyMC": false },
             { "name": "bunchCrossing", "type": "UI", "formula": "bunchCrossing", "onlyMC": false },
             { "name": "orbitNumber", "type": "UI", "formula": "orbitNumber", "onlyMC": false },
+            { "name": "ScoutingMET_pt", "type": "F", "formula": "ScoutingMET_pt", "onlyMC": false },
+            { "name": "ScoutingMET_phi", "type": "F", "formula": "ScoutingMET_phi", "onlyMC": false },
             { "name": "sample_ID", "type": "I", "formula": "sample_ID", "onlyMC": false },
             { "name": "is_MC", "type": "O", "formula": "is_MC", "onlyMC": false },
             { "name": "is_signal", "type": "O", "formula": "is_signal", "onlyMC": false },
@@ -279,6 +283,42 @@
               "onlyMC": false
             },
             {
+              "name": "ScoutingMET_deltaPhi_min_ScoutingFatPFJetRecluster",
+              "type": "F",
+              "formula": "min_value(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingFatPFJetRecluster",
+              "type": "F",
+              "formula": "max_value(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingFatPFJetRecluster_pt",
+              "type": "F",
+              "formula": "value_at_max(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), ScoutingFatPFJetRecluster_pt, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_min_ScoutingPFJetRecluster2",
+              "type": "F",
+              "formula": "min_value(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingPFJetRecluster2",
+              "type": "F",
+              "formula": "max_value(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingPFJetRecluster2_pt",
+              "type": "F",
+              "formula": "value_at_max(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), ScoutingPFJetRecluster2_pt, -99)",
+              "onlyMC": false
+            },
+            {
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max",
               "type": "F",
               "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
@@ -322,6 +362,8 @@
             { "name": "event", "type": "UL64", "formula": "event", "onlyMC": false },
             { "name": "bunchCrossing", "type": "UI", "formula": "bunchCrossing", "onlyMC": false },
             { "name": "orbitNumber", "type": "UI", "formula": "orbitNumber", "onlyMC": false },
+            { "name": "ScoutingMET_pt", "type": "F", "formula": "ScoutingMET_pt", "onlyMC": false },
+            { "name": "ScoutingMET_phi", "type": "F", "formula": "ScoutingMET_phi", "onlyMC": false },
             { "name": "sample_ID", "type": "I", "formula": "sample_ID", "onlyMC": false },
             { "name": "is_MC", "type": "O", "formula": "is_MC", "onlyMC": false },
             { "name": "is_signal", "type": "O", "formula": "is_signal", "onlyMC": false },
@@ -464,6 +506,42 @@
               "name": "ScoutingFatPFJetRecluster_VvsQCD_max",
               "type": "F",
               "formula": "max_value(ak8, safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_min_ScoutingFatPFJetRecluster",
+              "type": "F",
+              "formula": "min_value(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingFatPFJetRecluster",
+              "type": "F",
+              "formula": "max_value(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingFatPFJetRecluster_pt",
+              "type": "F",
+              "formula": "value_at_max(ak8, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), ScoutingFatPFJetRecluster_pt, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_min_ScoutingPFJetRecluster2",
+              "type": "F",
+              "formula": "min_value(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingPFJetRecluster2",
+              "type": "F",
+              "formula": "max_value(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingMET_deltaPhi_max_ScoutingPFJetRecluster2_pt",
+              "type": "F",
+              "formula": "value_at_max(ak4, deltaPhi(met(ScoutingMET_pt, ScoutingMET_phi), self), ScoutingPFJetRecluster2_pt, -99)",
               "onlyMC": false
             },
             {

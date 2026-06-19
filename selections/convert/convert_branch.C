@@ -1571,6 +1571,12 @@ Value makeP4Value(const TLorentzVector& p4) {
     return out;
 }
 
+TLorentzVector buildTransverseP4(long double pt, long double phi) {
+    TLorentzVector vector;
+    vector.SetPtEtaPhiM(static_cast<double>(pt), 0., static_cast<double>(phi), 0.);
+    return vector;
+}
+
 long double toNumber(const Value& value) {
     if (value.kind != Value::Kind::Number) {
         throw runtime_error("Numeric value expected in expression");
@@ -1912,6 +1918,13 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "phi") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).Phi());
+    }
+    if (op == "met") {
+        if (args.size() != 2) {
+            throw runtime_error("met requires pt and phi arguments");
+        }
+        return makeP4Value(buildTransverseP4(evalNumber(args.at(0), context),
+                                             evalNumber(args.at(1), context)));
     }
     if (op == "deltaR") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).DeltaR(toP4(evalExpression(args.at(1), context))));
