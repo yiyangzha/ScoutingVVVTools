@@ -342,13 +342,9 @@ def _threshold_mask(
             raise KeyError(f"Column {name!r} not found in X")
         col = X[name]
         sentinel = col <= -99
-        if apply_to_sentinel:
-            mask &= ~sentinel
-            if cond is not None:
-                mask &= _mask_from_cond(col, cond)
-        else:
-            if cond is not None:
-                mask &= (_mask_from_cond(col, cond) | sentinel)
+        mask &= ~sentinel
+        if cond is not None:
+            mask &= _mask_from_cond(col, cond)
     return mask
 
 

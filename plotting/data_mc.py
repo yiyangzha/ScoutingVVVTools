@@ -278,7 +278,7 @@ def _threshold_mask(df, thresholds):
     mask = pd.Series(True, index=df.index)
     for b, cond in thresholds.items():
         if b not in df.columns:
-            continue
+            raise KeyError(f"Column {b!r} not found in DataFrame")
         col = df[b]
         sentinel = _missing_value_mask(col)
         mask &= ~sentinel

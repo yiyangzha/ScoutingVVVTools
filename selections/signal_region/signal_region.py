@@ -430,8 +430,10 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
     """Apply per-branch threshold cuts.
 
     Only branches that appear as keys in ``thresholds`` are inspected: for each
-    such branch, events with sentinel values (<= -99) are dropped (when
-    ``apply_to_sentinel`` is True) and the threshold condition is enforced.
+    such branch, events with sentinel values (<= -99) are dropped and the
+    threshold condition is enforced for every entry. ``apply_to_sentinel`` is
+    retained for backward compatibility but no longer allows sentinel values to
+    bypass thresholds.
     Branches not listed in ``thresholds`` are left untouched, so an event with
     a sentinel value in some other branch is still kept. The ``branch``
     argument is retained for backward compatibility and is not used to drive
@@ -481,13 +483,9 @@ def filter_X(X: pd.DataFrame, y, w, branch: list,
             raise KeyError(f"Column {b!r} not found in X")
         col      = X[b]
         sentinel = col <= -99
-        if apply_to_sentinel:
-            mask &= ~sentinel
-            if cond is not None:
-                mask &= _mask_from_cond(col, cond)
-        else:
-            if cond is not None:
-                mask &= (_mask_from_cond(col, cond) | sentinel)
+        mask &= ~sentinel
+        if cond is not None:
+            mask &= _mask_from_cond(col, cond)
 
     X_out = X.loc[mask].copy()
     y_out = y[mask.values].copy()
