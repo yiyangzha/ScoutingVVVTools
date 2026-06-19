@@ -233,6 +233,39 @@ def _iter_tree_chunks(files, tree_name, branches):
                 yield df_part
 
 
+def _missing_plot_branches(tree_name, branches, sources):
+    branches = list(branches)
+    missing_by_branch = {branch: {"examples": [], "count": 0} for branch in branches}
+    if not branches:
+        return set()
+
+    for source in sources:
+        sample_name = source["sample"]
+        for fpath in source["files"]:
+            with uproot.open(fpath) as uf:
+                if tree_name not in uf:
+                    continue
+                available = set(uf[tree_name].keys())
+            for branch in branches:
+                if branch in available:
+                    continue
+                entry = missing_by_branch[branch]
+                entry["count"] += 1
+                if len(entry["examples"]) < 3:
+                    entry["examples"].append(f"{sample_name}:{os.path.basename(fpath)}")
+
+    missing = {branch for branch, entry in missing_by_branch.items() if entry["count"] > 0}
+    for branch in sorted(missing):
+        entry = missing_by_branch[branch]
+        examples = ", ".join(entry["examples"])
+        suffix = " ..." if entry["count"] > len(entry["examples"]) else ""
+        log_message(
+            f"  [WARN] skipping ordinary plot branch {tree_name}:{branch}; "
+            f"missing from ROOT input ({examples}{suffix})"
+        )
+    return missing
+
+
 # -------------------- Threshold and clip filtering --------------------
 def _missing_value_mask(arr):
     return np.asarray(arr, dtype=float) <= -99.0
@@ -1086,19 +1119,9 @@ def _process_tree(tree_name):
         if branch not in branches_to_plot:
             branches_to_plot.append(branch)
     root_plot_branches = [branch for branch in branches_to_plot if branch not in score_branches]
-    need_load        = sorted(set(root_plot_branches)
-                              | set(thresholds.keys())
-                              | set(clip_ranges.keys()))
     reweight_cfg      = plot_cfg.get("event_reweight_branches", {})
     reweight_branches = list(reweight_cfg.get(tree_name, []))
-    mc_need_load     = sorted(set(need_load) | set(reweight_branches))
     score_reweight_branches = list(bdt_cfg.get(tree_name, {}).get("event_reweight_branches", []))
-    log_message(
-        f"Resolved plotting config: branches={len(branches_to_plot)}, "
-        f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}, "
-        f"reweight_branches={len(reweight_branches)}, score_branches={len(score_branches)}"
-    )
-    log_message("Ordinary MC branch entry cap per sample: none")
 
     out_dir = _resolve(OUTPUT_ROOT_PATT.format(tree_name=tree_name), _SCRIPT_DIR)
     os.makedirs(out_dir, exist_ok=True)
@@ -1136,6 +1159,36 @@ def _process_tree(tree_name):
             "sample": sname,
             "files": files,
         })
+
+    missing_root_plot_branches = _missing_plot_branches(
+        tree_name,
+        root_plot_branches,
+        mc_sources + data_sources,
+    )
+    if missing_root_plot_branches:
+        root_plot_branches = [
+            branch for branch in root_plot_branches
+            if branch not in missing_root_plot_branches
+        ]
+        branches_to_plot = [
+            branch for branch in branches_to_plot
+            if branch not in missing_root_plot_branches
+        ]
+
+    need_load = sorted(
+        set(root_plot_branches)
+        | set(thresholds.keys())
+        | set(clip_ranges.keys())
+    )
+    mc_need_load = sorted(set(need_load) | set(reweight_branches))
+    log_message(
+        f"Resolved plotting config: branches={len(branches_to_plot)}, "
+        f"ordinary_branches={len(root_plot_branches)}, "
+        f"skipped_missing_ordinary_branches={len(missing_root_plot_branches)}, "
+        f"threshold_branches={len(thresholds)}, clip_branches={len(clip_ranges)}, "
+        f"reweight_branches={len(reweight_branches)}, score_branches={len(score_branches)}"
+    )
+    log_message("Ordinary MC branch entry cap per sample: none")
 
     ordinary_binnings = {}
     ordinary_mc_hists = {}
