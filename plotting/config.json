@@ -5,7 +5,7 @@
   "bdt_root": "../selections/BDT/{tree_name}_UParTv2_v3_top",
   "output_root": "./pre-selection/{tree_name}_UParTv2_v3_top",
   "data_samples": ["2024B", "2024I"],
-  "default_bins": 50,
+  "default_bins": 20,
   "validate_bdt_test_scores": false,
   "plot_bdt_scores": false,
   "event_reweight_branches": {
