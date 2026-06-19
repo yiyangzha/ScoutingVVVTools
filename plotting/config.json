@@ -1,13 +1,13 @@
 {
-  "submit_trees": ["fat2"],
+  "submit_trees": ["fat3", "fat2"],
   "sample_config": "../src/sample.json",
   "convert_branch_config": "../selections/convert/branch.json",
-  "bdt_root": "../selections/BDT/{tree_name}_UParTv2_v3",
-  "output_root": "./pre-selection/{tree_name}_UParTv2_v3",
+  "bdt_root": "../selections/BDT/{tree_name}_UParTv2_v3_top",
+  "output_root": "./pre-selection/{tree_name}_UParTv2_v3_top",
   "data_samples": ["2024B", "2024I"],
   "default_bins": 50,
-  "validate_bdt_test_scores": true,
-  "plot_bdt_scores": true,
+  "validate_bdt_test_scores": false,
+  "plot_bdt_scores": false,
   "event_reweight_branches": {
     "fat2": ["weight_pu"],
     "fat3": ["weight_pu"]
