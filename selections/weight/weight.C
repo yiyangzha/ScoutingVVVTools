@@ -39,7 +39,11 @@ namespace {
 
 const char* kConfigPath = "./config.json";
 const char* kConfigEnvVar = "WEIGHT_CONFIG_PATH";
-const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
+const char* kRemotePrefixes[] = {
+    "root://cceos.ihep.ac.cn/",
+    "root://cmsxrootd.fnal.gov/",
+    "root://cms-xrd-global.cern.ch/",
+};
 const char* kDefaultSampleConfigPath = "../../src/sample.json";
 
 struct SampleRuleConfig {
@@ -113,6 +117,30 @@ string applyTemplate(string text, const unordered_map<string, string>& values) {
 bool endsWith(const string& text, const string& suffix) {
     return text.size() >= suffix.size() &&
            text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool startsWith(const string& text, const string& prefix) {
+    return text.size() >= prefix.size() &&
+           text.compare(0, prefix.size(), prefix) == 0;
+}
+
+vector<string> remoteInputCandidates(const string& inputFileName) {
+    for (const char* prefix : kRemotePrefixes) {
+        const string prefixText(prefix);
+        if (!startsWith(inputFileName, prefixText)) {
+            continue;
+        }
+
+        const string suffix = inputFileName.substr(prefixText.size());
+        vector<string> candidates;
+        candidates.reserve(sizeof(kRemotePrefixes) / sizeof(kRemotePrefixes[0]));
+        for (const char* candidatePrefix : kRemotePrefixes) {
+            candidates.push_back(string(candidatePrefix) + suffix);
+        }
+        return candidates;
+    }
+
+    return {inputFileName};
 }
 
 string resolveConfigPath(const char* preferredPath, const char* envVar) {
@@ -302,7 +330,7 @@ vector<string> listRemoteRootFiles(const string& datasetPath) {
     files.reserve(lines.size());
     for (const auto& line : lines) {
         if (endsWith(line, ".root")) {
-            files.push_back(string(kRemotePrefix) + line);
+            files.push_back(string(kRemotePrefixes[0]) + line);
         }
     }
     sort(files.begin(), files.end());
@@ -687,8 +715,21 @@ void printFileProgress(const string& sample, size_t done, size_t total) {
 void processInputFile(const string& inputFileName,
                       const AppConfig& appConfig,
                       TH1* localHist) {
-    unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
-    if (!inputFile || inputFile->IsZombie()) {
+    unique_ptr<TFile> inputFile;
+    const vector<string> candidates = remoteInputCandidates(inputFileName);
+    for (size_t candidateIndex = 0; candidateIndex < candidates.size(); ++candidateIndex) {
+        const string& candidate = candidates[candidateIndex];
+        inputFile.reset(TFile::Open(candidate.c_str(), "READ"));
+        if (inputFile && !inputFile->IsZombie()) {
+            break;
+        }
+        if (candidateIndex + 1 < candidates.size()) {
+            cerr << "Warning: failed to open input file " << candidate
+                 << "; trying " << candidates[candidateIndex + 1] << endl;
+        }
+        inputFile.reset();
+    }
+    if (!inputFile) {
         throw runtime_error("Error opening input file " + inputFileName);
     }
 

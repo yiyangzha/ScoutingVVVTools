@@ -47,7 +47,11 @@ namespace {
 const float def = -99.f;
 const double kMissingDistance = -99.;
 const double kLargeDistance = 999.;
-const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
+const char* kRemotePrefixes[] = {
+    "root://cceos.ihep.ac.cn/",
+    "root://cmsxrootd.fnal.gov/",
+    "root://cms-xrd-global.cern.ch/",
+};
 
 const char* kAppConfigPath = "./config.json";
 const char* kBranchConfigPath = "./branch.json";
@@ -787,6 +791,25 @@ bool endsWith(const string& text, const string& suffix) {
 bool startsWith(const string& text, const string& prefix) {
     return text.size() >= prefix.size() &&
            text.compare(0, prefix.size(), prefix) == 0;
+}
+
+vector<string> remoteInputCandidates(const string& inputFileName) {
+    for (const char* prefix : kRemotePrefixes) {
+        const string prefixText(prefix);
+        if (!startsWith(inputFileName, prefixText)) {
+            continue;
+        }
+
+        const string suffix = inputFileName.substr(prefixText.size());
+        vector<string> candidates;
+        candidates.reserve(sizeof(kRemotePrefixes) / sizeof(kRemotePrefixes[0]));
+        for (const char* candidatePrefix : kRemotePrefixes) {
+            candidates.push_back(string(candidatePrefix) + suffix);
+        }
+        return candidates;
+    }
+
+    return {inputFileName};
 }
 
 size_t skipWhitespace(const string& text, size_t pos) {
@@ -2464,7 +2487,7 @@ vector<string> listRemoteRootFiles(const string& datasetPath) {
     files.reserve(lines.size());
     for (const auto& line : lines) {
         if (endsWith(line, ".root")) {
-            files.push_back(string(kRemotePrefix) + line);
+            files.push_back(string(kRemotePrefixes[0]) + line);
         }
     }
     sort(files.begin(), files.end());
@@ -3270,18 +3293,28 @@ vector<string> writeOutputFilesStreaming(const fs::path& baseOutputPath,
 unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
     const bool remoteInput = startsWith(inputFileName, "root://");
     const int maxRetries = remoteInput ? kRemoteInputOpenRetries : 0;
+    const vector<string> candidates = remoteInput ? remoteInputCandidates(inputFileName)
+                                                  : vector<string>{inputFileName};
 
-    for (int retry = 0; retry <= maxRetries; ++retry) {
-        unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
-        if (inputFile && !inputFile->IsZombie()) {
-            return inputFile;
+    for (size_t candidateIndex = 0; candidateIndex < candidates.size(); ++candidateIndex) {
+        const string& candidate = candidates[candidateIndex];
+        for (int retry = 0; retry <= maxRetries; ++retry) {
+            unique_ptr<TFile> inputFile(TFile::Open(candidate.c_str(), "READ"));
+            if (inputFile && !inputFile->IsZombie()) {
+                return inputFile;
+            }
+
+            if (retry < maxRetries) {
+                cerr << "Warning: failed to open remote input file " << candidate
+                     << "; retry " << (retry + 1) << "/" << maxRetries
+                     << " after " << kRemoteInputRetrySleepSeconds << " seconds" << endl;
+                sleep(kRemoteInputRetrySleepSeconds);
+            }
         }
 
-        if (retry < maxRetries) {
-            cerr << "Warning: failed to open remote input file " << inputFileName
-                 << "; retry " << (retry + 1) << "/" << maxRetries
-                 << " after " << kRemoteInputRetrySleepSeconds << " seconds" << endl;
-            sleep(kRemoteInputRetrySleepSeconds);
+        if (remoteInput && candidateIndex + 1 < candidates.size()) {
+            cerr << "Warning: failed to open remote input file " << candidate
+                 << "; trying " << candidates[candidateIndex + 1] << endl;
         }
     }
 
