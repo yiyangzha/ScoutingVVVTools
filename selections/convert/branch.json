@@ -14,7 +14,9 @@
       { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false },
       { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
       { "name": "nScoutingPhoton", "type": "I", "onlyMC": false },
-      { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false }
+      { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false },
+      { "name": "ScoutingMET_pt", "type": "F", "onlyMC": false },
+      { "name": "ScoutingMET_phi", "type": "F", "onlyMC": false }
     ],
     "collections": [
       {
@@ -32,7 +34,17 @@
           { "name": "ScoutingElectron_eta", "type": "F", "onlyMC": false },
           { "name": "ScoutingElectron_phi", "type": "F", "onlyMC": false },
           { "name": "ScoutingElectron_ecalIso", "type": "F", "onlyMC": false },
-          { "name": "ScoutingElectron_hcalIso", "type": "F", "onlyMC": false }
+          { "name": "ScoutingElectron_hcalIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_trackIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_sigmaIetaIeta", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_dEtaIn", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_dPhiIn", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_hOverE", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_ooEMOop", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_missingHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingElectron_bestTrack_d0", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_bestTrack_dz", "type": "F", "onlyMC": false },
+          { "name": "ScoutingElectron_bestTrack_charge", "type": "I", "onlyMC": false }
         ]
       },
       {
@@ -50,7 +62,19 @@
           { "name": "ScoutingMuonVtx_eta", "type": "F", "onlyMC": false },
           { "name": "ScoutingMuonVtx_phi", "type": "F", "onlyMC": false },
           { "name": "ScoutingMuonVtx_ecalIso", "type": "F", "onlyMC": false },
-          { "name": "ScoutingMuonVtx_hcalIso", "type": "F", "onlyMC": false }
+          { "name": "ScoutingMuonVtx_hcalIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trackIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_normchi2", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidStandAloneMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidPixelHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nTrackerLayersWithMeasurement", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nStandAloneMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nRecoMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidRecoMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trk_dxy", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_charge", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_type", "type": "I", "onlyMC": false }
         ]
       },
       {
@@ -68,7 +92,19 @@
           { "name": "ScoutingMuonNoVtx_eta", "type": "F", "onlyMC": false },
           { "name": "ScoutingMuonNoVtx_phi", "type": "F", "onlyMC": false },
           { "name": "ScoutingMuonNoVtx_ecalIso", "type": "F", "onlyMC": false },
-          { "name": "ScoutingMuonNoVtx_hcalIso", "type": "F", "onlyMC": false }
+          { "name": "ScoutingMuonNoVtx_hcalIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_trackIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_normchi2", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nValidStandAloneMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nValidPixelHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nTrackerLayersWithMeasurement", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nStandAloneMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nRecoMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_nValidRecoMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_trk_dxy", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_trk_dz", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_charge", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonNoVtx_type", "type": "I", "onlyMC": false }
         ]
       },
       {
@@ -171,6 +207,78 @@
               "onlyMC": false
             },
             {
+              "name": "ScoutingPFJetRecluster2_dijet_mass",
+              "type": "F",
+              "formula": "mass(ak4[0] + ak4[1])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_pt",
+              "type": "F",
+              "formula": "pt(ak4[0] + ak4[1])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_eta",
+              "type": "F",
+              "formula": "eta(ak4[0] + ak4[1])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_phi",
+              "type": "F",
+              "formula": "phi(ak4[0] + ak4[1])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_deltaR_ak8_1",
+              "type": "F",
+              "formula": "deltaR(ak4[0] + ak4[1], ak8[0])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_deltaR_ak8_2",
+              "type": "F",
+              "formula": "deltaR(ak4[0] + ak4[1], ak8[1])",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_deltaR_ak8_max",
+              "type": "F",
+              "formula": "max(deltaR(ak4[0] + ak4[1], ak8[0]), deltaR(ak4[0] + ak4[1], ak8[1]))",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_dijet_deltaR_ak8_min",
+              "type": "F",
+              "formula": "min(deltaR(ak4[0] + ak4[1], ak8[0]), deltaR(ak4[0] + ak4[1], ak8[1]))",
+              "onlyMC": false
+            },
+
+            { "name": "ScoutingMET_pt", "type": "F", "formula": "ScoutingMET_pt", "onlyMC": false },
+            { "name": "ScoutingMET_phi", "type": "F", "formula": "ScoutingMET_phi", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_selected_HT", "type": "F", "formula": "sum(ak4, pt(self))", "onlyMC": false },
+            { "name": "ScoutingMET_over_HT", "type": "F", "formula": "safe_div(ScoutingMET_pt, sum(ak8, pt(self)) + sum(ak4, pt(self)), -1)", "onlyMC": false },
+            { "name": "ScoutingMET_ak4_cosdphi_max", "type": "F", "formula": "max_value(ak4, cos(phi(self) - ScoutingMET_phi), -99)", "onlyMC": false },
+            { "name": "ScoutingMET_ak8_cosdphi_max", "type": "F", "formula": "max_value(ak8, cos(phi(self) - ScoutingMET_phi), -99)", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_deltaEta", "type": "F", "formula": "abs(eta(ak8[0]) - eta(ak8[1]))", "onlyMC": false },
+            { "name": "ScoutingEvent_sphericity", "type": "F", "formula": "sphericity(ak8[0], ak8[1], ak4[0], ak4[1])", "onlyMC": false },
+            { "name": "ScoutingEvent_aplanarity", "type": "F", "formula": "aplanarity(ak8[0], ak8[1], ak4[0], ak4[1])", "onlyMC": false },
+            { "name": "ScoutingEvent_planarity", "type": "F", "formula": "planarity(ak8[0], ak8[1], ak4[0], ak4[1])", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_btag_loose", "type": "I", "formula": "sum(ak4, ScoutingPFJetRecluster2_scoutUParT_probb > 0.2)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_btag_medium", "type": "I", "formula": "sum(ak4, ScoutingPFJetRecluster2_scoutUParT_probb > 0.5)", "onlyMC": false },
+
+            { "name": "ScoutingFatPFJetRecluster_phi", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_phi", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xbb", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xcc", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xcs", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xqq", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xss", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xud", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_ZvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_phi", "onlyMC": false },
+            {
               "name": "ScoutingFatPFJetRecluster_deltaR",
               "type": "F",
               "formula": "deltaR(ak8[0], ak8[1])",
@@ -252,7 +360,24 @@
             { "name": "SelectedLepton_eta", "type": "F", "collection": "lep", "slots": 3, "formula": "eta(self)", "onlyMC": false },
             { "name": "SelectedLepton_phi", "type": "F", "collection": "lep", "slots": 3, "formula": "phi(self)", "onlyMC": false },
             { "name": "SelectedLepton_ecalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_ecalIso, ScoutingMuonVtx_ecalIso, ScoutingMuonNoVtx_ecalIso)", "onlyMC": false },
-            { "name": "SelectedLepton_hcalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_hcalIso, ScoutingMuonVtx_hcalIso, ScoutingMuonNoVtx_hcalIso)", "onlyMC": false }
+            { "name": "SelectedLepton_hcalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_hcalIso, ScoutingMuonVtx_hcalIso, ScoutingMuonNoVtx_hcalIso)", "onlyMC": false },
+
+            { "name": "SelectedLepton_passVetoID", "type": "O", "collection": "lep", "slots": 3, "formula": "(ScoutingElectron_pt > -90 && ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))) || (ScoutingMuonVtx_pt > -90 && (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2)) || (ScoutingMuonNoVtx_pt > -90 && (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2))", "onlyMC": false },
+            { "name": "SelectedLepton_passVetoIso", "type": "O", "collection": "lep", "slots": 3, "formula": "(ScoutingElectron_pt > -90 && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)) || (ScoutingMuonVtx_pt > -90 && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) || (ScoutingMuonNoVtx_pt > -90 && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false },
+
+            { "name": "nVetoIDElectron", "type": "I", "formula": "sum(ele, (abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))", "onlyMC": false },
+            { "name": "nVetoIsoElectron", "type": "I", "formula": "sum(ele, safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)", "onlyMC": false },
+            { "name": "nVetoIDMuon", "type": "I", "formula": "sum(mu_vtx, ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) + sum(mu_novtx, ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2)", "onlyMC": false },
+            { "name": "nVetoIsoMuon", "type": "I", "formula": "sum(mu_vtx, safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15) + sum(mu_novtx, safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15)", "onlyMC": false },
+            { "name": "nVetoElectron", "type": "I", "formula": "sum(ele, ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20))", "onlyMC": false },
+            { "name": "nVetoMuon", "type": "I", "formula": "sum(mu_vtx, (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) + sum(mu_novtx, (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false },
+
+            { "name": "nVetoIDElectron_injet", "type": "I", "formula": "sum(ele_injet, (abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))", "onlyMC": false },
+            { "name": "nVetoIsoElectron_injet", "type": "I", "formula": "sum(ele_injet, safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)", "onlyMC": false },
+            { "name": "nVetoIDMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) + sum(mu_novtx_injet, ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2)", "onlyMC": false },
+            { "name": "nVetoIsoMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15) + sum(mu_novtx_injet, safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15)", "onlyMC": false },
+            { "name": "nVetoElectron_injet", "type": "I", "formula": "sum(ele_injet, ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20))", "onlyMC": false },
+            { "name": "nVetoMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) + sum(mu_novtx_injet, (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false }
           ],
           "extrema": [
             {
@@ -283,6 +408,30 @@
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max",
               "type": "F",
               "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4",
+              "type": "F",
+              "formula": "max_value(ak4_dR0p4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_dR0p4",
+              "type": "F",
+              "formula": "nth_max_value(ak4_dR0p4, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max_all",
+              "type": "F",
+              "formula": "max_value(ak4_all, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_all",
+              "type": "F",
+              "formula": "nth_max_value(ak4_all, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
               "onlyMC": false
             },
             {
@@ -423,6 +572,27 @@
               "formula": "pair_max_deltaPhi(ak8, 3)",
               "onlyMC": false
             },
+
+            { "name": "ScoutingMET_pt", "type": "F", "formula": "ScoutingMET_pt", "onlyMC": false },
+            { "name": "ScoutingMET_phi", "type": "F", "formula": "ScoutingMET_phi", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_selected_HT", "type": "F", "formula": "sum(ak4, pt(self))", "onlyMC": false },
+            { "name": "ScoutingMET_over_HT", "type": "F", "formula": "safe_div(ScoutingMET_pt, sum(ak8, pt(self)) + sum(ak4, pt(self)), -1)", "onlyMC": false },
+            { "name": "ScoutingMET_ak4_cosdphi_max", "type": "F", "formula": "max_value(ak4, cos(phi(self) - ScoutingMET_phi), -99)", "onlyMC": false },
+            { "name": "ScoutingMET_ak8_cosdphi_max", "type": "F", "formula": "max_value(ak8, cos(phi(self) - ScoutingMET_phi), -99)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_btag_loose", "type": "I", "formula": "sum(ak4, ScoutingPFJetRecluster2_scoutUParT_probb > 0.2)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_btag_medium", "type": "I", "formula": "sum(ak4, ScoutingPFJetRecluster2_scoutUParT_probb > 0.5)", "onlyMC": false },
+
+            { "name": "ScoutingFatPFJetRecluster_phi", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_phi", "onlyMC": false },
+            { "name": "ScoutingEvent_sphericity", "type": "F", "formula": "sphericity(ak8[0], ak8[1], ak8[2])", "onlyMC": false },
+            { "name": "ScoutingEvent_aplanarity", "type": "F", "formula": "aplanarity(ak8[0], ak8[1], ak8[2])", "onlyMC": false },
+            { "name": "ScoutingEvent_planarity", "type": "F", "formula": "planarity(ak8[0], ak8[1], ak8[2])", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xbb", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xcc", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xcs", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xqq", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xss", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_prob_Xud", "type": "F", "collection": "ak8", "slots": 3, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_ZvsQCD", "type": "F", "collection": "ak8", "slots": 3, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
             {
               "name": "SelectedLepton_deltaR_min_ScoutingFatPFJetRecluster",
               "type": "F",
@@ -441,7 +611,24 @@
             { "name": "SelectedLepton_eta", "type": "F", "collection": "lep", "slots": 3, "formula": "eta(self)", "onlyMC": false },
             { "name": "SelectedLepton_phi", "type": "F", "collection": "lep", "slots": 3, "formula": "phi(self)", "onlyMC": false },
             { "name": "SelectedLepton_ecalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_ecalIso, ScoutingMuonVtx_ecalIso, ScoutingMuonNoVtx_ecalIso)", "onlyMC": false },
-            { "name": "SelectedLepton_hcalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_hcalIso, ScoutingMuonVtx_hcalIso, ScoutingMuonNoVtx_hcalIso)", "onlyMC": false }
+            { "name": "SelectedLepton_hcalIso", "type": "F", "collection": "lep", "slots": 3, "formula": "first_valid(ScoutingElectron_hcalIso, ScoutingMuonVtx_hcalIso, ScoutingMuonNoVtx_hcalIso)", "onlyMC": false },
+
+            { "name": "SelectedLepton_passVetoID", "type": "O", "collection": "lep", "slots": 3, "formula": "(ScoutingElectron_pt > -90 && ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))) || (ScoutingMuonVtx_pt > -90 && (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2)) || (ScoutingMuonNoVtx_pt > -90 && (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2))", "onlyMC": false },
+            { "name": "SelectedLepton_passVetoIso", "type": "O", "collection": "lep", "slots": 3, "formula": "(ScoutingElectron_pt > -90 && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)) || (ScoutingMuonVtx_pt > -90 && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) || (ScoutingMuonNoVtx_pt > -90 && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false },
+
+            { "name": "nVetoIDElectron", "type": "I", "formula": "sum(ele, (abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))", "onlyMC": false },
+            { "name": "nVetoIsoElectron", "type": "I", "formula": "sum(ele, safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)", "onlyMC": false },
+            { "name": "nVetoIDMuon", "type": "I", "formula": "sum(mu_vtx, ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) + sum(mu_novtx, ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2)", "onlyMC": false },
+            { "name": "nVetoIsoMuon", "type": "I", "formula": "sum(mu_vtx, safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15) + sum(mu_novtx, safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15)", "onlyMC": false },
+            { "name": "nVetoElectron", "type": "I", "formula": "sum(ele, ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20))", "onlyMC": false },
+            { "name": "nVetoMuon", "type": "I", "formula": "sum(mu_vtx, (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) + sum(mu_novtx, (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false },
+
+            { "name": "nVetoIDElectron_injet", "type": "I", "formula": "sum(ele_injet, (abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3))", "onlyMC": false },
+            { "name": "nVetoIsoElectron_injet", "type": "I", "formula": "sum(ele_injet, safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)", "onlyMC": false },
+            { "name": "nVetoIDMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) + sum(mu_novtx_injet, ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2)", "onlyMC": false },
+            { "name": "nVetoIsoMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15) + sum(mu_novtx_injet, safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15)", "onlyMC": false },
+            { "name": "nVetoElectron_injet", "type": "I", "formula": "sum(ele_injet, ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20))", "onlyMC": false },
+            { "name": "nVetoMuon_injet", "type": "I", "formula": "sum(mu_vtx_injet, (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) + sum(mu_novtx_injet, (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))", "onlyMC": false }
           ],
           "extrema": [
             {
@@ -472,6 +659,30 @@
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max",
               "type": "F",
               "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4",
+              "type": "F",
+              "formula": "max_value(ak4_dR0p4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_dR0p4",
+              "type": "F",
+              "formula": "nth_max_value(ak4_dR0p4, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max_all",
+              "type": "F",
+              "formula": "max_value(ak4_all, ScoutingPFJetRecluster2_scoutUParT_probb, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_all",
+              "type": "F",
+              "formula": "nth_max_value(ak4_all, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
               "onlyMC": false
             },
             {

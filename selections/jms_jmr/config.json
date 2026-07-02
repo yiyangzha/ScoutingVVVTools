@@ -1,0 +1,68 @@
+{
+  "_note": "Tag-and-probe JMS/JMR fit of the hadronic-W peak (DP-2025-052 style, reco-level). The probe is the leading AK8 OPPOSITE the muon (built in the convert). Pass = W-tagged probe (Probe_WvsQCD > tag_wp), Fail = the rest. The W-peak position/width are fit in the Pass region for data and MC; JMS=mu_data/mu_MC, JMR=sigma_data/sigma_MC. Gen-matched templates (Top-/W-merged) are NOT available (scouting MC has no GenPart), so the W enrichment comes from the tagger rather than gen-matching.",
+  "samples_from": "../../plotting/config_ttbar_cr.json",
+  "input_root": "../../dataset_cr",
+  "sample_config": "../../src/sample.json",
+  "tree": "ttbar_cr",
+  "mass_branch": "Probe_msoftdrop_1",
+  "tag_branch": "Probe_WvsQCD_1",
+  "tag_wp": 0.2,
+  "weight_branch": "weight_pu",
+  "selection": {
+    "ScoutingMuonVtx_pt_1": [
+      30,
+      null
+    ],
+    "ScoutingMuonVtx_trkRelIso_1": [
+      null,
+      0.1
+    ],
+    "ScoutingMuonVtx_nValidStandAloneMuonHits_1": [
+      1,
+      null
+    ],
+    "ScoutingMuonVtx_normchi2_1": [
+      null,
+      10
+    ],
+    "ScoutingMuonVtx_nValidPixelHits_1": [
+      1,
+      null
+    ],
+    "ScoutingMuonVtx_nTrackerLayersWithMeasurement_1": [
+      6,
+      null
+    ],
+    "ScoutingMuonVtx_nStandAloneMuonMatchedStations_1": [
+      2,
+      null
+    ],
+    "ScoutingMuonVtx_trk_dxy_1": [
+      -0.2,
+      0.2
+    ],
+    "ScoutingMuonVtx_trk_dz_1": [
+      -0.5,
+      0.5
+    ],
+    "ScoutingPFJetRecluster2_scoutUParT_probb_max": [
+      0.85,
+      null
+    ],
+    "LeptonicW_pt": [
+      150,
+      null
+    ],
+    "Probe_pt_1": [
+      200,
+      null
+    ]
+  },
+  "fit_window": [
+    50,
+    120
+  ],
+  "n_bins": 17,
+  "w_mass_ref": 80.38,
+  "output_dir": "./output"
+}

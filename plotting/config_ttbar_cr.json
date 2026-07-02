@@ -1,0 +1,131 @@
+{
+  "submit_trees": [
+    "ttbar_cr"
+  ],
+  "sample_config": "../src/sample.json",
+  "convert_branch_config": "../selections/convert_ttbar_cr/branch.json",
+  "bdt_root": "../selections/BDT/fat2_UParTv2_v2_wloose/",
+  "output_root": "./ttbar_cr/{tree_name}",
+  "output_root_nosel": "./ttbar_cr_nosel/{tree_name}",
+  "data_samples": [
+    "data_2024"
+  ],
+  "_note_class_groups": "CR stack: Top=ttbar, VT=single-top tW, VV=diboson, Wlnu=W->lnu, DY=Drell-Yan, QCD=all HT bins merged. 6 classes == 6 colors in the CMS palette, so every process gets a distinct color.",
+  "class_groups": {
+    "Top": [
+      "ttbar_had",
+      "ttbar_semilep",
+      "ttbar_2l2nu"
+    ],
+    "VT": [
+      "tbarwplus_had",
+      "twminus_had",
+      "tbarwplus_lnu2q",
+      "twminus_lnu2q"
+    ],
+    "VV": [
+      "ww",
+      "wz",
+      "zz"
+    ],
+    "Wlnu": [
+      "wlnu_h100to400_m0to120",
+      "wlnu_h100to400_m120",
+      "wlnu_h1500to2500_m0to120",
+      "wlnu_h1500to2500_m120",
+      "wlnu_h2500_m0to120",
+      "wlnu_h2500_m120",
+      "wlnu_h400to800_m0to120",
+      "wlnu_h400to800_m120",
+      "wlnu_h40to100_m0to120",
+      "wlnu_h800to1500_m0to120",
+      "wlnu_h800to1500_m120"
+    ],
+    "DY": [
+      "dy_h1500to2500_m120",
+      "dy_h1500to2500_m4to50",
+      "dy_h1500to2500_m50to120",
+      "dy_h2500_m120",
+      "dy_h2500_m4to50",
+      "dy_h2500_m50to120",
+      "dy_h400to800_m120",
+      "dy_h800to1500_m120",
+      "dy_h800to1500_m4to50",
+      "dy_h800to1500_m50to120"
+    ],
+    "QCD": [
+      "qcd_ht400to600",
+      "qcd_ht600to800",
+      "qcd_ht800to1000",
+      "qcd_ht1000to1200",
+      "qcd_ht1200to1500",
+      "qcd_ht1500to2000",
+      "qcd_ht2000"
+    ]
+  },
+  "default_bins": 50,
+  "event_reweight_branches": {
+    "ttbar_cr": [
+      "weight_pu"
+    ]
+  },
+  "_note_n_workers": "n_workers: parallel pool size for pre-pass, streaming, and rendering. null = cpu_count.",
+  "n_workers": 12,
+  "_note_plot_branches": "Set plot_branches per tree to restrict which branches are plotted. null or absent key plots all branches.",
+  "plot_branches": {
+    "ttbar_cr": null
+  },
+  "_note_plot_thresholds": "Current CR selection (probe-based, DP-2025-052-style): tight muon ID + tracker iso, b-tag>0.85, pT(leptonic W)=|muon+MET|>150, and the opposite-hemisphere probe AK8 pt>200. Applied at plot time.",
+  "plot_thresholds": {
+    "ttbar_cr": {
+      "ScoutingMuonVtx_pt_1": [
+        30,
+        null
+      ],
+      "ScoutingMuonVtx_trkRelIso_1": [
+        null,
+        0.1
+      ],
+      "ScoutingMuonVtx_nValidStandAloneMuonHits_1": [
+        1,
+        null
+      ],
+      "ScoutingMuonVtx_normchi2_1": [
+        null,
+        10
+      ],
+      "ScoutingMuonVtx_nValidPixelHits_1": [
+        1,
+        null
+      ],
+      "ScoutingMuonVtx_nTrackerLayersWithMeasurement_1": [
+        6,
+        null
+      ],
+      "ScoutingMuonVtx_nStandAloneMuonMatchedStations_1": [
+        2,
+        null
+      ],
+      "ScoutingMuonVtx_trk_dxy_1": [
+        -0.2,
+        0.2
+      ],
+      "ScoutingMuonVtx_trk_dz_1": [
+        -0.5,
+        0.5
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_probb_max": [
+        0.85,
+        null
+      ],
+      "LeptonicW_pt": [
+        150,
+        null
+      ],
+      "Probe_pt_1": [
+        200,
+        null
+      ]
+    }
+  }
+}

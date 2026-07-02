@@ -1,0 +1,191 @@
+{
+  "input": {
+    "scalars": [
+      { "name": "run", "type": "UI", "onlyMC": false },
+      { "name": "luminosityBlock", "type": "UI", "onlyMC": false },
+      { "name": "event", "type": "UL64", "onlyMC": false },
+      { "name": "DST_PFScouting_SingleMuon", "type": "O", "onlyMC": false },
+      { "name": "DST_PFScouting_JetHT", "type": "O", "onlyMC": false },
+      { "name": "Pileup_nTrueInt", "type": "F", "onlyMC": true },
+      { "name": "nScoutingFatPFJetRecluster", "type": "I", "onlyMC": false },
+      { "name": "nScoutingPFJetRecluster2", "type": "I", "onlyMC": false },
+      { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
+      { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false },
+      { "name": "ScoutingMET_pt", "type": "F", "onlyMC": false },
+      { "name": "ScoutingMET_phi", "type": "F", "onlyMC": false }
+    ],
+    "collections": [
+      {
+        "name": "ScoutingMuonVtx",
+        "size": "nScoutingMuonVtx",
+        "max_size": 30,
+        "p4": {
+          "pt": "ScoutingMuonVtx_pt",
+          "eta": "ScoutingMuonVtx_eta",
+          "phi": "ScoutingMuonVtx_phi",
+          "default_mass": 0.10566
+        },
+        "fields": [
+          { "name": "ScoutingMuonVtx_pt", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_eta", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_phi", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_charge", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_type", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trackIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_ecalIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_hcalIso", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_normchi2", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidStandAloneMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidPixelHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nTrackerLayersWithMeasurement", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nStandAloneMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nRecoMuonMatchedStations", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_nValidRecoMuonHits", "type": "I", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trk_dxy", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "onlyMC": false }
+        ]
+      },
+      {
+        "name": "ScoutingFatPFJetRecluster",
+        "size": "nScoutingFatPFJetRecluster",
+        "max_size": 20,
+        "p4": {
+          "pt": "ScoutingFatPFJetRecluster_pt",
+          "eta": "ScoutingFatPFJetRecluster_eta",
+          "phi": "ScoutingFatPFJetRecluster_phi",
+          "mass": "ScoutingFatPFJetRecluster_mass",
+          "default_mass": 0.0
+        },
+        "fields": [
+          { "name": "ScoutingFatPFJetRecluster_pt", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_eta", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_phi", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_msoftdrop", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_mass", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD", "type": "F", "onlyMC": false }
+        ]
+      },
+      {
+        "name": "ScoutingPFJetRecluster2",
+        "size": "nScoutingPFJetRecluster2",
+        "max_size": 30,
+        "p4": {
+          "pt": "ScoutingPFJetRecluster2_pt",
+          "eta": "ScoutingPFJetRecluster2_eta",
+          "phi": "ScoutingPFJetRecluster2_phi",
+          "mass": "ScoutingPFJetRecluster2_mass",
+          "default_mass": 0.0
+        },
+        "fields": [
+          { "name": "ScoutingPFJetRecluster2_pt", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_nConstituents", "type": "I", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_neHEF", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_neEmEF", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_chHadMultiplicity", "type": "S", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_muEF", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false }
+        ]
+      }
+    ]
+  },
+  "output": {
+    "trees": [
+      {
+        "name": "ttbar_cr",
+        "title": "semileptonic ttbar single-muon control region (>=1 mu, >=1 AK4, >=1 AK8)",
+        "selection": "ttbar_cr",
+        "scalars": {
+          "regular": [
+            { "name": "run", "type": "UI", "formula": "run", "onlyMC": false },
+            { "name": "luminosityBlock", "type": "UI", "formula": "luminosityBlock", "onlyMC": false },
+            { "name": "event", "type": "UL64", "formula": "event", "onlyMC": false },
+            { "name": "sample_ID", "type": "I", "formula": "sample_ID", "onlyMC": false },
+            { "name": "is_MC", "type": "O", "formula": "is_MC", "onlyMC": false },
+            { "name": "is_signal", "type": "O", "formula": "is_signal", "onlyMC": false },
+            { "name": "DST_PFScouting_SingleMuon", "type": "O", "formula": "DST_PFScouting_SingleMuon", "onlyMC": false },
+            { "name": "DST_PFScouting_JetHT", "type": "O", "formula": "DST_PFScouting_JetHT", "onlyMC": false },
+            { "name": "nScoutingMuon_selected", "type": "I", "formula": "size(mu_vtx)", "onlyMC": false },
+            { "name": "nScoutingPFJetRecluster2_selected", "type": "I", "formula": "size(ak4)", "onlyMC": false },
+            { "name": "nScoutingFatPFJetRecluster_selected", "type": "I", "formula": "size(ak8)", "onlyMC": false },
+            { "name": "n_probe", "type": "I", "formula": "size(probe)", "onlyMC": false },
+            { "name": "nScoutingPrimaryVertex", "type": "I", "formula": "nScoutingPrimaryVertex", "onlyMC": false },
+            { "name": "Pileup_nTrueInt", "type": "F", "formula": "Pileup_nTrueInt", "onlyMC": true },
+            { "name": "weight_pu", "type": "F", "formula": "weight_pu", "onlyMC": true },
+            { "name": "weight_pu_up", "type": "F", "formula": "weight_pu_up", "onlyMC": true },
+            { "name": "weight_pu_down", "type": "F", "formula": "weight_pu_down", "onlyMC": true },
+            { "name": "genWeight", "type": "F", "formula": "genWeight", "onlyMC": true },
+
+            { "name": "ScoutingMET_pt", "type": "F", "formula": "ScoutingMET_pt", "onlyMC": false },
+            { "name": "ScoutingMET_phi", "type": "F", "formula": "ScoutingMET_phi", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_selected_HT", "type": "F", "formula": "sum(ak4, pt(self))", "onlyMC": false },
+            { "name": "MuonMET_mT", "type": "F", "formula": "sqrt(2 * pt(mu_vtx[0]) * ScoutingMET_pt * (1 - cos(phi(mu_vtx[0]) - ScoutingMET_phi)))", "onlyMC": false },
+            { "name": "LeptonicW_pt", "type": "F", "formula": "sqrt(pow(pt(mu_vtx[0]) * cos(phi(mu_vtx[0])) + ScoutingMET_pt * cos(ScoutingMET_phi), 2) + pow(pt(mu_vtx[0]) * sin(phi(mu_vtx[0])) + ScoutingMET_pt * sin(ScoutingMET_phi), 2))", "onlyMC": false },
+
+            { "name": "ScoutingMuonVtx_pt", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_pt", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_eta", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_eta", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_phi", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_phi", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_charge", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_charge", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_type", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_type", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_trackIso", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_trackIso", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_ecalIso", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_ecalIso", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_hcalIso", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_hcalIso", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_relIso", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "safe_div(ScoutingMuonVtx_trackIso + ScoutingMuonVtx_ecalIso + ScoutingMuonVtx_hcalIso, ScoutingMuonVtx_pt, -1)", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_trkRelIso", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, -1)", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_normchi2", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_normchi2", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nValidStandAloneMuonHits", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nValidStandAloneMuonHits", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nValidPixelHits", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nValidPixelHits", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nTrackerLayersWithMeasurement", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nTrackerLayersWithMeasurement", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nStandAloneMuonMatchedStations", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nStandAloneMuonMatchedStations", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nRecoMuonMatchedStations", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nRecoMuonMatchedStations", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_nValidRecoMuonHits", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nValidRecoMuonHits", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_mediumId", "type": "O", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_trk_dxy", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_trk_dxy", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_trk_dz", "onlyMC": false },
+
+            { "name": "ScoutingPFJetRecluster2_pt", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_pt", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_eta", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_phi", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_mass", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb", "onlyMC": false },
+
+            { "name": "ScoutingFatPFJetRecluster_pt", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_pt", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_eta", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_eta", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_phi", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_phi", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_mass", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_mass", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_msoftdrop", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_msoftdrop", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_WvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_VvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+
+            { "name": "Probe_pt", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_pt", "onlyMC": false },
+            { "name": "Probe_eta", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_eta", "onlyMC": false },
+            { "name": "Probe_phi", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_phi", "onlyMC": false },
+            { "name": "Probe_mass", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_mass", "onlyMC": false },
+            { "name": "Probe_msoftdrop", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_msoftdrop", "onlyMC": false },
+            { "name": "Probe_dphi_mu", "type": "F", "collection": "probe", "slots": 1, "formula": "abs(deltaPhi(self, mu_vtx[0]))", "onlyMC": false },
+            { "name": "Probe_WvsQCD", "type": "F", "collection": "probe", "slots": 1, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+            { "name": "Probe_prob_Xud", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud", "onlyMC": false },
+            { "name": "Probe_prob_Xcs", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs", "onlyMC": false },
+            { "name": "Probe_prob_Xqq", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq", "onlyMC": false },
+            { "name": "Probe_prob_Xbb", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb", "onlyMC": false },
+            { "name": "Probe_prob_Xcc", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc", "onlyMC": false },
+            { "name": "Probe_prob_Xss", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss", "onlyMC": false },
+            { "name": "Probe_prob_QCD", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD", "onlyMC": false }
+          ],
+          "extrema": [
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max", "type": "F", "formula": "max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, -99)", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max", "type": "F", "formula": "nth_max_value(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)", "onlyMC": false }
+          ]
+        }
+      }
+    ]
+  }
+}

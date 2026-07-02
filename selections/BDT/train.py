@@ -64,6 +64,15 @@ sample_cfg = _load_json(_sample_cfg_path)
 # -------------------- Constants --------------------
 RANDOM_STATE       = cfg.get("random_state", 42)
 ENTRIES_PER_SAMPLE = cfg.get("entries_per_sample", 1_000_000)
+# Per-sample cap on TEST events too: the per-round custom metric (and ROC eval) runs
+# over the full test set each boosting round, which dominates wall-clock for the huge
+# QCD/Top classes.  Defaults to ENTRIES_PER_SAMPLE.  Small classes (e.g. VV) stay full.
+TEST_ENTRIES_PER_SAMPLE = cfg.get("test_entries_per_sample", ENTRIES_PER_SAMPLE)
+# Evaluate the (expensive) custom loss metric only every Nth boosting round. The stage-2
+# decorrelation metric runs over the full train+test sets each round and dominates
+# wall-clock; computing it every Nth round (default 1 = every round) cuts that cost ~N x.
+# Early-stopping / lr-schedule patience is interpreted in actual rounds (scaled internally).
+METRIC_EVAL_EVERY = max(1, int(cfg.get("metric_eval_every", 1)))
 TRAIN_FRACTION     = float(cfg.get("train_fraction", 0.7))
 DECOR_LAMBDA       = cfg.get("decor_lambda", 30)
 DECOR_LOSS_MODE    = str(cfg.get("decor_loss_mode", "smooth_cvm")).strip().lower()
@@ -72,6 +81,11 @@ DECOR_N_THRESHOLDS = int(cfg.get("decor_n_thresholds", 31))
 DECOR_SCORE_TAU    = float(cfg.get("decor_score_tau", 0.20))
 DECOR_BIN_TAU_SCALE = float(cfg.get("decor_bin_tau_scale", 0.35))
 DECOR_MSOFTDROP_TRAINING_MAX = float(cfg.get("decor_msoftdrop_training_max", 200.0))
+# Tail-aware decorrelation (optional): also enforce score-vs-mass flatness deep in
+# the score tails where the signal-region boxes live (default off => unchanged).
+DECOR_TAIL_AWARE    = bool(cfg.get("decor_tail_aware", False))
+DECOR_TAIL_MIN_PROB = float(cfg.get("decor_tail_min_prob", 0.002))
+DECOR_TAIL_N        = int(cfg.get("decor_tail_n", 8))
 SUBMIT_TREES       = cfg.get("submit_trees", ["fat2"])
 INPUT_ROOT         = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["input_root"]))
 INPUT_PATTERN      = cfg["input_pattern"]
@@ -86,6 +100,15 @@ if not np.isfinite(DECOR_MSOFTDROP_TRAINING_MAX) or DECOR_MSOFTDROP_TRAINING_MAX
         "decor_msoftdrop_training_max must be a positive finite number, "
         f"got {DECOR_MSOFTDROP_TRAINING_MAX}"
     )
+
+if DECOR_TAIL_AWARE:
+    if not (0.0 < DECOR_TAIL_MIN_PROB < 0.02):
+        raise ValueError(
+            "decor_tail_min_prob must be in (0, 0.02) when decor_tail_aware is set, "
+            f"got {DECOR_TAIL_MIN_PROB}"
+        )
+    if DECOR_TAIL_N < 0:
+        raise ValueError(f"decor_tail_n must be >= 0, got {DECOR_TAIL_N}")
 
 if DECOR_LOSS_MODE == "soft_cvm":
     DECOR_LOSS_MODE = "smooth_cvm"
@@ -396,7 +419,7 @@ def _inspect_sample_tree(sample_name, tree_name):
         "test_start": train_stop,
         "train_segments_full": _build_segments(file_infos, 0, train_stop),
         "train_segments_read": _build_segments(file_infos, 0, train_stop, max_entries=ENTRIES_PER_SAMPLE),
-        "test_segments": _build_segments(file_infos, train_stop, total_entries),
+        "test_segments": _build_segments(file_infos, train_stop, total_entries, max_entries=TEST_ENTRIES_PER_SAMPLE),
     }
 
 
@@ -805,7 +828,7 @@ def _sample_color_palette(n):
     cmaps = ["tab20", "tab20b", "tab20c"]
     colors = []
     for cm in cmaps:
-        colors.extend(list(plt.cm.get_cmap(cm).colors))
+        colors.extend(list(plt.colormaps[cm].colors))
     if n <= 0:
         return []
     if n <= len(colors):
@@ -834,7 +857,7 @@ def plot_branch_distributions(output_root, branches, clip_ranges,
     s_all = np.concatenate([np.asarray(sample_labels_train, dtype=object),
                             np.asarray(sample_labels_test, dtype=object)])
 
-    class_palette = plt.cm.get_cmap("tab10", max(NUM_CLASSES, 3))(np.arange(max(NUM_CLASSES, 3)))
+    class_palette = plt.colormaps["tab10"].resampled(max(NUM_CLASSES, 2))(np.arange(max(NUM_CLASSES, 2)))
 
     # Keep TRAINING_SAMPLES ordering (which follows class_groups) so samples
     # from the same class sit together in the legend and color palette.
@@ -1080,6 +1103,25 @@ def _build_smooth_cvm_memberships(Z: np.ndarray, n_bins: int = DECOR_N_BINS):
     return memberships
 
 
+def _build_decor_prob_grid():
+    """Probability grid at which smooth-CvM enforces score-vs-msoftdrop flatness.
+
+    Default: uniform in probability on [0.02, 0.98] (DECOR_N_THRESHOLDS points).
+    Tail-aware (opt-in via decor_tail_aware): additionally place DECOR_TAIL_N
+    log-spaced thresholds in each tail, down to decor_tail_min_prob and up to
+    1 - decor_tail_min_prob, so the deep score tails where the signal-region boxes
+    live (e.g. an anti-QCD cut at QCD-score < 0.01) are decorrelated against the
+    soft-drop mass too -- the region the default [0.02, 0.98] grid never touches.
+    """
+    base = np.linspace(0.02, 0.98, max(3, DECOR_N_THRESHOLDS))
+    if not DECOR_TAIL_AWARE or DECOR_TAIL_N <= 0:
+        return base
+    lo = float(min(max(DECOR_TAIL_MIN_PROB, 1e-6), 0.02))
+    low_tail = np.geomspace(lo, 0.02, DECOR_TAIL_N + 1)[:-1]
+    high_tail = 1.0 - low_tail
+    return np.unique(np.concatenate([low_tail, base, high_tail]))
+
+
 def _build_decor_state(Z: np.ndarray, mode: str):
     Z = np.asarray(Z, dtype=float)
     if Z.ndim == 1:
@@ -1089,8 +1131,14 @@ def _build_decor_state(Z: np.ndarray, mode: str):
     if mode == "cvm":
         return {"mode": "cvm", "groups": _build_cvm_groups(Z)}
     if mode == "smooth_cvm":
-        prob_grid = np.linspace(0.02, 0.98, max(3, DECOR_N_THRESHOLDS))
+        prob_grid = _build_decor_prob_grid()
         score_thresholds = np.log(prob_grid / (1.0 - prob_grid))
+        if DECOR_TAIL_AWARE:
+            log_message(
+                f"Tail-aware decorrelation ON: {len(prob_grid)} thresholds, "
+                f"prob in [{prob_grid.min():.4g}, {prob_grid.max():.4g}] "
+                f"(+{DECOR_TAIL_N} log-spaced per tail down to {DECOR_TAIL_MIN_PROB:g})"
+            )
         return {
             "mode": "smooth_cvm",
             "memberships": _build_smooth_cvm_memberships(Z),
@@ -1523,8 +1571,9 @@ def _booster_regularization_loss(model, reg_lambda, reg_alpha, gamma, learning_r
 
 class _TotalLossMetricRecorder:
     def __init__(self, datasets, num_class, lam, decor_scale, prediction_mode="margin",
-                 selection_metric_key="mlogloss", selection_metric_name=None):
+                 selection_metric_key="mlogloss", selection_metric_name=None, eval_every=1):
         self.datasets = list(datasets)
+        self.eval_every = max(1, int(eval_every))
         self.num_class = int(num_class)
         self.lam = float(lam)
         self.decor_scale = float(decor_scale)
@@ -1548,8 +1597,17 @@ class _TotalLossMetricRecorder:
         }
 
     def __call__(self, predt, dtrain):
-        tag, labels, weights, decor_state = self.datasets[self._call_idx % len(self.datasets)]
+        n_sets = len(self.datasets)
+        tag, labels, weights, decor_state = self.datasets[self._call_idx % n_sets]
+        round_idx = self._call_idx // n_sets
         self._call_idx += 1
+        keys = ("classification", "mlogloss", "decorrelation", "regularization", "total")
+        # On non-evaluation rounds, skip the expensive full-loss recompute and repeat the
+        # last evaluated value so the history stays index-aligned with the boosting round.
+        if round_idx % self.eval_every != 0 and self.history[tag]["mlogloss"]:
+            for key in keys:
+                self.history[tag][key].append(self.history[tag][key][-1])
+            return self.selection_metric_name, self.history[tag][self.selection_metric_key][-1]
         comp = _loss_components(
             predt,
             labels,
@@ -1560,7 +1618,7 @@ class _TotalLossMetricRecorder:
             self.decor_scale,
             prediction_mode=self.prediction_mode,
         )
-        for key in ("classification", "mlogloss", "decorrelation", "regularization", "total"):
+        for key in keys:
             self.history[tag][key].append(comp[key])
         return self.selection_metric_name, comp[self.selection_metric_key]
 
@@ -1609,8 +1667,9 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
     def __init__(self, recorder, reg_lambda, reg_alpha, gamma, learning_rate, early_stopping_rounds,
                  stage_label="", compact_log=False, initial_reg=0.0, tree_offset=0,
                  monitor_metric_key="mlogloss", monitor_metric_label=None,
-                 lr_reduce_patience=None, min_learning_rate=None):
+                 lr_reduce_patience=None, min_learning_rate=None, eval_every=1):
         self.recorder = recorder
+        self.eval_every = max(1, int(eval_every))
         self.reg_lambda = float(reg_lambda)
         self.reg_alpha = float(reg_alpha)
         self.gamma = float(gamma)
@@ -1656,6 +1715,11 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
             self.learning_rate,
         )
         self.recorder.finalize_iteration(self.cumulative_regularization)
+        # Only log / check early-stopping on rounds where the metric was actually
+        # re-evaluated (every eval_every rounds); the regularization above is kept
+        # accurate every round so the running total stays correct.
+        if local_epoch % self.eval_every != 0:
+            return False
         prefix = f"[{self.stage_label}]" if self.stage_label else ""
         log_message(_format_detailed_loss_line(
             local_epoch, self.recorder.history, prefix=prefix, compact=self.compact_log
@@ -1681,7 +1745,7 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
         if self._dynamic_lr and self.learning_rate > self.min_learning_rate + 1e-12:
             # Still in the lr-reduction regime: early stopping is suppressed.
             self._lr_stale_rounds += 1
-            if self._lr_stale_rounds >= self.lr_reduce_patience:
+            if self._lr_stale_rounds * self.eval_every >= self.lr_reduce_patience:
                 old_lr = self.learning_rate
                 new_lr = max(old_lr * 0.5, self.min_learning_rate)
                 try:
@@ -1702,7 +1766,7 @@ class _DetailedLossMonitor(xgb.callback.TrainingCallback):
 
         # Either dynamic lr disabled, or already at min_learning_rate.
         self._stale_rounds += 1
-        if self._stale_rounds >= self.early_stopping_rounds:
+        if self._stale_rounds * self.eval_every >= self.early_stopping_rounds:
             tag = f" ({self.stage_label})" if self.stage_label else ""
             log_message(
                 f"Info: early stopping{tag} on {self.monitor_metric_label} "
@@ -1847,6 +1911,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             NUM_CLASSES, 0.0, 1.0, prediction_mode="probability",
             selection_metric_key="classification",
             selection_metric_name="classification_loss",
+            eval_every=METRIC_EVAL_EVERY,
         )
         monitor = _DetailedLossMonitor(
             recorder,
@@ -1856,6 +1921,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             learning_rate=stage1_params["eta"],
             early_stopping_rounds=early_stopping_rounds,
             stage_label="stage1",
+            eval_every=METRIC_EVAL_EVERY,
             compact_log=True,
             monitor_metric_key="classification",
             monitor_metric_label="classification_loss",
@@ -1948,6 +2014,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             NUM_CLASSES, DECOR_LAMBDA, decor_scale, prediction_mode="margin",
             selection_metric_key="total",
             selection_metric_name="total_loss",
+            eval_every=METRIC_EVAL_EVERY,
         )
         monitor = _DetailedLossMonitor(
             recorder,
@@ -1957,6 +2024,7 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             learning_rate=stage2_params["eta"],
             early_stopping_rounds=early_stopping_rounds,
             stage_label="stage2",
+            eval_every=METRIC_EVAL_EVERY,
             compact_log=False,
             initial_reg=reg_loss_ref,
             tree_offset=stage1_rounds,
@@ -2768,7 +2836,7 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
     n_classes = NUM_CLASSES
     class_names = CLASS_NAMES
     is_nn_model = isinstance(stage1_model, TorchModelHandle) or isinstance(stage2_model, TorchModelHandle)
-    palette = plt.cm.get_cmap("tab10", max(n_classes, 3))(np.arange(max(n_classes, 3)))
+    palette = plt.colormaps["tab10"].resampled(max(n_classes, 2))(np.arange(max(n_classes, 2)))
 
     def _savefig(stem, fig=None, tight=True):
         fig = plt.gcf() if fig is None else fig
@@ -3053,7 +3121,7 @@ def plot_results(stage1_model, stage2_model, splits, tree_name, output_root,
         wv_all = np.asarray(w_test_decor, dtype=float)
         path = _figure_path(output_root, f"decor_branch_shapes_by_signal_score{suffix}")
         pdf_state = {"pdf": None, "pages": 0}
-        colors = plt.cm.get_cmap("viridis", max(len(decor_efficiencies), 2))(
+        colors = plt.colormaps["viridis"].resampled(max(len(decor_efficiencies), 2))(
             np.arange(max(len(decor_efficiencies), 2))
         )
 

@@ -915,6 +915,10 @@ def _branch_override(tree_name, branch):
 
 
 def _auto_range(arrs, logx):
+    if arrs is None:
+        # Branch is declared in the convert branch.json but absent from every input file
+        # (e.g. a schema change not yet re-converted).  Caller treats None as "skip branch".
+        return None
     mins, maxs = [], []
     for arr in arrs:
         if arr is None:
@@ -1347,9 +1351,32 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
 
     log_message("Loading trained-model config copies")
     bdt_cfg, bdt_br, bdt_sel, test_meta = _bdt_configs_for_tree(tree_name, load_test_meta=not no_selection)
-    class_groups     = bdt_cfg["class_groups"]
+    # Optional plot-config override of the stack grouping.  Lets a reused BDT config (e.g. the ttbar
+    # control region borrowing fat2's trained model) define its own classes — including backgrounds
+    # absent from the signal-region model, such as W/Z+jets — without editing the shared BDT config.
+    # Accepts a flat {class: [samples]} mapping or a {tree_name: {class: [samples]}} mapping.
+    _cg_override = plot_cfg.get("class_groups")
+    if isinstance(_cg_override, dict) and tree_name in _cg_override and isinstance(_cg_override[tree_name], dict):
+        _cg_override = _cg_override[tree_name]
+    class_groups     = _cg_override or bdt_cfg["class_groups"]
+    # Optional MC whitelist: restrict the stack to samples actually produced for this tree.  A reused
+    # BDT config (e.g. the ttbar control region borrowing fat2's class_groups) lists signal-region
+    # samples that the CR convert never produced; intersecting with the whitelist drops them and any
+    # now-empty class.  Accepts a flat list or a {tree_name: [...]} mapping; absent = keep all.
+    _mc_whitelist = plot_cfg.get("mc_samples")
+    if isinstance(_mc_whitelist, dict):
+        _mc_whitelist = _mc_whitelist.get(tree_name)
+    if _mc_whitelist is not None:
+        _wl = set(_mc_whitelist)
+        class_groups = {cls: [s for s in samples if s in _wl]
+                        for cls, samples in class_groups.items()}
+        class_groups = {cls: samples for cls, samples in class_groups.items() if samples}
     class_names      = list(class_groups.keys())
-    model_branches   = [item["name"] for item in bdt_br[tree_name]]
+    # bdt_br is keyed by the trained-model trees (e.g. fat2/fat3); a reused BDT config (such as the
+    # ttbar control region borrowing fat2's class_groups) has no entry for this tree.  model_branches
+    # is only consumed by the scoring blocks below, which are skipped in --no-selection mode, so an
+    # empty list is safe here.
+    model_branches   = [item["name"] for item in bdt_br.get(tree_name, [])]
     # Score branches require a trained model; skip them in --no-selection mode.
     score_branches   = [] if no_selection else [_score_branch_name(class_name) for class_name in class_names]
 

@@ -1716,6 +1716,76 @@ long double evalNumber(const ExprPtr& expr, const EvalContext& context) {
     return toNumber(evalExpression(expr, context));
 }
 
+// Eigenvalues (descending: l1 >= l2 >= l3) of the real symmetric 3x3 matrix
+// [[a, d, e], [d, b, f], [e, f, c]] via the analytic trigonometric method
+// (Smith 1961) -- avoids pulling in a matrix-eigen dependency.
+void symmetricEigenvalues3(double a, double b, double c, double d, double e, double f,
+                           double& l1, double& l2, double& l3) {
+    const double p1 = d * d + e * e + f * f;
+    if (p1 <= 1e-18) {  // already diagonal
+        double v[3] = {a, b, c};
+        std::sort(v, v + 3);
+        l1 = v[2]; l2 = v[1]; l3 = v[0];
+        return;
+    }
+    const double q = (a + b + c) / 3.0;
+    const double p2 = (a - q) * (a - q) + (b - q) * (b - q) + (c - q) * (c - q) + 2.0 * p1;
+    const double p = std::sqrt(p2 / 6.0);
+    const double b11 = (a - q) / p, b22 = (b - q) / p, b33 = (c - q) / p;
+    const double b12 = d / p, b13 = e / p, b23 = f / p;
+    const double detB = b11 * (b22 * b33 - b23 * b23)
+                      - b12 * (b12 * b33 - b23 * b13)
+                      + b13 * (b12 * b23 - b22 * b13);
+    double r = detB / 2.0;
+    if (r <= -1.0) r = -1.0; else if (r >= 1.0) r = 1.0;
+    const double phi = std::acos(r) / 3.0;
+    const double kPi = 3.14159265358979323846;
+    l1 = q + 2.0 * p * std::cos(phi);
+    l3 = q + 2.0 * p * std::cos(phi + 2.0 * kPi / 3.0);
+    l2 = 3.0 * q - l1 - l3;
+}
+
+// Event-shape variables from the normalized momentum (sphericity) tensor built
+// over the objects given as arguments.  Each argument may be a collection (all of
+// its objects are pooled) or a single object / p4 (e.g. ak8[0], ak4[1]), so the
+// caller can choose exactly which objects define the system per category:
+//   S^{ab} = sum_i p_i^a p_i^b / sum_i |p_i|^2 ,  eigenvalues l1 >= l2 >= l3 (sum = 1)
+//   sphericity = 1.5*(l2 + l3),  aplanarity = 1.5*l3,  planarity = l2 - l3
+// Returns -1 when fewer than 2 objects with non-zero momentum are present.
+double evalEventShape(const string& op, const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.empty()) {
+        throw runtime_error(op + " requires at least one object or collection argument");
+    }
+    double sxx = 0, syy = 0, szz = 0, sxy = 0, sxz = 0, syz = 0, norm = 0;
+    int n = 0;
+    auto addP4 = [&](const TLorentzVector& p) {
+        const double px = p.Px(), py = p.Py(), pz = p.Pz();
+        const double p2 = px * px + py * py + pz * pz;
+        if (p2 <= 0.0) return;
+        sxx += px * px; syy += py * py; szz += pz * pz;
+        sxy += px * py; sxz += px * pz; syz += py * pz;
+        norm += p2;
+        ++n;
+    };
+    for (const auto& arg : args) {
+        const Value value = evalExpression(arg, context);
+        if (value.kind == Value::Kind::CollectionRef) {
+            for (const auto& object : toCollection(value)->objects) addP4(object.p4);
+        } else {
+            addP4(toP4(value));
+        }
+    }
+    if (n < 2 || norm <= 0.0) return -1.0;
+    sxx /= norm; syy /= norm; szz /= norm; sxy /= norm; sxz /= norm; syz /= norm;
+    double l1, l2, l3;
+    symmetricEigenvalues3(sxx, syy, szz, sxy, sxz, syz, l1, l2, l3);
+    if (l3 < 0.0) l3 = 0.0;  // guard tiny negative eigenvalue from round-off
+    if (op == "sphericity") return 1.5 * (l2 + l3);
+    if (op == "aplanarity") return 1.5 * l3;
+    if (op == "planarity") return l2 - l3;
+    throw runtime_error("Unsupported event-shape: " + op);
+}
+
 Value evalAggregation(const string& op,
                       const vector<ExprPtr>& args,
                       const EvalContext& context) {
@@ -1923,6 +1993,31 @@ Value evalMinDeltaR(const vector<ExprPtr>& args, const EvalContext& context) {
     return makeNumberValue(best);
 }
 
+// Among the reference objects (args[1..]), pick the one closest to args[0] in deltaR
+// and return the deltaPhi between args[0] and that closest reference. Used to attach,
+// per AK4 jet, the deltaPhi to the closest signal AK8 jet.
+Value evalDeltaPhiAtMinDeltaR(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 2) {
+        throw runtime_error("deltaPhi_at_min_deltaR requires an object and at least one reference");
+    }
+
+    const TLorentzVector objectP4 = toP4(evalExpression(args[0], context));
+
+    bool found = false;
+    double bestDeltaR = numeric_limits<double>::max();
+    double bestDeltaPhi = kMissingDistance;
+    for (size_t index = 1; index < args.size(); ++index) {
+        const TLorentzVector ref = toP4(evalExpression(args[index], context));
+        const double dr = objectP4.DeltaR(ref);
+        if (!found || dr < bestDeltaR) {
+            bestDeltaR = dr;
+            bestDeltaPhi = objectP4.DeltaPhi(ref);
+            found = true;
+        }
+    }
+    return makeNumberValue(found ? bestDeltaPhi : kMissingDistance);
+}
+
 Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     const string& op = expr->text;
     const auto& args = expr->args;
@@ -1932,6 +2027,12 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "sqrt") {
         return makeNumberValue(sqrtl(evalNumber(args.at(0), context)));
+    }
+    if (op == "cos") {
+        return makeNumberValue(cosl(evalNumber(args.at(0), context)));
+    }
+    if (op == "sin") {
+        return makeNumberValue(sinl(evalNumber(args.at(0), context)));
     }
     if (op == "pow") {
         return makeNumberValue(powl(evalNumber(args.at(0), context), evalNumber(args.at(1), context)));
@@ -1984,6 +2085,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     if (op == "sum" || op == "max_value" || op == "min_value") {
         return evalAggregation(op, args, context);
     }
+    if (op == "sphericity" || op == "aplanarity" || op == "planarity") {
+        return makeNumberValue(static_cast<long double>(evalEventShape(op, args, context)));
+    }
     if (op == "nth_max_value") {
         return evalNthMaxValue(args, context);
     }
@@ -2027,6 +2131,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "min_deltaR") {
         return evalMinDeltaR(args, context);
+    }
+    if (op == "deltaPhi_at_min_deltaR") {
+        return evalDeltaPhiAtMinDeltaR(args, context);
     }
 
     throw runtime_error("Unsupported function in expression: " + op);

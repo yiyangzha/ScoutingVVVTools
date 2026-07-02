@@ -1,9 +1,11 @@
 {
-  "submit_trees": ["fat2", "fat3"],
+  "submit_trees": [
+    "fat2"
+  ],
   "sample_config": "../../src/sample.json",
   "input_root": "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/dataset/",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
-  "output_root": "./{tree_name}_vjets_full",
+  "output_root": "./{tree_name}_vjets_tailaware",
   "model_pattern": "{output_root}/{tree_name}_model",
   "model_type": "bdt",
   "entries_per_sample": 750000,
@@ -19,12 +21,57 @@
   "decor_bin_tau_scale": 0.25,
   "decor_msoftdrop_training_max": 200,
   "class_groups": {
-    "VVV": ["www", "wwz", "wzz", "zzz"],
-    "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
-    "Top": ["ttbar_had", "ttbar_semilep","tbarwplus_had", "twminus_had"],
-    "VV":  ["WWTo4Q", "WWToLNu2Q", "WZto2L2Q", "WZto2Nu2Q", "WZto4Q", "WZtoLNu2Q", "ZZto2L2Q", "ZZto4Q"],
-    "VJets": ["wjets_h100to400", "wjets_h400to800", "wjets_h800to1500", "wjets_h1500to2500", "wjets_h2500", "zjets_h100to400", "zjets_h400to800", "zjets_h800to1500", "zjets_h1500to2500", "zjets_h2500"],
-    "QCD": ["qcd_ht100to200", "qcd_ht200to400", "qcd_ht400to600","qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200","qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
+    "VVV": [
+      "www",
+      "wwz",
+      "wzz",
+      "zzz"
+    ],
+    "VH": [
+      "zh_had",
+      "ggzh_had",
+      "wplush",
+      "wminush"
+    ],
+    "Top": [
+      "ttbar_had",
+      "ttbar_semilep",
+      "tbarwplus_had",
+      "twminus_had"
+    ],
+    "VV": [
+      "WWTo4Q",
+      "WWToLNu2Q",
+      "WZto2L2Q",
+      "WZto2Nu2Q",
+      "WZto4Q",
+      "WZtoLNu2Q",
+      "ZZto2L2Q",
+      "ZZto4Q"
+    ],
+    "VJets": [
+      "wjets_h100to400",
+      "wjets_h400to800",
+      "wjets_h800to1500",
+      "wjets_h1500to2500",
+      "wjets_h2500",
+      "zjets_h100to400",
+      "zjets_h400to800",
+      "zjets_h800to1500",
+      "zjets_h1500to2500",
+      "zjets_h2500"
+    ],
+    "QCD": [
+      "qcd_ht100to200",
+      "qcd_ht200to400",
+      "qcd_ht400to600",
+      "qcd_ht600to800",
+      "qcd_ht800to1000",
+      "qcd_ht1000to1200",
+      "qcd_ht1200to1500",
+      "qcd_ht1500to2000",
+      "qcd_ht2000"
+    ]
   },
   "fat2": {
     "n_estimators": 1200,
@@ -42,9 +89,18 @@
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
     "early_stopping_rounds": 20,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "decor_efficiencies": [1.0, 0.5, 0.1, 0.05],
-    "event_reweight_branches": ["weight_pu"]
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
   },
   "fat3": {
     "n_estimators": 1500,
@@ -62,21 +118,34 @@
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
     "early_stopping_rounds": 20,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "decor_efficiencies": [1.0, 0.5, 0.1, 0.05],
-    "event_reweight_branches": ["weight_pu"]
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
   },
   "fat2_nn": {
     "epochs": 200,
     "epochs_decorr": 100,
-    "hidden_layers": [512, 256, 128],
+    "hidden_layers": [
+      512,
+      256,
+      128
+    ],
     "activation": "silu",
     "dropout": 0.1,
     "batch_norm": false,
     "batch_size": 200000,
     "learning_rate": 0.001,
     "learning_rate_decorr": 0.0005,
-    "min_learning_rate": 0.00002,
+    "min_learning_rate": 2e-05,
     "lr_reduce_patience": 6,
     "weight_decay": 0.0001,
     "early_stopping_rounds": 10,
@@ -85,17 +154,24 @@
   "fat3_nn": {
     "epochs": 180,
     "epochs_decorr": 100,
-    "hidden_layers": [384, 256, 128],
+    "hidden_layers": [
+      384,
+      256,
+      128
+    ],
     "activation": "silu",
     "dropout": 0.1,
     "batch_norm": false,
     "batch_size": 200000,
     "learning_rate": 0.001,
     "learning_rate_decorr": 0.0005,
-    "min_learning_rate": 0.00002,
+    "min_learning_rate": 2e-05,
     "lr_reduce_patience": 6,
     "weight_decay": 0.0001,
     "early_stopping_rounds": 10,
     "permutation_importance_events": 1000000
-  }
+  },
+  "decor_tail_aware": true,
+  "decor_tail_min_prob": 0.002,
+  "decor_tail_n": 8
 }

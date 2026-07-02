@@ -130,6 +130,20 @@ struct TheoryFrac {
     double ps_fsr_up = 1.0, ps_fsr_down = 1.0;
 };
 
+// Pileup reweighting variation struct — kept separate from theory fracs.
+struct PileupFrac {
+    double nom_sum = 0.0;
+    double pu_up   = 1.0;
+    double pu_down = 1.0;
+};
+
+// Per-sample/channel pileup fracs: inclusive ratio + per-SR ratios keyed by bin_index.
+// When a per-SR entry is absent, the inclusive is the fallback.
+struct PileupFracs {
+    PileupFrac inclusive;
+    std::map<int, PileupFrac> regions;  // bin_index -> PileupFrac
+};
+
 // Per-systematic pair of (up_ratio, down_ratio) for a given process in one channel.
 struct TheoryLnN {
     double up   = 1.0;
@@ -154,9 +168,17 @@ struct AppConfig {
     bool rescale_shape_modes_to_positive = true;
     bool keep_work = true;
     std::string work_dir;  // resolved under output_dir
+    // Fractional luminosity uncertainty applied as a symmetric lnN to all
+    // MC processes (i.e. everything except bkg_qcd).  0.0 disables the row.
+    double lumi_unc = 0.0;
     // Optional path to theory_syst_yields.json (output of mode 8).
     // {sample_name -> {channel_name -> TheoryFrac}}
     std::map<std::string, std::map<std::string, TheoryFrac>> theory_fracs;
+    // Optional path to pileup_syst_yields.json (output of mode 9).
+    // {sample_name -> {channel_name -> PileupFracs}}
+    std::map<std::string, std::map<std::string, PileupFracs>> pileup_fracs;
+    // Nuisance names to include in datacards.  Empty set = all enabled (default).
+    std::set<std::string> enabled_nuisances;
 };
 
 AppConfig loadAppConfig() {
@@ -194,6 +216,7 @@ AppConfig loadAppConfig() {
         payload.getBoolOr("rescale_shape_modes_to_positive", true);
     cfg.keep_work = payload.getBoolOr("keep_work", true);
     cfg.work_dir = (fs::path(cfg.output_dir) / "work").string();
+    cfg.lumi_unc = static_cast<double>(payload.getNumberOr("lumi_unc", 0.0L));
 
     // Optional theory syst yields (produced by mode 8 / theory_syst.py).
     if (payload.contains("theory_syst_json")) {
@@ -223,6 +246,49 @@ AppConfig loadAppConfig() {
         } else {
             logMessage("WARNING: theory_syst_json not found at " + theory_path +
                        "; run mode 8 before combine to include theory nuisances");
+        }
+    }
+
+    // Optional pileup syst yields (produced by mode 9 / pileup_syst.py).
+    if (payload.contains("pileup_syst_json")) {
+        const std::string pu_path = resolveReferencedPath(
+            abs, payload.at("pileup_syst_json").asString());
+        if (fs::exists(pu_path)) {
+            const JsonValue pj = simple_json::parseFile(pu_path);
+            for (const auto& sample_kv : pj.asObject()) {
+                const std::string& sname = sample_kv.first;
+                for (const auto& tree_kv : sample_kv.second.asObject()) {
+                    const std::string& tname = tree_kv.first;
+                    const JsonValue& v = tree_kv.second;
+                    PileupFracs pff;
+                    pff.inclusive.nom_sum = static_cast<double>(v.getNumberOr("nom_sum", 0.L));
+                    pff.inclusive.pu_up   = static_cast<double>(v.getNumberOr("pu_up",   1.L));
+                    pff.inclusive.pu_down = static_cast<double>(v.getNumberOr("pu_down", 1.L));
+                    if (v.contains("regions")) {
+                        for (const auto& reg_kv : v.at("regions").asObject()) {
+                            const int bid = std::stoi(reg_kv.first);
+                            const JsonValue& rv = reg_kv.second;
+                            PileupFrac pf;
+                            pf.nom_sum = static_cast<double>(rv.getNumberOr("nom_sum", 0.L));
+                            pf.pu_up   = static_cast<double>(rv.getNumberOr("pu_up",   1.L));
+                            pf.pu_down = static_cast<double>(rv.getNumberOr("pu_down", 1.L));
+                            pff.regions[bid] = pf;
+                        }
+                    }
+                    cfg.pileup_fracs[sname][tname] = std::move(pff);
+                }
+            }
+            logMessage("Loaded pileup syst yields: " + pu_path);
+        } else {
+            logMessage("WARNING: pileup_syst_json not found at " + pu_path +
+                       "; run mode 9 before combine to include pileup nuisance");
+        }
+    }
+
+    // Enabled-nuisances filter: empty list = all enabled (backward-compatible).
+    if (payload.contains("enabled_nuisances")) {
+        for (const auto& item : payload.at("enabled_nuisances").asArray()) {
+            cfg.enabled_nuisances.insert(item.asString());
         }
     }
 
@@ -1154,7 +1220,14 @@ void writeChannelShape(const AppConfig& cfg, const PerChannelCard& pc,
     delete f;
 }
 
-// -------------------- Theory lnN helpers --------------------
+// -------------------- Theory / pileup lnN helpers --------------------
+
+// Returns true when a nuisance should be emitted: always when the enabled set
+// is empty (= all enabled, backward-compatible), otherwise only when listed.
+inline bool nuisanceEnabled(const std::set<std::string>& enabled,
+                            const std::string& name) {
+    return enabled.empty() || enabled.count(name) > 0;
+}
 
 // Compute nom_sum-weighted up/down ratio for a given systematic field
 // across all samples in a class that have theory fracs loaded.
@@ -1247,6 +1320,7 @@ void writeTheoryLnN(
     };
 
     for (const auto& syst : systs) {
+        if (!nuisanceEnabled(cfg.enabled_nuisances, syst.name)) continue;
         // Check if any process has a non-trivial lnN for this systematic.
         bool any_active = false;
         std::vector<TheoryLnN> proc_lnN(pc.processes.size());
@@ -1316,6 +1390,137 @@ void writeTheoryLnN(
         }
         ofs << "\n";
     }
+}
+
+// Compute nom_sum-weighted pileup up/down ratio across all samples in a class.
+// sr_id >= 0: use per-SR data if available, fall back to inclusive.
+// sr_id < 0: use inclusive only.
+TheoryLnN classPuLnN(
+    const std::string& class_name,
+    const std::string& channel_name,
+    int sr_id,
+    const ClassRegistry& reg,
+    const std::map<std::string, std::map<std::string, PileupFracs>>& fracs)
+{
+    auto class_it = reg.class_members.find(class_name);
+    if (class_it == reg.class_members.end()) return {};
+
+    double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+    for (const auto& sname : class_it->second) {
+        auto s_it = fracs.find(sname);
+        if (s_it == fracs.end()) continue;
+        auto t_it = s_it->second.find(channel_name);
+        if (t_it == s_it->second.end()) continue;
+        const PileupFracs& pff = t_it->second;
+
+        // Prefer the per-SR entry; fall back to inclusive when absent or low-stat.
+        const PileupFrac* pf = nullptr;
+        if (sr_id >= 0) {
+            auto r_it = pff.regions.find(sr_id);
+            if (r_it != pff.regions.end() && r_it->second.nom_sum > 0.0)
+                pf = &r_it->second;
+        }
+        if (pf == nullptr && pff.inclusive.nom_sum > 0.0)
+            pf = &pff.inclusive;
+        if (pf == nullptr) continue;
+
+        nom_total += pf->nom_sum;
+        up_total  += pf->nom_sum * pf->pu_up;
+        dn_total  += pf->nom_sum * pf->pu_down;
+    }
+    if (nom_total <= 0.0) return {};
+    TheoryLnN r;
+    r.up     = up_total  / nom_total;
+    r.down   = dn_total  / nom_total;
+    r.active = true;
+    return r;
+}
+
+// Write the pileup lnN row.  Uses per-SR ratios when available (falling back to
+// inclusive), so each SR bin can have a distinct kappa value.
+void writePuLnN(
+    std::ofstream& ofs,
+    const AppConfig& cfg,
+    const PerChannelCard& pc,
+    const ClassRegistry& reg,
+    const Scenario& sc)
+{
+    if (cfg.pileup_fracs.empty()) return;
+    if (!nuisanceEnabled(cfg.enabled_nuisances, "pileup")) return;
+
+    // Compute per-SR per-process lnN values.
+    std::vector<std::vector<TheoryLnN>> proc_lnN(
+        pc.n_sr, std::vector<TheoryLnN>(pc.processes.size()));
+    bool any_active = false;
+
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        const int sr_id = pc.sr_ids[sr];
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const std::string& pname = pc.processes[p].name;
+            std::string cls = processNameToClass(pname, reg, sc);
+            if (cls.empty()) continue;
+
+            if (cls == "*combined*") {
+                double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+                for (const auto& sig_cls : reg.class_order) {
+                    if (!reg.signal_classes.count(sig_cls)) continue;
+                    TheoryLnN r = classPuLnN(
+                        sig_cls, pc.name, sr_id, reg, cfg.pileup_fracs);
+                    if (!r.active) continue;
+                    double cls_nom = 0.0;
+                    auto cls_it = reg.class_members.find(sig_cls);
+                    if (cls_it != reg.class_members.end()) {
+                        for (const auto& sname : cls_it->second) {
+                            auto s_it = cfg.pileup_fracs.find(sname);
+                            if (s_it == cfg.pileup_fracs.end()) continue;
+                            auto t_it = s_it->second.find(pc.name);
+                            if (t_it == s_it->second.end()) continue;
+                            // Use per-SR nom_sum if available, else inclusive.
+                            const PileupFracs& pff = t_it->second;
+                            auto r_it = pff.regions.find(sr_id);
+                            if (r_it != pff.regions.end() && r_it->second.nom_sum > 0.0)
+                                cls_nom += r_it->second.nom_sum;
+                            else
+                                cls_nom += pff.inclusive.nom_sum;
+                        }
+                    }
+                    nom_total += cls_nom;
+                    up_total  += cls_nom * r.up;
+                    dn_total  += cls_nom * r.down;
+                }
+                if (nom_total > 0.0) {
+                    proc_lnN[sr][p].up     = up_total  / nom_total;
+                    proc_lnN[sr][p].down   = dn_total  / nom_total;
+                    proc_lnN[sr][p].active = true;
+                    any_active = true;
+                }
+            } else {
+                TheoryLnN r = classPuLnN(cls, pc.name, sr_id, reg, cfg.pileup_fracs);
+                if (r.active) {
+                    proc_lnN[sr][p] = r;
+                    any_active = true;
+                }
+            }
+        }
+    }
+
+    if (!any_active) return;
+
+    ofs << "pileup lnN";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const TheoryLnN& lnN = proc_lnN[sr][p];
+            if (!lnN.active) {
+                ofs << " -";
+            } else {
+                std::ostringstream val;
+                val << std::setprecision(6) << std::fixed;
+                val << lnN.up << "/" << lnN.down;
+                ofs << " " << val.str();
+            }
+        }
+    }
+    ofs << "\n";
 }
 
 void writeChannelDatacard(const AppConfig& cfg, const PerChannelCard& pc,
@@ -1404,6 +1609,22 @@ void writeChannelDatacard(const AppConfig& cfg, const PerChannelCard& pc,
     }
 
     writeTheoryLnN(ofs, cfg, pc, reg, sc);
+    writePuLnN(ofs, cfg, pc, reg, sc);
+
+    // Luminosity lnN — correlated across all channels (same row name "lumi").
+    // Applied to every MC process; bkg_qcd is data-driven (ABCD) so excluded.
+    if (cfg.lumi_unc > 0.0 && nuisanceEnabled(cfg.enabled_nuisances, "lumi")) {
+        const double kappa = 1.0 + cfg.lumi_unc;
+        std::ostringstream kappa_str;
+        kappa_str << std::setprecision(6) << std::fixed << kappa;
+        ofs << "lumi lnN";
+        for (int sr = 0; sr < pc.n_sr; ++sr) {
+            for (const auto& proc : pc.processes) {
+                ofs << (proc.name == "bkg_qcd" ? " -" : " " + kappa_str.str());
+            }
+        }
+        ofs << "\n";
+    }
 }
 
 // -------------------- Running combine --------------------
@@ -1729,6 +1950,20 @@ int runMain() {
     logMessage("combine.C: work_dir=" + cfg.work_dir);
     logMessage(std::string("combine.C: root covariance nuisances=") +
                (cfg.use_root_covariance ? "enabled" : "disabled"));
+    if (cfg.lumi_unc > 0.0) {
+        std::ostringstream lumi_msg;
+        lumi_msg << "combine.C: lumi_unc=" << std::setprecision(4) << (cfg.lumi_unc * 100.0)
+                 << "% (kappa=" << std::setprecision(6) << std::fixed << (1.0 + cfg.lumi_unc) << ")";
+        logMessage(lumi_msg.str());
+    }
+    if (!cfg.enabled_nuisances.empty()) {
+        std::string list;
+        for (const auto& n : cfg.enabled_nuisances) {
+            if (!list.empty()) list += ", ";
+            list += n;
+        }
+        logMessage("combine.C: enabled_nuisances filter: {" + list + "}");
+    }
     for (const auto& ch : cfg.channels) {
         logMessage("combine.C: channel=" + ch.name +
                    " root_file=" + ch.root_file +

@@ -2,19 +2,22 @@
   "channels": [
     {
       "name": "fat2",
-      "root_file": "../background_estimation/output/fat2_UParTv2_v2_wloose/qcd_abcd_yields.root",
-      "bdt_root": "../selections/BDT/fat2_UParTv2_v2_wloose"
+      "root_file": "../background_estimation/output/fat2_vjets_full/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/fat2_vjets_full"
     },
     {
       "name": "fat3",
-      "root_file": "../background_estimation/output/fat3_UParTv2_v2_wloose/qcd_abcd_yields.root",
-      "bdt_root": "../selections/BDT/fat3_UParTv2_v2_wloose"
+      "root_file": "../background_estimation/output/fat3_vjets_full/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/fat3_vjets_full"
     }
   ],
-  "output_dir": "./bveto",
+  "output_dir": "./vjets_full",
   "combine_cmd": "combine",
   "combine_cards_cmd": "combineCards.py",
+  "lumi_unc": 0.016,
   "theory_syst_json": "../selections/theory_weights/output/theory_syst_yields.json",
+  "pileup_syst_json": "../selections/pileup_syst/output/pileup_syst_yields.json",
+  "enabled_nuisances": [],
   "use_root_covariance": false,
   "eigen_rel_cutoff": 1e-10,
   "rescale_shape_modes_to_positive": true,

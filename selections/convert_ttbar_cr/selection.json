@@ -1,0 +1,32 @@
+{
+  "event_preselection": "DST_PFScouting_SingleMuon && nScoutingMuonVtx >= 1",
+  "collections": [
+    {
+      "name": "ak8",
+      "source": "ScoutingFatPFJetRecluster",
+      "selection": "1",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "ak4",
+      "source": "ScoutingPFJetRecluster2",
+      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster2_nConstituents > 1 && ScoutingPFJetRecluster2_neHEF < 0.99 && ScoutingPFJetRecluster2_neEmEF < 0.90 && ScoutingPFJetRecluster2_chHadMultiplicity > 0 && ScoutingPFJetRecluster2_muEF < 0.80 && min_deltaR(self, ak8) > 0.8",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "mu_vtx",
+      "source": "ScoutingMuonVtx",
+      "selection": "pt(self) > 10 && abs(eta(self)) < 2.4 && min_deltaR(self, ak8) > 0.8",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "probe",
+      "source": "ScoutingFatPFJetRecluster",
+      "selection": "size(mu_vtx) >= 1 && abs(eta(self)) < 2.4 && abs(deltaPhi(self, mu_vtx[0])) > 1.5708",
+      "sort": "pt(self) desc"
+    }
+  ],
+  "tree_selection": {
+    "ttbar_cr": "size(mu_vtx) >= 1 && size(ak4) >= 1 && size(ak8) >= 1"
+  }
+}
