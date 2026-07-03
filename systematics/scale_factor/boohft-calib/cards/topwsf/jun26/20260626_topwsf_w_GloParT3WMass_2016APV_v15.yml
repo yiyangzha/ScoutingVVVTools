@@ -1,0 +1,25 @@
+extends:
+  - ../base.yml
+  - ../common/samples_run2.yml
+
+routine_name: 20260626_topwsf_w_GloParT3WMass
+category: w
+year: 2016APV
+nano_version: v15
+
+tagger:
+  label: GloParT3 (w/mass) WvsQCD
+  type: w
+  expr: fj_1_globalParT3_withMassWvsQCD
+  span: [0.0, 1.0]
+  wps:
+    mistag5pct: [0.6392, 1.0]
+    mistag2p5pct: [0.8208, 1.0]
+    mistag1pct: [0.9321, 1.0]
+    mistag0p5pct: [0.9658, 1.0]
+    mistag0p1pct: [0.9922, 1.0]
+
+fit_pt_bins:
+  - [200, 300]
+  - [300, 400]
+  - [400, 800]

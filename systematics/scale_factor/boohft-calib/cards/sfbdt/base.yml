@@ -1,0 +1,119 @@
+## This card includes all base configurations for the tool
+## Please do not modify the content here but instead rewrite the item in the calibration config cards
+
+version: v3.1.3
+
+##############################
+## Configuration on modules ##
+##############################
+
+# overall configuration
+workers: [5, 5, 5, 5]  # number of concurrent workers for the coffea and standalone processor
+run_step: 1111  # four bool digits to control whether or not to run each of the four steps
+skip_coffea: false  # if true, skip running the coffea step and directly load the existing results (should guarantee that the coffea step has run before)
+nano_version: v9  # NanoAOD/NanoHRT production version used in output and web directory names
+
+custom_selection: null  # customized event selection, if specified. ('fj_x' is a placeholder of 'fj_1' and 'fj_2')
+custom_sfbdt_path: null  # advanced usage: customized sfBDT model to replace the default one
+custom_sfbdt_kfold: null  # advanced usage: number of fold of the customized sfBDT model
+
+# 2_coastline
+reuse_mc_weight_from_routine: null  # if specified, reuse the MC reweight factors from a previous routine. String format same to dirname: {routine_name}_{year}
+
+# 3_tmpl_writer options
+skip_tmpl_writing: false  # if true, skip the template writing (used for Higgs Combine) during postprocessing
+skip_inclusive_plot_writing: false  # if true, skip writing the inclusive plots for visualization on webpage
+logmsv_div_by_binw: false  # if true, divide the event count by the bin width when making the log(mSV) histogram (the fit variable)
+
+# 4_fit options part A (control overall fit options before entering concurrent fit)
+test_n_fit: -1  # if specify positive number, will only run test_n_fit fits for test
+do_main_fit: true # when true, run the main fit points over all coastline grids, pT, and WPs
+do_sfbdt_rwgt_fit: true # similar for running fit points in sfbdt_rwgt scheme over all coastline grids, pT, and WPs
+do_fit_var_rwgt_fit: true # similar for running fit points in fit_var_rwgt scheme over all coastline grids, pT, and WPs
+run_central_fit_only: false  # if true, only run the central sfBDT fit for each pT and tagger WP
+
+# 4_fit options part B (for fit details in each single fit job)
+set_bounds: null  # if specified, set the boundaries for all POIs in the fit. Syntax: [lower, upper]
+set_bounds_main_poi: null  # if specified, set the boundaries for the main POIs in the fit. Syntax: [lower, upper]
+skip_fit: false  # if true, skip the fit and directly go to plot making with existing results
+run_impact_for_central_fit: true  # when true, also run impact and uncertainty break down for the central fit, which can be more time costly
+run_full_unce_breakdown_for_central_fit: true  # when true, also run full uncertainty break down for the central fit, and get the unce contribution from each source
+
+# 4_fit options part C (for visualizing fit results)
+show_fitvarrwgt_unce: false  # if true, include the fit var reweighting uncertianty in the fit result and put corresponding on web
+show_fit_number_only: false  # if true, only show the fit number on webpage
+show_unce_breakdown: true  # if true, make the uncertainty breakdown plots on web
+show_full_unce_breakdown: true  # if true, make the full uncertainty breakdown plots on web and provide the json file to retrieve the values
+show_sfbdt_variation: true # if true, draw and show the sfBDT variation plots
+show_sfbdt_variation_norun: false # if true, only show the sfBDT variation plots without running the plots again
+show_sfbdt_variation_all_flavour: false  # if true, show all flavour plots for sfBDT variation
+
+
+#######################
+## Predefined values ##
+#######################
+
+lumi_dict: {"2016APV": 19.52, "2016": 16.81, "2017": 41.48, "2018": 59.83}
+
+fileset_template:
+  qcd-mg:  mc/qcd-mg_tree.root
+  top:     mc/top_tree.root
+  v-qq:    mc/v-qq_tree.root
+  jetht:   data/jetht_tree.root
+
+# used HLT_PFHT* branches depend on year
+hlt_branches: 
+  "2016APV": [HLT_PFHT125, HLT_PFHT200, HLT_PFHT250, HLT_PFHT300, HLT_PFHT350, HLT_PFHT400, HLT_PFHT475, HLT_PFHT600, HLT_PFHT650, HLT_PFHT800, HLT_PFHT900]
+  "2016": [HLT_PFHT125, HLT_PFHT200, HLT_PFHT250, HLT_PFHT300, HLT_PFHT350, HLT_PFHT400, HLT_PFHT475, HLT_PFHT600, HLT_PFHT650, HLT_PFHT800, HLT_PFHT900]
+  "2017": [HLT_PFHT180, HLT_PFHT250, HLT_PFHT370, HLT_PFHT430, HLT_PFHT510, HLT_PFHT590, HLT_PFHT680, HLT_PFHT780, HLT_PFHT890, HLT_PFHT1050, HLT_PFHT350]
+  "2018": [HLT_PFHT180, HLT_PFHT250, HLT_PFHT370, HLT_PFHT430, HLT_PFHT510, HLT_PFHT590, HLT_PFHT680, HLT_PFHT780, HLT_PFHT890, HLT_PFHT1050, HLT_PFHT350]
+
+# fine pt bins for reweighting
+rwgt_pt_bins: [[200, 250], [250, 300], [300, 350], [350, 400], [400, 450], [450, 500], [500, 550], [550, 600], [600, 700], [700, 800], [800, 100000]]
+
+# uncertainty list to run
+unce_list: [pu, l1PreFiring, jes, jer, fracBB, fracCC, fracLight, psWeightIsr, psWeightFsr, sfBDTRwgt, fitVarRwgt]
+
+# sfBDT input variable expressions ('fj_x' is a placeholder of 'fj_1' and 'fj_2')
+sfbdt_input_exprs:
+  - fj_x_tau21
+  - fj_x_sj1_rawmass
+  - fj_x_sj2_rawmass
+  - fj_x_ntracks_sv12
+  - fj_x_sj1_sv1_pt
+  - fj_x_sj2_sv1_pt
+
+# mapping the tagger name in NanoAOD and NanoHRT tuples
+tagger_name_replace_map:
+  # ParticleNet MD/non-MD
+  FatJet_particleNetMD_Xbb: fj_x_ParticleNetMD_Xbb
+  FatJet_particleNetMD_Xcc: fj_x_ParticleNetMD_Xcc
+  FatJet_particleNetMD_Xqq: fj_x_ParticleNetMD_Xqq
+  FatJet_particleNetMD_QCD: fj_x_ParticleNetMD_QCD
+  FatJet_particleNetMD_XbbVsQCD: fj_x_ParticleNetMD_XbbVsQCD
+  FatJet_particleNetMD_XccVsQCD: fj_x_ParticleNetMD_XccVsQCD
+  FatJet_particleNetMD_XccOrXqqVsQCD: fj_x_ParticleNetMD_XccOrXqqVsQCD
+  FatJet_particleNetMD_XccOrXqqVsQCD: fj_x_ParticleNetMD_XccOrXqqVsQCD
+  FatJet_particleNet_TvsQCD: fj_x_ParticleNet_TvsQCD
+  FatJet_particleNet_WvsQCD: fj_x_ParticleNet_WvsQCD
+  FatJet_particleNet_ZvsQCD: fj_x_ParticleNet_ZvsQCD
+  # DeepAK8 MD/non-MD
+  FatJet_deepTagMD_ZHbbvsQCD: fj_x_DeepAK8MD_ZHbbvsQCD
+  FatJet_deepTagMD_ZHccvsQCD: fj_x_DeepAK8MD_ZHccvsQCD
+  FatJet_deepTagMD_bbVsLight: fj_x_DeepAK8MD_bbVsLight
+  FatJet_deepTag_TvsQCD: fj_x_DeepAK8_TvsQCD
+  FatJet_deepTag_WvsQCD: fj_x_DeepAK8_WvsQCD
+  FatJet_deepTag_ZvsQCD: fj_x_DeepAK8_ZvsQCD
+  # DeepDoubleX (MD)
+  FatJet_btagDDBvLV2: fj_x_btagDDBvLV2
+  FatJet_btagDDCvBV2: fj_x_btagDDCvBV2
+  FatJet_btagDDCvLV2: fj_x_btagDDCvLV2
+  # others
+  FatJet_btagDeepB: fj_x_btagDeepB
+  FatJet_btagHbb: fj_x_btagHbb
+
+# default working point name mapping
+default_wp_name_map:
+  HP: High Purity
+  MP: Medium Purity
+  LP: Low Purity

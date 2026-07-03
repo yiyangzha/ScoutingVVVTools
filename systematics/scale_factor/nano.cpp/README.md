@@ -1,0 +1,183 @@
+# nano.cpp
+
+`nano.cpp` (also named as `NanoAODTools.Cpp`) is a C++ rewrite of selected [NanoAOD-tools](https://github.com/cms-nanoAOD/nanoAOD-tools)/[NanoHRTTools](https://github.com/hqucms/NanoHRT-tools) workflows.
+
+The goal is to keep the analysis logic human-readable while making the event loop faster and easier to validate. The style is intentionally close to the traditional ROOT event loop:
+
+- read one event
+- build objects
+- apply selections
+- compute new features
+- write a skim tree
+
+The guiding idea is:
+
+> Agents write, you review.
+
+The framework is designed so AI agents can write straightforward C++ while humans can still review the physics logic in a direct, readable way.
+
+## Why This Exists
+
+The original NanoAOD-tools code is Python-based and flexible, but it is not as fast as columnar analysis frameworks such as RDataFrame or awkward-array/coffea. This repository keeps the useful NanoAOD-tools programming model and moves the event processing to C++ for faster ntuplization.
+
+The intended style is explicit event-level code:
+
+```cpp
+auto fatjets = event.collection("FatJet").objects();
+
+for (auto &jet : event.collection("Jet").objects()) {
+  const auto btag = jet.get<float>("btagUParTAK4B");
+  if (jet.pt() > 30.0f && std::abs(jet.eta()) < 2.4f && btag > btag_wp) {
+    bjets.push_back(jet);
+  }
+}
+
+event.set("bjets", bjets);
+event.set("leptonicW", leptonic_w);
+
+for (auto &fj : fatjets) {
+  fj.set("subjets", linked_subjets);
+  fj.set("dr_T", delta_r_to_top);
+  fj.set("is_qualified", true);
+}
+```
+
+In practice this means:
+
+- Object collections are accessed from the event, for example `event.collection("FatJet")`.
+- NanoAOD branches are accessed as typed object attributes, for example `fj.get<float>("msoftdrop")`.
+- New event-level values can be attached to `event`, for example:
+  - attach selected muons: `event.set("muons", selected_muons);`
+  - attach corrected MET: `event.set("met_pt", corrected_met_pt);`
+  - attach the reconstructed W candidate: `event.set("leptonicW", leptonic_w);`
+- New object-level features can be attached to each object, for example:
+  - attach corrected four-vectors: `auto corrected_p4 = polar_p4(obj); obj.set("p4", corrected_p4);`
+  - attach linked subjets to a given fatjet: `fj.set("subjets", linked_subjets);`
+- Channel producers are plain C++ event loops. In the main `analyze()` function, use `return false` to veto an event.
+- A YAML card in `configs/run/` contains all information to guide the run.
+- Corrections use modern correctionlib payloads where possible. JEC and MET corrections build on the
+  [CMSJMECalculators](https://gitlab.cern.ch/cms-analysis/general/CMSJMECalculators) project.
+
+You do not need to write this code or worry about C++ syntax; agents will fill in the implementation, and you only need to review it.
+
+## Current Scope
+
+The implemented channels are:
+
+- `muon`: a heavy-flavour muon control region targeting semileptonic ttbar-like phase space, enriched in boosted top/W jets.
+- `scouting_muon`: a ScoutingNano semileptonic ttbar muon tag-and-probe stream for AK8 W/top scale-factor ntuples. It uses `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, `ScoutingMET`, and Scouting trigger branches such as `DST_PFScouting_SingleMuon`; it does not use offline reco `Muon`, `FatJet`, `Jet`, or offline MET branches for analysis objects. The checked-in Scouting card uses strict branch binding; data jobs drop MC-only branches, MC jobs require `GenJet_*`, and missing `GenPart_*` warns in the affected job log before falling back to default W/Z matches with `GenJet` flavour hints.
+- `minimal`: a lightweight boosted-AK8 stream that runs the shared lepton cleaning, JME, and fatjet preparation, then keeps the leading cleaned AK8 jet above the configured `channels.minimal.leading_fatjet_pt_min` threshold.
+
+Main files:
+
+- `app/nano_run.cpp`: local runner.
+- `app/nano_make_condor.cpp`: Condor submission builder.
+- `configs/run/`: runnable YAML cards.
+- `configs/common/`: shared NanoAOD branch catalogues, input branch manifests, and stored tagger manifests.
+- `configs/samples/`: dataset YAML files for batch submission.
+
+For agents: for framework details, read `docs/framework-structure.md`.
+
+## Build the Project
+
+Use the ROOT/LCG runtime before configuring, building, or running:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc13-opt/setup.sh
+```
+
+Build:
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+```
+
+## Process One Input
+
+Example using a local validation file:
+
+```bash
+build/nano_run \
+  --input-files /store/mc/RunIISummer20UL18NanoAODv9/TTToSemiLeptonic_TuneCP5_13TeV-powheg-pythia8/NANOAODSIM/106X_upgrade2018_realistic_v16_L1v1-v1/120000/87DEE912-70CF-A549-B10B-1A229B256E88.root \
+  --output-file muon_2018_test.root \
+  --config configs/run/muon_2018_v9.yaml \
+  --channel muon \
+  --num-events 5000
+```
+
+`--input-files` accepts one file or a comma-separated list. Local paths, `root://...` paths, and `/store/...` paths are supported.
+
+If `--variations` is omitted, it defaults to `nominal`. Outputs are always written with a variation suffix, so the example above writes `muon_2018_test_nominal.root`.
+
+Useful options:
+
+```bash
+--tree-name Events
+--set output.include_lhe_weights=true
+--variations nominal,jes_up,jes_down
+```
+
+`--variations` takes a comma-separated list and writes one ROOT file per requested variation. Supported JME names currently include `nominal`, `jes_up`, `jes_down`, `jer_up`, `jer_down`, `met_up`, and `met_down`.
+
+For ScoutingNano scale-factor ntuples, use:
+
+```bash
+build/nano_run \
+  --input-files /path/to/scoutingnano.root \
+  --output-file scouting_muon_2024_test.root \
+  --config configs/run/scouting_muon_2024_v15.yaml \
+  --channel scouting_muon \
+  --num-events 5000
+```
+
+The `scouting_muon` channel currently supports nominal output only. Keep JES/JER/MET shape variations disabled in the top-level scale-factor config until the Scouting-specific JME path is implemented.
+
+## Run Validation
+
+See [tests/README.md](tests/README.md).
+
+## Make Condor Jobs
+
+Create a Condor work directory from a sample YAML:
+
+```bash
+build/nano_make_condor \
+  --input-yaml configs/samples/muon_2018_v9_MC.yaml \
+  --job-dir jobs/condor_muon_2018_v9_MC \
+  --output-dir /path/to/output \
+  --config configs/run/muon_2018_v9.yaml \
+  --channel muon \
+  --nfiles-per-job 5 \
+  --num-events -1 \
+  --download-remote-inputs
+```
+
+This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, and writes `submit.jdl`.
+
+Submit manually:
+
+```bash
+cd jobs/condor_muon_2018_v9_MC
+condor_submit submit.jdl
+```
+
+Each job runs `process.sh`, unpacks the repository, builds it if needed, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
+
+Use `--no-download-remote-inputs` to make Condor jobs stream remote `root://` inputs directly instead of staging them with `xrdcp`.
+
+After jobs finish, return to the repository root and merge Condor pieces with:
+
+```bash
+build/nano_merge /path/to/output
+```
+
+Pass the base output directory, not the `pieces/` subdirectory. `nano_merge` reads input pieces from `<output-dir>/pieces/`.
+
+It first writes merged ROOT files to a temporary directory, then copies all merged outputs back under `<output-dir>/`.
+
+## Adding Channels
+
+Follow `docs/create-new-channel.md`.
+
+The intended workflow is that you define the physics purpose and review the logic, while agents help write a new channel by following the existing producer pattern.

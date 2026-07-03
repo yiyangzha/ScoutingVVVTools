@@ -1,0 +1,20 @@
+universe = vanilla
+executable = process.sh
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT_OR_EVICT
+transfer_input_files = repo.tar.gz,config_snapshot.yaml,job_manifest.json
+transfer_output_files = dummy.cc
+use_x509userproxy = true
+
++JobFlavour = "tomorrow"
+
+environment = "DOWNLOAD_FILE=@DOWNLOAD_REMOTE_INPUTS@"
+output = logs/$(Cluster).$(Process).out
+error = logs/$(Cluster).$(Process).err
+log = logs/$(Cluster).log
+
+request_cpus = 1
+
+arguments = $(job_index) @TREE_NAME@ @NUM_EVENTS@ config_snapshot.yaml @CHANNEL@ @VARIATIONS@ @RUN_DATA@
+queue job_index from job_indices.txt

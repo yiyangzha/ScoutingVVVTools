@@ -1,0 +1,55 @@
+{
+  "sample_config": "../../src/sample.json",
+  "year": "2024",
+  "nano_version": "v15",
+  "run_targets": [
+    {
+      "jet_type": "ak8",
+      "jet_category": "W",
+      "taggers": ["WvsQCD", "ZvsQCD", "VvsQCD"]
+    }
+  ],
+  "ntuple": {
+    "engine": "nano.cpp",
+    "repo": "nano.cpp",
+    "channel": "scouting_muon",
+    "tree_name": "Events",
+    "config": "nano.cpp/configs/run/scouting_muon_2024_v15.yaml",
+    "sample_base": "output/ntuples/topwsf_scouting_muon",
+    "generated_sample_dir": "generated/samples",
+    "job_dir": "jobs/ntuples/{jet_type}_{jet_category}_{year}_{sample_set}",
+    "nfiles_per_job": 5,
+    "num_events": -1,
+    "build_before_make_condor": true,
+    "run_make_condor": true,
+    "submit_condor": false,
+    "download_remote_inputs": false,
+    "variations": {
+      "nominal": true,
+      "jes": false,
+      "jer": false,
+      "met": false
+    },
+    "samples": {
+      "data": ["data_2024"],
+      "mc_groups": {
+        "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
+        "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],
+        "diboson": ["WWToLNu2Q", "WZtoLNu2Q", "WZto2L2Q", "ZZto2L2Q"],
+        "w": [
+          "wlnu_h40to100_m0to120",
+          "wlnu_h100to400_m0to120",
+          "wlnu_h100to400_m120",
+          "wlnu_h400to800_m0to120",
+          "wlnu_h400to800_m120",
+          "wlnu_h800to1500_m0to120",
+          "wlnu_h800to1500_m120",
+          "wlnu_h1500to2500_m0to120",
+          "wlnu_h1500to2500_m120",
+          "wlnu_h2500_m0to120",
+          "wlnu_h2500_m120"
+        ]
+      }
+    }
+  }
+}

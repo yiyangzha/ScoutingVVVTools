@@ -1,0 +1,25 @@
+extends:
+  - ../base.yml
+  - ../common/samples_run2.yml
+
+routine_name: 20260626_topwsf_w_PNetWMass
+category: w
+year: 2016APV
+nano_version: v9
+
+tagger:
+  label: ParticleNet (w/mass) WvsQCD
+  type: w
+  expr: fj_1_particleNet_WvsQCD
+  span: [0.0, 1.0]
+  wps:
+    mistag5pct: [0.7153, 1.0]
+    mistag2p5pct: [0.8652, 1.0]
+    mistag1pct: [0.9497, 1.0]
+    mistag0p5pct: [0.9751, 1.0]
+    mistag0p1pct: [0.9937, 1.0]
+
+fit_pt_bins:
+  - [200, 300]
+  - [300, 400]
+  - [400, 800]

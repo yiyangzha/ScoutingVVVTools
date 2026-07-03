@@ -1,0 +1,22 @@
+# Minimal channel runtime card for 2023BPix v12.
+# Common NanoAOD branches, stored taggers, and input branch manifests
+# are inherited from configs/common/*.yaml.
+
+extends:
+  - ../base.yaml
+  - ../common/nano_branches_v12.yaml
+  - ../common/stored_tagger_names_v12.yaml
+  - ../common/read_branches_v12.yaml
+
+era: "2023BPix"
+nano_version: "v12"
+
+# ROOT/TTree preselection applied before the event loop.
+preselection: nFatJet>0
+
+required_triggers: []
+
+# Minimal-channel scalar options. These override configs/base.yaml defaults.
+channels:
+  minimal:
+    leading_fatjet_pt_min: 400.0

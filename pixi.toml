@@ -6,6 +6,12 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+pileup = "./run.sh 1"
+convert = "./run.sh 0"
+mix = "./run.sh 6"
+train = "./run.sh 2"
+scale-factor-ntuple = "python3 run.py 11"
+scale-factor-fit = "python3 run.py 12"
 
 [dependencies]
 python = "3.11.*"
@@ -15,3 +21,14 @@ uproot = ">=5.7.4,<6"
 matplotlib = ">=3.11.0,<4"
 mplhep = ">=1.2.0,<2"
 xgboost = ">=3.2.0,<4"
+pyyaml = ">=6.0.3,<7"
+awkward = ">=2.8.0,<3"
+coffea = ">=2026.1.0"
+hist = ">=2.9.0,<3"
+boost-histogram = ">=1.6.0,<2"
+correctionlib = ">=2.8.0,<3"
+scipy = ">=1.16.0,<2"
+numba = ">=0.63.0,<1"
+seaborn = ">=0.14.0,<1"
+tqdm = ">=4.67.0,<5"
+yaml-cpp = ">=0.8.0,<0.9"

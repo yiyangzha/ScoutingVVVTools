@@ -1,105 +1,113 @@
 # ScoutingVVVTools
 
-CMS scouting VVV analysis workflow for pileup reweighting, branch conversion, optional sample-entry mixing, BDT/NN training, signal-region optimization, QCD ABCD estimation, data/MC plotting, and CMS combine significance/limits.
+CMS Run 3 Scouting VVV analysis tools. The main workflow converts ScoutingNano ROOT files, trains BDT/NN models, defines signal regions, validates QCD with ABCD, plots data/MC, and runs CMS combine. A separate `systematics/scale_factor` workflow derives AK8/AK4 tagger scale factors from semileptonic ttbar muon tag-and-probe ntuples.
 
-## Pipeline order
+## Environment
 
-1. `mode=1`: build pileup-weight CSV files.
-2. `mode=0`: convert the selected NanoAOD-style inputs into `fat2` and `fat3` ROOT trees.
-3. `mode=6`: shuffle each selected MC sample across its ROOT chunks while preserving chunk sizes and filenames, using a deterministic block shuffle that keeps ROOT reads mostly sequential.
-4. `mode=2`: train the BDT or PyTorch NN and save the model plus copied configs. The checked-in config reads from `dataset/{signal_mixed|bkg_mixed}` by default and uses `model_type: "bdt"` unless changed.
-5. `mode=3`: scan the test split and write `signal_region.csv`.
-6. `mode=5`: run the QCD ABCD validation on the MC test split.
-7. `mode=4`: make data/MC comparison plots.
-8. `mode=7`: run the CMS combine wrapper to compute expected significance and AsymptoticLimits per signal class / signal sample / combined, both with the MC-true QCD class yields and with the merged ABCD QCD prediction.
+Use the project's normal ROOT/CMSSW environment on the batch machine. The Python environment is described by `pixi.toml`; it includes the Python packages needed by training, plotting, coffea/topwsf, and the scale-factor controller. The C++ tools also require ROOT, XRootD, C++17, and `root-config`.
 
-`selections/b_veto/` and `systematics/` are separate studies and are not launched through `run.sh`.
+Do not use the scale-factor ntuple step as a replacement for `selections/convert`: it reads ScoutingNano directly and writes topwsf ntuples, not `fat2`/`fat3` BDT trees.
 
-## `run.sh`
-
-Usage:
+## Main Commands
 
 ```bash
-./run.sh <mode> [config.json] [sample1 sample2 ...]
+# pileup weights
+./run.sh 1 [selections/weight/config.json] [sample ...]
+
+# convert ScoutingNano to fat2/fat3 analysis trees
+./run.sh 0 [selections/convert/config.json] [sample ...]
+
+# shuffle converted MC chunks for stable train/test splitting
+./run.sh 6 [selections/mix/config.json] [sample ...]
+
+# train BDT or NN models
+./run.sh 2 [selections/BDT/config.json]
+
+# optimize signal regions and run QCD ABCD
+./run.sh 3 [selections/signal_region/config.json]
+./run.sh 5 [background_estimation/config.json]
+
+# data/MC plots and combine
+./run.sh 4 [plotting/config.json]
+./run.sh 7 [combine/config.json]
 ```
 
-Examples:
+`run.py` supports SLURM for the sample-parallel C++ modes:
 
 ```bash
-./run.sh 1
-./run.sh 0
-./run.sh 0 selections/convert/config.json www qcd_ht2000
-./run.sh 6
-./run.sh 6 selections/mix/config.json www
-./run.sh 2
-./run.sh 3 selections/signal_region/config.json
-./run.sh 5 background_estimation/config.json
-./run.sh 4 plotting/config.json
-./run.sh 7 combine/config.json
+python3 run.py 0 selections/convert/config.json --slurm [sample ...]
+python3 run.py 6 selections/mix/config.json --slurm [sample ...]
 ```
 
-Modes:
+For local parallelism in sample modes, use `--max-jobs N`. Controller logs are written to the mode directory as `log.txt`; batch job stdout/stderr stays in per-job logs, as in the convert SLURM workflow.
 
-- `mode=0`: compile and run `selections/convert/convert_branch.C`.
-  Input: `selections/convert/config.json`, `selections/convert/branch.json`, `selections/convert/selection.json`, `src/sample.json`, and the pileup CSVs from `mode=1`.
-  Output: converted ROOT files under `{output_root}/{signal|bkg|data}/`, plus `selections/convert/log.txt`. `run.sh mode=0` now asks `convert_branch.C` for the batch count and invokes it once per batch, so each program invocation reads at most `actual_thread_count * 6` input files. Each batch is written first to `{output_root}/{sample_group}_tmp/{sample}_X.root`; the final batch updates `raw_entries` once using the whole-sample entry total accumulated across batch bookkeeping and then merges those batch files into the normal final `output_pattern` while still honoring `max_output_file_size_gb`. `resume_successful_batches` defaults to `true`; when enabled, mode 0 requires exactly one actually selected sample and skips only existing batch outputs whose ROOT file opens with every configured output tree and whose `.raw_entries` sidecar is readable, preserving those files for the final merge. Remote ROOT input open failures are retried five times before the batch fails and the run continues to the next batch. Convert resolves configured output, pileup, branch, and selection paths to absolute paths at startup to reduce sensitivity to stale cwd state in long AFS/NFS jobs. The final writer streams each tree through a `TChain` clone owned by the chain itself, so branch addresses stay correct when ROOT advances across temp-file boundaries, and it aborts on any chunk/tree entry-count mismatch instead of silently writing too few or repeated entries. The convert expression engine includes collection helpers such as `sum`, `max_value`, `min_value`, `nth_max_value(collection, expr, rank, default)`, `value_at_max(collection, key_expr, value_expr, default)`, and `value_at_nth_max(collection, key_expr, value_expr, rank, default)`; the checked-in output branch config writes per-AK8 `WvsQCD` and `VvsQCD` scores, event-level `ScoutingFatPFJetRecluster_{WvsQCD,VvsQCD}_{sum,max}` summaries, and AK4 b-tag summaries including `ScoutingPFJetRecluster2_scoutUParT_probb_max_pt`, `ScoutingPFJetRecluster2_scoutUParT_probb_sum`, `ScoutingPFJetRecluster2_scoutUParT_probb_second_max`, and `ScoutingPFJetRecluster2_scoutUParT_probb_second_max_pt` for both `fat2` and `fat3`.
-  The pileup root files can be obtained from using wget on these links: https://cms-service-dqmdc.web.cern.ch/CAF/certification/Collisions24/PileUp/dataPileupHistogram-2024CDEFGHI_Golden-66000ub.root, https://cms-service-dqmdc.web.cern.ch/CAF/certification/Collisions24/PileUp/dataPileupHistogram-2024CDEFGHI_Golden-69200ub.root, https://cms-service-dqmdc.web.cern.ch/CAF/certification/Collisions24/PileUp/dataPileupHistogram-2024CDEFGHI_Golden-72400ub.root
-- `mode=1`: compile and run `selections/weight/weight.C`.
-  Input: `selections/weight/config.json` and `src/sample.json`.
-  Output: pileup CSV files under the configured `output_root`, plus `selections/weight/log.txt`.
-- `mode=6`: compile and run `selections/mix/mix.C`.
-  Input: `selections/mix/config.json`, `src/sample.json`, and the converted MC ROOT files from `mode=0`.
-  Output: shuffled ROOT files under the configured `output_root/{signal_mixed|bkg_mixed}/`, preserving the original chunk filenames and per-chunk entry counts while applying a deterministic per-tree block shuffle for each selected MC sample, plus `selections/mix/log.txt`. Missing input files for a requested sample are fatal. The implementation scans input chunk entry counts first (warming ROOT serially, then using OpenMP across the remaining files when available) and then rewrites each tree through a `TChain` using shuffled contiguous entry blocks plus an in-block cyclic rotation. Each non-empty output chunk is cloned from the `TChain` itself so ROOT keeps branch addresses synced across input-file boundaries, and the writer validates both per-chunk and total entry counts before closing. The block size is chosen as `clamp(total_entries / 512, min_block_entries, max_block_entries)`; the checked-in defaults are `32` and `4096`. This keeps the output format unchanged while avoiding the old fully random entry-by-entry ROOT read pattern.
-- `mode=2`: run `selections/BDT/train.py`.
-  Input: `selections/BDT/config.json`, the ROOT files resolved from its `input_root` / `input_pattern` (the checked-in config points to the mixed `mode=6` output under `../../dataset/{sample_group}_mixed`), and `src/sample.json`.
-  Output: one trained model directory per tree under `output_root`. With `model_type: "bdt"` it contains `{tree}_model.json` and `{tree}_model_stage1.json`; with `model_type: "nn"` it contains PyTorch checkpoints `{tree}_model.pt` and `{tree}_model_stage1.pt` and requires PyTorch at training/inference time. The rest of the output layout is shared: `feature_corr.pdf`, loss plots (`loss_mlogloss.pdf` / `loss_classification.pdf` / `loss_total.pdf` for BDT or `loss_weighted_ce.pdf` / `loss_objective.pdf` for NN, plus `loss_decorrelation.pdf`; NN x-axes are epochs, BDT x-axes are boosting rounds), stage-tagged comparison plots such as `importance_cls.pdf` / `importance_decorr.pdf`, `roc_*_cls.pdf` / `roc_*_decorr.pdf`, `score_*_cls.pdf` / `score_*_decorr.pdf`, `decor_corr_{train,test}_cls.pdf` / `decor_corr_{train,test}_decorr.pdf`, `decor_score_vs_branch_cls.pdf` / `decor_score_vs_branch_decorr.pdf`, and `decor_branch_shapes_by_signal_score_cls.pdf` / `decor_branch_shapes_by_signal_score_decorr.pdf`. BDT feature importance uses XGBoost gain; NN feature importance uses deterministic permutation importance while preserving the same filenames. The output also includes a `branches/` subdirectory with one normalized per-class input-distribution PDF per training branch, copied `config.json` / `branch.json` / `selection.json`, `test_ranges.json`, and the saved test-set prediction references `test_reference_signal_region.npz`, `test_reference_qcd_est.npz`, and `test_reference_qcd_est_full.npz`, plus `selections/BDT/log.txt`. Both model types keep the same sample splitting, clipping/log preprocessing, event-weight construction, dynamic learning-rate reduction, prediction-reference validation, and downstream score interface. Per-tree `qcd_ht_training_weight_step` scales only the internal train.py training/evaluation `weight` for `qcd_ht*` samples in increasing HT order before the existing class balancing; saved prediction-reference weights keep the original physics `weight_physics`. When a per-tree `decorrelate` branch also appears in `selection.json` thresholds, that branch's threshold is normally omitted from the training/early-stopping objective splits and their class balancing; for decorrelate branches named `ScoutingFatPFJetRecluster_msoftdrop_*`, the training view instead applies a loose `(0, decor_msoftdrop_training_max)` window when that branch has a selection threshold. Ordinary branch, ROC, score, feature-importance, feature-correlation, and downstream reference outputs still use the full threshold set, while decorrelation diagnostics use the training-threshold view. BDT logs sum-scale `classification_loss` and stage 1 monitors test `classification_loss`; NN uses class-balanced mini-batches with sampling-corrected event weights for `backward()` and logs epoch-end eval-mode `train_objective_loss` / `test_objective_loss`, where stage 1 uses `objective_loss = weighted_CE` and stage 2 uses `objective_loss = weighted_CE + scaled_smooth_CvM_decorrelation`. NN early stopping monitors epoch-end test `objective_loss` in both stages, and AdamW `weight_decay` remains native decoupled optimizer behavior rather than a logged loss term. In NN mode, per-tree `fat2_nn` / `fat3_nn` blocks configure the PyTorch MLP (`hidden_layers`, `dropout`, `batch_norm`, `batch_size`, learning rates, weight decay, epochs, and permutation-importance event count); `batch_size` is the total size of each class-balanced mini-batch, the checked-in NN blocks set `batch_norm: false`, and smooth-CvM decorrelation is supported in the second NN stage with decorrelation scale calibrated against the stage-1 batch-averaged weighted CE.
-- `mode=3`: run `selections/signal_region/signal_region.py`.
-  Input: `selections/signal_region/config.json` and one trained model directory from `mode=2`.
-  Output: `sr_score_*.pdf`, `scores_no_regions.pdf`, `scores.pdf`, `scores_no_regions_radial_equalized.pdf`, `scores_radial_equalized.pdf`, and `signal_region.csv` inside the configured `output_dir`, plus `selections/signal_region/log.txt`. The 2D score PDFs use the shared class palette, hide coordinate axes/ticks/frames, and include both the original regular-polygon simplex projection and a radial-equalized projection that keeps polygon vertices fixed while spreading points outward. The script builds one shared candidate pool of general high-dimensional rectangles over the configured BDT `score_axes` (`all` in the checked-in config), where every score axis has an independent `[low, high)` interval and can therefore represent simultaneous lower and upper cuts. Candidate generation combines dense per-axis boundary sets from total/signal/background weighted quantiles plus tail-heavy quantiles, explicit low/mid/high-tail single-axis seeds from `seed_quantiles`, exact single-axis bounded interval seeds, optional bounded multi-axis seed combinations, deterministic beam coordinate search where every per-axis update scans exact `[edges[a], edges[b])` intervals, compatibility expansion that optimizes regions constrained to be non-overlapping with high-Z anchor candidates, and local event-threshold refinement. Independent edge building, beam updates, compatibility updates, local-refinement workers, and event-mask canonicalization can use `max_threads`, but each stage merges results in deterministic scan order so the candidate set is unchanged by threading. No candidate-pool or global-candidate count limit is applied; candidates are removed only by rounded geometry duplicates and by final exact event-mask/canonical-box deduplication. Before global selection, every retained candidate is shrunk to an event-preserving minimal score box; candidates are deduped only when they select the same exact event mask and shrink to the same canonical box. The final selection is global rather than sequential: it searches K mutually non-overlapping candidates and maximizes the existing combined objective `sqrt(sum Z_i^2)`, with Python and OpenMP compatibility checks using the same exact half-open `[low, high)` overlap semantics as event-mask membership. The OpenMP helper first finds a beam incumbent and then runs branch-and-bound; if the search completes, the result is exact for the finite candidate list, while node caps produce a conservative upper-bound certificate. After the K non-overlapping SRs are selected, an empty-bin expansion step runs in order SR1, SR2, …: each SR has its signal-class score-axis upper bounds pushed toward `1.0` and its background-class score-axis lower bounds pushed toward `0.0`, but only into space that is empty in MC under the SR's other-axis cuts and only as far as the expanded box remains geometrically non-overlapping with every other selected SR. The expansion is constrained to keep each SR's exact selected event mask, so per-bin `S`/`B`/`Z` are numerically unchanged; only the empty-side score-axis bounds in `signal_region.csv` are widened. Before scanning, the script reloads the saved model, reproduces the saved full-threshold signal-region test prediction, and aborts if it does not match `test_reference_signal_region.npz` within the stored tolerances.
-- `mode=4`: run `plotting/data_mc.py`.
-  Input: `plotting/config.json`, `plotting/branch.json`, the converted ROOT files from `mode=0`, and one trained model directory from `mode=2`.
-  Output: one physical-normalization PDF per plotted branch under the configured `output_root`, plus a matching `{tree_name}_{branch}_normal.pdf` where the data histogram integral and total stacked MC histogram integral are each scaled to 1 with `A.U.` on the y-axis, plus `plotting/log.txt`. Ordinary ROOT branches are discovered from the convert output config and are not limited to the BDT input branch list. MC uses the configured trained-model input pattern for ordinary ROOT branches and reads at most the copied BDT config's `entries_per_sample` entries per sample while keeping the same full-sample normalization. Data reads all configured entries from the non-mixed data directory: if the copied pattern contains `{sample_group}_mixed`, data resolves it as `{sample_group}` and therefore uses `data`, not `data_mixed`. Missing sample files, empty MC trees/classes before filtering, and non-positive MC `raw_entries` are treated as fatal errors. In addition to ROOT branches, one derived model score branch per class is plotted as `score_{class_name}`. For those score branches, MC is read from `bdt_root/test_ranges.json`, validated against `test_reference_signal_region.npz`, and normalised to the same full-sample target total while data is predicted from the full configured `data_samples` input. The script loads `.json`/`.pkl` BDT models or `.pt` NN checkpoints according to the copied `model_type`.
-- `mode=5`: run `background_estimation/qcd_est.py`.
-  Input: `background_estimation/config.json`, one trained model directory from `mode=2`, and the `signal_region.csv` written by `mode=3`.
-  Output: ABCD summary PDFs and one ROOT file under the configured `output_dir`, plus `background_estimation/log.txt`. The validation PDFs keep the finite-MC / ABCD-propagated uncertainties based on `sum(w^2)`. The `qcd_abcd_region_counts.pdf` and `qcd_abcd_region_fractions.pdf` summaries are stacked by the BDT `class_groups` classes with a shared fixed class palette; additional colors are generated deterministically when there are more classes than base colors, and `qcd_abcd_region_counts_linear.pdf` saves the same counts with a linear y axis. The QCD-merged summaries (`qcd_abcd_region_counts_qcd_merged.pdf`, `qcd_abcd_region_counts_qcd_merged_linear.pdf`, and `qcd_abcd_region_fractions_qcd_merged.pdf`) combine every `class_groups` class whose name contains `qcd` case-insensitively into one `QCD` stack color and legend entry, leaving non-QCD classes unchanged. Optional per-tree `a_region_shape_branches` entries add normalized branch-shape diagnostics under `output_dir/a_region_shapes/`: for each configured branch, qcd_est writes one PDF for every signal bin plus one PDF for the full A-union, with one unit-area weighted step histogram per class and no ABCD prediction scaling; values `<= -10` are dropped before binning/normalization so missing-slot values such as `-99` do not set the visible range. The ROOT file stores combine-facing bundles for every saved category (`samples/*`, `groups/*`, `qcd_predict`, `qcd_true`, `total_predict`, and `total_true`) as `srN/yield`, `srN/stat_error`, and `srN/scale_error` one-bin histograms plus a category-level `covariance_total` TH2. The combine-facing convention is `stat_error = sqrt(yield)`, `scale_error = 0`, and diagonal `covariance_total = diag(yield)`, so the weighted yield is treated as the Poisson event count. QCD classes are identified by `class_groups` names containing `qcd` case-insensitively; all samples from those classes are summed for the ABCD `A/B/C/D` totals, `qcd_true`, `qcd_predict`, and `total_predict`, while the per-class `groups/*` outputs remain MC-true. The signal-region score axes are detected from the CSV `{axis}_low` / `{axis}_high` columns, so the ABCD step can consume either the legacy independent axes or the new all-score-axis regions. The non-score ABCD dimension is configured by required per-tree `abcd_branches`; every listed branch must have a threshold in the copied BDT `selection.json`, A/B require all listed branches to pass, C/D require all listed branches to fail, and partial pass/fail events are excluded. Before building the ABCD regions, the script reloads the saved model, validates against `test_reference_qcd_est_full.npz` when present (falling back to the legacy filtered `test_reference_qcd_est.npz`), and aborts on mismatch.
-- `mode=7`: compile and run `combine/combine.C`.
-  Input: `combine/config.json` (lists one or more channels, each pointing to a `qcd_abcd_yields.root` from `mode=5`) plus one trained `bdt_root` directory from `mode=2`. `combine.C` reads `class_groups` from `bdt_root/config.json`, then resolves that copied config's `sample_config` the same way as `qcd_est.py` so the signal/background-class split still comes from `sample.json`. Group names from `class_groups` are matched against `groups/*` in the ROOT file by the same slugified lowercase convention used by `qcd_est.py`, and QCD classes are the class names containing `qcd` case-insensitively. Must be executed inside a CMSSW area that has `HiggsAnalysis/CombinedLimit` built, so that `combine` and `combineCards.py` are on `$PATH`.
-  Output: `significance.csv`, `limits.csv`, `significance_abcd_mc.csv`, `limits_abcd_mc.csv`, `significance_by_channel.csv`, `limits_by_channel.csv`, `significance_by_channel_abcd_mc.csv`, and `limits_by_channel_abcd_mc.csv` under the configured `output_dir`, plus `combine/log.txt`. Each CSV has one row per signal scenario (combined / per-signal-class / per-signal-sample); the per-channel CSVs add a `channel` column and rerun the same scenarios using one channel at a time. The wrapper reads every SR from the new `srN/yield` one-bin histograms and, by default (`use_root_covariance=false`), writes pure counting datacards with one independent bin per SR (`<channel>_sr<N>`). Combine's native Poisson likelihood then provides the statistical uncertainty; this matches the signal-region Asimov significance convention, avoids double-counting the same counting fluctuation as a Gaussian nuisance, and avoids the old multi-bin shape-PDF factorization warning. The `_abcd_mc.csv` CSVs replace all QCD classes with the single merged `qcd_predict` block while keeping the non-QCD processes on their MC-true group/sample blocks. The wrapper validates every required signal sample/group and aborts on missing inputs or invalid shapes instead of regularizing the yields. If `use_root_covariance=true`, the full per-process covariance between signal regions is additionally injected via an eigen-decomposition of each process's `covariance_total`, one Gaussian shape nuisance per retained eigenmode, using one-bin shape templates for each SR. In that optional mode, when `rescale_shape_modes_to_positive` is `true` (default), any background process whose nominal yields and covariance are identically zero across all SRs is dropped before writing the datacard, and any eigenmode whose raw `±1σ` templates would make a varying bin negative or a total template norm non-positive is shrunk to the largest safe step below that boundary; the datacard `shape` coefficient is rescaled by `1/a`, zero-valued bins are allowed as long as the varied templates stay non-negative and keep strictly positive total norms, and every drop/rescale is written as a warning to `combine/log.txt`. If a per-sample signal process is identically zero in some channels, those channels are skipped with a warning; if it is identically zero in every channel, the wrapper records `0` significance and `inf` expected limits for that row and continues. If `AsymptoticLimits` finishes successfully but its ROOT output still lacks the expected quantiles, the wrapper logs a warning, records `0` for that row's significance and `inf` for its expected limits in the CSVs, and continues. A temporary work directory is kept under `output_dir/work/` with the generated datacards and combine outputs; optional covariance-nuisance shape ROOT files are written only when `use_root_covariance=true`.
+## Scale Factors
 
-Sample arguments:
+The AK8 W-tagger calibration currently runs only:
 
-- Extra sample names are supported only for `mode=0`, `mode=1`, and `mode=6`.
-- If no sample names are given, `run.sh` uses `submit_samples` from the chosen config.
-- If `submit_samples` is empty or missing, all MC samples in `src/sample.json` are used.
+- jet type/category: `ak8` / `W`
+- taggers: `WvsQCD`, `ZvsQCD`, `VvsQCD`
+- data: `data_2024` with `DST_PFScouting_SingleMuon`
 
-Log archiving:
+Step 1 prepares or submits `nano.cpp` Condor jobs from ScoutingNano:
 
-- After the final `[finished …]` line is written, `run.sh` copies the per-mode `log.txt` into the program's configured output directory.
-- Applies to `mode=1` (`output_root`), `mode=2` / `mode=4` (per-tree `output_root` expanded over `submit_trees`), and `mode=3` / `mode=5` / `mode=7` (`output_dir`). `mode=0` (`convert_branch`) and `mode=6` (`mix`) are intentionally skipped.
-- The copy runs on both success and failure; if the resolved output dir does not yet exist (e.g., the run aborted before creating it), the copy is skipped with a warning instead of erroring.
+```bash
+python3 run.py 11
+# default config: systematics/scale_factor/ntuple_config.json
+```
 
-## Main JSON files
+Important `ntuple_config.json` fields:
 
-- `src/sample.json`: master sample registry with `name`, `path`, `sample_ID`, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`.
-- `selections/weight/config.json`: pileup histogram inputs and pileup-weight output paths.
-- `selections/convert/config.json`: convert-step paths, threading, file-size splitting, `resume_successful_batches` for single-sample batch resumption, and pileup CSV pattern.
-- `selections/mix/config.json`: mix-step tree selection, input/output ROOT roots and patterns, sample config, threading for the input-chunk scan, deterministic `random_state`, and the block-size bounds `min_block_entries` / `max_block_entries` (default `32` / `4096`).
-- `selections/convert/selection.json`: event selection and tree split (`fat2` / `fat3`).
-- `selections/convert/branch.json`: input branches to read and output branches to write.
-- `selections/BDT/config.json`: model inputs, `input_root` / `input_pattern`, class groups, training settings, output directories, top-level `model_type` (`bdt` or `nn`, default `bdt`), top-level `decor_loss_mode`, `decor_lambda`, `decor_n_bins`, `decor_n_thresholds`, `decor_score_tau`, `decor_bin_tau_scale`, `decor_msoftdrop_training_max` (positive upper edge for the loose `(0, max)` training window used only when a decorrelate branch named `ScoutingFatPFJetRecluster_msoftdrop_*` also has a `selection.json` threshold), per-tree BDT hyperparameters (`n_estimators`, `n_estimators_decorr`, `max_depth`, `learning_rate`, `learning_rate_decorr`, optional `min_learning_rate` / `lr_reduce_patience`, `gamma`, `reg_lambda`, `reg_alpha`, `min_child_weight`, `subsample`, `colsample_bytree`, optional `colsample_bynode`, `early_stopping_rounds`), per-tree NN hyperparameters in `fat2_nn` / `fat3_nn` (`epochs`, `epochs_decorr`, `hidden_layers`, `activation`, `dropout`, `batch_norm`, `batch_size`, `learning_rate`, `learning_rate_decorr`, optional `min_learning_rate` / `lr_reduce_patience`, `weight_decay`, optional `grad_clip_norm` defaulting off, `early_stopping_rounds`, `permutation_importance_events`; checked-in NN values use `learning_rate: 0.001`, `learning_rate_decorr: 0.0005`, and `min_learning_rate: 0.00002`), `decorrelate`, `decor_efficiencies`, `event_reweight_branches`, and per-tree `qcd_ht_training_weight_step` for additive QCD HT training-weight scaling.
-- `selections/signal_region/config.json`: signal-region scan settings: `lumi`, `n_signal_regions` / `N`, `bdt_root`, `output_dir`, `score_axes`, `min_bkg_weight`, `min_signal_weight`, optional entry minima, `max_edge_candidates_per_axis`, `beam_width`, `top_intervals_per_axis`, `coordinate_rounds`, `seed_intervals_per_axis`, `multi_axis_seed_max_axes`, `multi_axis_seed_max_seeds`, `compatibility_seed_anchors`, `compatibility_seed_rounds`, `local_refine_rounds`, `local_refine_neighbor_edges`, `local_refine_top_candidates`, `local_refine_diverse_masks`, `local_refine_candidate_overscan`, `global_beam_width`, `branch_bound_max_nodes`, `branch_bound_time_limit_seconds`, `deduplicate_event_masks`, `require_exact_n_regions`, `max_threads`, `progress_every_seconds`, and `seed_quantiles`.
-- `background_estimation/config.json`: `qcd_est.py` settings, including `bdt_root`, `signal_region_csv`, `output_dir`, `root_file_name`, required per-tree `abcd_branches` entries whose thresholds are read from the copied BDT `selection.json`, and optional per-tree `a_region_shape_branches` entries for normalized per-class branch-shape plots in each signal bin and the A-union.
-- `plotting/config.json`: `data_mc.py` settings, including `bdt_root`, `output_root`, `data_samples`, and per-tree `event_reweight_branches` (applied to MC events only; data weights stay 1.0). Ordinary MC branch reads use `entries_per_sample` from the copied BDT config under `bdt_root`; data reads are not capped and use the non-mixed `data` directory when the copied BDT pattern points MC at `{sample_group}_mixed`. Each branch writes both the physical-normalization plot and a `_normal.pdf` unit-area comparison where data and total MC are separately normalized to 1.
-- `plotting/branch.json`: per-tree plot overrides such as `skip_branches`, `bins`, `x_range`, `y_range`, `logx`, and `logy`; derived model score branches use names like `score_VVV` and accept the same overrides.
-- `combine/config.json`: `combine.C` settings: `channels` (list of `{name, root_file, bdt_root}` — each ROOT file is the `qcd_abcd_yields.root` output of `mode=5` for one channel, and each `bdt_root` is that channel's trained tree output directory), `output_dir`, optional `combine_cmd` / `combine_cards_cmd`, `use_root_covariance` (default `false`; combine uses binned Poisson statistics from the yields and does not turn ROOT covariance into nuisances), `eigen_rel_cutoff` (used only when `use_root_covariance=true`, dropping eigenmodes with `λ_k ≤ cutoff × max(diag(cov))`; default `1e-10`), `rescale_shape_modes_to_positive` (used only when covariance nuisances are enabled; default `true`), and `keep_work` (keep the generated datacards under `output_dir/work/`; default `true`).
+- `run_targets`: the jet type, jet category, and exact tagger list to produce.
+- `ntuple.samples`: data and MC groups, by names from `src/sample.json`.
+- `ntuple.sample_base`: local output prefix; the year/nano suffix is appended.
+- `ntuple.job_dir`: local Condor work directory pattern.
+- `ntuple.download_remote_inputs`: defaults to `false`, so remote `root://` ScoutingNano inputs are streamed rather than copied locally.
+- `ntuple.variations`: JES/JER/MET switches are present but disabled for Scouting until implemented.
 
-## Step-by-step file flow
+Submit Condor either by setting `ntuple.submit_condor: true` or manually from each generated job directory:
 
-- `mode=1` writes the pileup CSVs used by `mode=0` for MC samples.
-- `mode=0` writes the converted `fat2` and `fat3` ROOT trees used directly by `mode=4`, and as the input source for `mode=6` or any `mode=2` config that still points `input_root` at the unmixed dataset.
-- `mode=6` can rewrite those converted MC trees into `{signal_mixed|bkg_mixed}` directories under the same dataset root with the same chunk layout using a deterministic block shuffle, which the checked-in model-training config uses by default.
-- `mode=2` writes the model, copied configs, and saved test-set prediction references used by `mode=3`, `mode=4`, and `mode=5`.
-- `mode=3` writes `signal_region.csv`, which defines the A-region score bins for `mode=5`.
-- `mode=5` writes the ABCD validation ROOT file and PDFs for the chosen tree.
-- `mode=4` writes one physical-normalization data/MC comparison PDF per branch plus a `_normal.pdf` unit-area version.
-- `mode=7` reads one or more `mode=5` ROOT files (one per channel) plus the BDT and sample configs, generates per-scenario datacards, and calls `combine` to fill `significance.csv`, `limits.csv`, `significance_abcd_mc.csv`, and `limits_abcd_mc.csv` under its `output_dir`; it also reruns the same scenarios per individual channel and writes the matching `*_by_channel*.csv` files. Combined/per-class scenarios use the stored `groups/*/srN/yield` one-bin histograms, per-sample scenarios use `samples/*/srN/yield`, and ABCD-mode scenarios replace every QCD class with the merged `qcd_predict/srN/yield`. By default each SR is written as an independent counting bin and ROOT covariance fields are not encoded as nuisances; combine's Poisson likelihood supplies the counting statistics from the weighted yields. Setting `use_root_covariance=true` restores the optional eigen-decomposed covariance shape nuisances.
+```bash
+cd systematics/scale_factor/jobs/ntuples/ak8_W_2024_mc
+condor_submit submit.jdl
+```
+
+After Condor finishes, merge pieces locally:
+
+```bash
+systematics/scale_factor/nano.cpp/build/nano_merge systematics/scale_factor/output/ntuples/topwsf_scouting_muon_2024_v15
+```
+
+Step 2 generates and runs `boohft-calib/topwsf` cards:
+
+```bash
+python3 run.py 12
+# default config: systematics/scale_factor/sf_config.json
+```
+
+Important `sf_config.json` fields:
+
+- `run_targets`: the exact taggers/categories to run; only these generate cards.
+- `calibration.input_sample_base`: local merged ntuple prefix from step 1.
+- `calibration.samples`: data and MC groups, again resolved from `src/sample.json`.
+- `calibration.binning`: per AK type, jet category, tagger, pT bin, and score bin.
+- `calibration.systematics.enabled`: currently `pu`, `jms`, and `jmr`; JES/JER/MET/LHE switches are listed but disabled.
+- `calibration.run_launcher`: set `false` to only generate cards.
+
+Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`.
+
+Missing configured samples, missing xsections/lumi, missing non-`GenPart_*` ScoutingNano branches, missing ntuple branches, missing local ntuple files, and missing `Runs/genEventSumw` fail explicitly. Missing `GenPart_*` branches warn in the affected ntuple job log and use default W/Z matching with `GenJet` flavour hints.
+
+## Config Files
+
+- `src/sample.json`: single source for sample names, paths, `is_MC`, `is_signal`, `xsection`, `lumi`, and `raw_entries`.
+- `selections/weight/config.json`: pileup input histograms and output CSV paths.
+- `selections/convert/config.json`, `branch.json`, `selection.json`: ScoutingNano conversion to `fat2`/`fat3` trees.
+- `selections/mix/config.json`: deterministic MC chunk shuffling.
+- `selections/BDT/config.json`: model type, class groups, input patterns, training branches, decorrelation, and hyperparameters.
+- `selections/signal_region/config.json`: signal-region search settings.
+- `background_estimation/config.json`: QCD ABCD setup and optional A-region shape plots.
+- `plotting/config.json`, `plotting/branch.json`: data/MC plotting inputs and branch plot overrides.
+- `combine/config.json`: combine channels, ROOT inputs, output directory, and covariance option.
+- `systematics/scale_factor/ntuple_config.json`: ScoutingNano to topwsf ntuple step.
+- `systematics/scale_factor/sf_config.json`: topwsf scale-factor card generation and fit step.

@@ -45,9 +45,17 @@ MODES = {
             script="pileup_syst.py", config_env="PILEUP_SYST_CONFIG_PATH"),
     10: dict(label="class_shapes", subdir="plotting",
              script="class_shapes.py", config_env="PLOT_CONFIG_PATH"),
+    11: dict(label="scale_factor_ntuple", subdir="systematics/scale_factor",
+             script="scale_factor.py", script_args=["make-ntuple"],
+             config_env="SCALE_FACTOR_CONFIG_PATH",
+             default_config="ntuple_config.json"),
+    12: dict(label="scale_factor_fit", subdir="systematics/scale_factor",
+             script="scale_factor.py", script_args=["compute-sf"],
+             config_env="SCALE_FACTOR_CONFIG_PATH",
+             default_config="sf_config.json"),
 }
 
-PYTHON_MODES = frozenset({2, 3, 4, 5, 8, 9, 10})
+PYTHON_MODES = frozenset({2, 3, 4, 5, 8, 9, 10, 11, 12})
 SAMPLE_MODES = frozenset({0, 1, 6})
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -87,6 +95,8 @@ Modes:
   8  selections/theory_weights/theory_syst.py  (no samples)
   9  selections/pileup_syst/pileup_syst.py  (no samples)
   10 plotting/class_shapes.py            (no samples)
+  11 systematics/scale_factor/scale_factor.py make-ntuple  (default: ntuple_config.json)
+  12 systematics/scale_factor/scale_factor.py compute-sf   (default: sf_config.json)
 
 Sample selection for modes 0, 1, 6:
   1. CLI sample names (highest priority)
@@ -95,7 +105,7 @@ Sample selection for modes 0, 1, 6:
 """,
     )
     p.add_argument("mode", type=int, choices=MODES, metavar="MODE",
-                   help="Execution mode 0-10")
+                   help="Execution mode 0-12")
     p.add_argument("rest", nargs="*", metavar="ARG",
                    help="Optional: [config.json] [sample1 sample2 ...]")
     p.add_argument("--slurm", action="store_true",
@@ -139,8 +149,8 @@ Sample selection for modes 0, 1, 6:
 # Config resolution
 # ---------------------------------------------------------------------------
 
-def resolve_config(config_input, work_dir):
-    path = Path(config_input) if config_input else work_dir / "config.json"
+def resolve_config(config_input, work_dir, default_name="config.json"):
+    path = Path(config_input) if config_input else work_dir / default_name
     if not path.exists():
         sys.exit(f"config file not found: {path}")
     return path.resolve()
@@ -373,7 +383,7 @@ def copy_log_to_output_dirs(mode, config_path, work_dir, log_path):
 def run_python_mode(mode_cfg, config_path, work_dir, passthrough=None):
     env = {**os.environ, mode_cfg["config_env"]: str(config_path)}
     script = mode_cfg["script"]
-    cmd = ["python3", f"./{script}", *(passthrough or [])]
+    cmd = ["python3", f"./{script}", *mode_cfg.get("script_args", []), *(passthrough or [])]
     log(f"run: env {mode_cfg['config_env']}={config_path} {' '.join(cmd)}")
     r = subprocess.run(cmd, env=env, cwd=work_dir)
     return r.returncode
@@ -742,7 +752,11 @@ def main():
     work_dir = ROOT_DIR / mode_cfg["subdir"]
     log_path = work_dir / "log.txt"
 
-    config_path = resolve_config(args.config_input, work_dir)
+    config_path = resolve_config(
+        args.config_input,
+        work_dir,
+        mode_cfg.get("default_config", "config.json"),
+    )
 
     # X509 cert copy happens before log redirect so errors go to terminal
     x509_dst = None

@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+
+sleep $(( ( RANDOM % 200 ) + 1 ))
+
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc13-opt/setup.sh
+set -euo pipefail
+
+WORKDIR=$(pwd)
+REPO_DIR="${WORKDIR}/repo"
+
+if [ ! -d "${REPO_DIR}" ]; then
+  mkdir -p "${REPO_DIR}"
+  tar -xzf repo.tar.gz -C "${REPO_DIR}" --strip-components=0
+fi
+
+if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
+  cmake -S "${REPO_DIR}" -B "${REPO_DIR}/build"
+  cmake --build "${REPO_DIR}/build" -j
+fi
+
+JOB_INDEX=$1
+TREE_NAME=$2
+NUM_EVENTS=$3
+CONFIG=$4
+CHANNEL=$5
+VARIATIONS=$6
+RUN_DATA=$7
+DOWNLOAD_FILE="${DOWNLOAD_FILE:-${8:-false}}"
+
+LOCAL_OUTPUT="${WORKDIR}/local_output_${JOB_INDEX}.root"
+
+if [[ "${CONFIG}" != /* ]]; then
+  CONFIG="${WORKDIR}/${CONFIG}"
+fi
+
+eval "$(
+  env -u PYTHONHOME -u PYTHONPATH python3 - "${JOB_INDEX}" <<'PY'
+import json
+import shlex
+import sys
+
+job_index = int(sys.argv[1])
+
+with open("job_manifest.json") as handle:
+    jobs = {int(job["index"]): job for job in json.load(handle)["jobs"]}
+
+job = jobs[job_index]
+print("FINAL_OUTPUT=" + shlex.quote(job["output_file"]))
+print("INPUTS=" + shlex.quote(",".join(job["inputs"])))
+PY
+)"
+
+LOCAL_STEM="${LOCAL_OUTPUT%.root}"
+FINAL_STEM="${FINAL_OUTPUT%.root}"
+
+should_download() {
+  case "$1" in
+    true|TRUE|True|1|yes|YES|y|Y|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_remote_input() {
+  local path=$1
+  [[ "${path}" == root://* ]]
+}
+
+variation_file() {
+  local base=$1
+  local variation=$2
+
+  if [[ "${base}" == *.root ]]; then
+    echo "${base%.root}_${variation}.root"
+  else
+    echo "${base}_${variation}"
+  fi
+}
+
+run_one_input() {
+  local input=$1
+  local output=$2
+  local cmd=(
+    "${REPO_DIR}/build/nano_run"
+    --input-files "${input}"
+    --output-file "${output}"
+    --tree-name "${TREE_NAME}"
+    --num-events "${NUM_EVENTS}"
+    --channel "${CHANNEL}"
+    --config "${CONFIG}"
+  )
+
+  cmd+=(--variations "${VARIATIONS}")
+  if should_download "${RUN_DATA}"; then
+    cmd+=(--run-data)
+  fi
+
+  printf "Running command:"
+  printf " %q" "${cmd[@]}"
+  printf "\n"
+
+  (cd "${REPO_DIR}" && "${cmd[@]}")
+}
+
+parse_variations() {
+  local in_var=$1
+  IFS=',' read -r -a out <<< "${in_var}"
+  for v in "${out[@]}"; do
+    [[ -n "${v}" ]] && echo "${v}"
+  done
+}
+
+IFS=',' read -r -a RAW_INPUTS <<< "${INPUTS}"
+if (( ${#RAW_INPUTS[@]} == 0 )); then
+  echo "No input files in manifest job ${JOB_INDEX}" >&2
+  exit 1
+fi
+
+DOWNLOAD_REMOTE=false
+if should_download "${DOWNLOAD_FILE}"; then
+  for input_file in "${RAW_INPUTS[@]}"; do
+    if is_remote_input "${input_file}"; then
+      DOWNLOAD_REMOTE=true
+      break
+    fi
+  done
+fi
+
+WORK_INPUTS=()
+TO_CLEAN=()
+WORK_INPUTS=("${RAW_INPUTS[@]}")
+
+prepare_input() {
+  local index=$1
+  local source_file=$2
+  local max_retries=5
+  local attempt=1
+  local wait_seconds=5
+
+  if [[ "${DOWNLOAD_REMOTE}" == "true" && "${source_file}" == root://* ]]; then
+    local local_name="${WORKDIR}/download_${JOB_INDEX}_${index}_$(basename "${source_file}")"
+    echo "Copying remote input ${source_file} to ${local_name}" >&2
+    while true; do
+      if xrdcp -f "${source_file}" "${local_name}"; then
+        break
+      fi
+      if (( attempt >= max_retries )); then
+        echo "Error: failed to copy ${source_file} to ${local_name} after ${max_retries} attempts" >&2
+        return 1
+      fi
+      echo "Warning: xrdcp failed for ${source_file} (attempt ${attempt}/${max_retries}), retrying in ${wait_seconds}s" >&2
+      sleep "${wait_seconds}"
+      attempt=$((attempt + 1))
+    done
+    TO_CLEAN+=("${local_name}")
+    echo "${local_name}"
+    return
+  fi
+
+  echo "${source_file}"
+}
+
+if [[ "${DOWNLOAD_REMOTE}" == "false" ]]; then
+  run_one_input "${INPUTS}" "${LOCAL_OUTPUT}"
+else
+  mapfile -t VARIATION_NAMES < <(parse_variations "${VARIATIONS}")
+  for i in "${!WORK_INPUTS[@]}"; do
+    input_file="$(prepare_input "${i}" "${WORK_INPUTS[$i]}")"
+    piece_base="${WORKDIR}/piece_${JOB_INDEX}_${i}"
+    run_one_input "${input_file}" "${piece_base}"
+    TO_CLEAN+=("${piece_base}" "${piece_base}.root")
+  done
+
+  for var in "${VARIATION_NAMES[@]}"; do
+    VARIANT_FILES=()
+    for i in "${!WORK_INPUTS[@]}"; do
+      piece_base="${WORKDIR}/piece_${JOB_INDEX}_${i}"
+      piece_var="$(variation_file "${piece_base}" "${var}")"
+      VARIANT_FILES+=("${piece_var}")
+      TO_CLEAN+=("${piece_var}")
+    done
+
+    local_var_output="$(variation_file "${LOCAL_OUTPUT}" "${var}")"
+    if (( ${#VARIANT_FILES[@]} == 1 )); then
+      mv -f "${VARIANT_FILES[0]}" "${local_var_output}"
+    else
+      echo "Merging ${#VARIANT_FILES[@]} pieces into ${local_var_output} (variation=${var})"
+      hadd -f "${local_var_output}" "${VARIANT_FILES[@]}"
+    fi
+  done
+fi
+
+copy_output() {
+  local local_file=$1
+  local final_file=$2
+
+  if [[ "${final_file}" == /eos/cms* ]]; then
+    local eos_host="root://eoscms.cern.ch"
+    local remote_output="${eos_host}//${final_file}"
+    echo "Copying ${local_file} to ${remote_output}"
+    xrdcp -f "${local_file}" "${remote_output}"
+  elif [[ "${final_file}" == /eos/user* ]]; then
+    local eos_host="root://eosuser.cern.ch"
+    local remote_output="${eos_host}//${final_file}"
+    echo "Copying ${local_file} to ${remote_output}"
+    xrdcp -f "${local_file}" "${remote_output}"
+  elif [[ "${final_file}" == /eos/uscms* ]]; then
+    local eos_host="root://cmseos.fnal.gov"
+    local remote_output="${eos_host}//${final_file}"
+    echo "Copying ${local_file} to ${remote_output}"
+    xrdcp -f "${local_file}" "${remote_output}"
+  else
+    mkdir -p "$(dirname "${final_file}")"
+    echo "Copying ${local_file} to ${final_file}"
+    cp "${local_file}" "${final_file}"
+  fi
+}
+
+shopt -s nullglob
+copied=0
+
+for local_file in "${LOCAL_STEM}"_*.root; do
+  suffix="${local_file#${LOCAL_STEM}}"
+  copy_output "${local_file}" "${FINAL_STEM}${suffix}"
+  copied=$((copied + 1))
+done
+
+if [[ ${copied} -eq 0 ]]; then
+  echo "No variation output files matched ${LOCAL_STEM}_*.root" >&2
+  exit 1
+fi
+
+for file in "${TO_CLEAN[@]}"; do
+  rm -f "${file}"
+done
+
+touch ${WORKDIR}/dummy.cc

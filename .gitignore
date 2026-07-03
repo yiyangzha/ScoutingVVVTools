@@ -206,16 +206,110 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# ---------------------------------------------------------------------------
+# Project-generated analysis inputs/outputs
+# Keep source code, configs, cards, and build scripts tracked; ignore large data,
+# logs, plots, batch outputs, and compiled/intermediate products.
+# ---------------------------------------------------------------------------
 
 .DS_Store
+
+# ROOT/data products and tabular outputs
 *.root
-*.pdf
-*.jpg
-*.png
-*.txt
+*.root.*
+*.h5
+*.hdf5
+*.parquet
+*.pkl
+*.pickle
+*.npz
+*.npy
 *.csv
+*.tsv
+*.jsonl
+
+# Plots, web artifacts, and generated reports
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.html
+*.webp
+
+# Logs and batch-system output
+*.log
+log.txt
+logs/
 *.out
-CMSSW_*
+*.err
+*.stdout
+*.stderr
+*.condor
+*.jdl
+slurm-*.out
+condor_*.out
+condor_*.err
+
+# Build outputs and compiled artifacts
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.dSYM/
+*.pcm
+*.d
+*.mod
+*.pcm
+
+# Analysis output/work directories
+dataset/
+output/
+outputs/
+results/
+web/
+run/
+jobs/
+generated/
+cards/generated/
+work/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Scale-factor workflow runtime products
+systematics/scale_factor/output/
+systematics/scale_factor/jobs/
+systematics/scale_factor/generated/
+systematics/scale_factor/run/
+systematics/scale_factor/work/
+systematics/scale_factor/log.txt
+systematics/scale_factor/nano.cpp/build/
+systematics/scale_factor/nano.cpp/run/
+systematics/scale_factor/nano.cpp/jobs/
+systematics/scale_factor/nano.cpp/output/
+systematics/scale_factor/nano.cpp/outputs/
+systematics/scale_factor/boohft-calib/output/
+systematics/scale_factor/boohft-calib/web/
+systematics/scale_factor/boohft-calib/run/
+systematics/scale_factor/boohft-calib/work/
+
+# Common local CMS/environment products
+CMSSW_*/
+x509up_u*
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml

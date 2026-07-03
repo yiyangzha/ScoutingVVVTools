@@ -1,0 +1,8 @@
+# DATA samples
+# This is UL2016 postVFP / no_HIPM
+singlemu:
+  - [
+      /SingleMuon/Run2016F-UL2016_NanoAODv15-v1/NANOAOD,
+      /SingleMuon/Run2016G-UL2016_NanoAODv15-v1/NANOAOD,
+      /SingleMuon/Run2016H-UL2016_NanoAODv15-v1/NANOAOD,
+    ]
