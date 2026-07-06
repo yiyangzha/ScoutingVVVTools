@@ -16,11 +16,31 @@ RUN_DATA="@RUN_DATA@"
 
 HOSTNAME_FULL="$(hostname -f 2>/dev/null || hostname)"
 
+stage_x509_proxy() {
+  local source_proxy="${X509_USER_PROXY:-}"
+  if [[ -z "${source_proxy}" ]]; then
+    source_proxy="/tmp/x509up_u$(id -u)"
+  fi
+
+  local target_proxy="${SCRIPT_DIR}/x509up_proxy"
+  if [[ ! -f "${source_proxy}" ]]; then
+    echo "Warning: no X509 proxy found at ${source_proxy}; remote /store access may fail" >&2
+    return
+  fi
+
+  if [[ "${source_proxy}" != "${target_proxy}" ]]; then
+    cp "${source_proxy}" "${target_proxy}"
+  fi
+  chmod 600 "${target_proxy}"
+  echo "Staged X509 proxy for workers: ${target_proxy}"
+}
+
 if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.cn ]]; then
   if ! command -v hep_sub >/dev/null 2>&1; then
     echo "Error: lxlogin host detected, but hep_sub is not available in PATH" >&2
     exit 1
   fi
+  stage_x509_proxy
   echo "Detected lxlogin host ${HOSTNAME_FULL}; submitting with IHEP HepJob"
   hep_sub \
     ./process.sh \

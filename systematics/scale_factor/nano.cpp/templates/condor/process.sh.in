@@ -4,6 +4,16 @@ sleep $(( ( RANDOM % 200 ) + 1 ))
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+STAGED_X509_PROXY="${SCRIPT_DIR}/x509up_proxy"
+if [[ -f "${STAGED_X509_PROXY}" ]]; then
+  chmod 600 "${STAGED_X509_PROXY}" 2>/dev/null || true
+  export X509_USER_PROXY="${STAGED_X509_PROXY}"
+  echo "Using staged X509 proxy: ${X509_USER_PROXY}"
+fi
+
 DAS_HOME="@DAS_HOME@"
 if [[ -n "${DAS_HOME}" ]]; then
   if [[ ! -d "${DAS_HOME}" ]]; then

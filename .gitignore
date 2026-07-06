@@ -309,6 +309,7 @@ systematics/scale_factor/boohft-calib/work/
 # Common local CMS/environment products
 CMSSW_*/
 x509up_u*
+x509up_proxy
 
 # pixi environments
 .pixi/*
