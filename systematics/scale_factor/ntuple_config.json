@@ -6,7 +6,7 @@
     {
       "jet_type": "ak8",
       "jet_category": "W",
-      "taggers": ["WvsQCD", "ZvsQCD", "VvsQCD"]
+      "taggers": ["WvsQCD"]
     }
   ],
   "ntuple": {

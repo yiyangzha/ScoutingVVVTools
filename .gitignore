@@ -313,3 +313,4 @@ x509up_u*
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+pixi.lock

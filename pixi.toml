@@ -1,5 +1,4 @@
 [workspace]
-authors = ["Jan-Frederik Schulte <jschulte@cern.ch>"]
 channels = ["conda-forge"]
 name = "ScoutingVVVTools"
 platforms = ["linux-64"]
