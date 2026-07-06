@@ -385,6 +385,18 @@ inline std::string shell_quote(const std::string &text) {
   return out;
 }
 
+inline std::string das_query_quote(const std::string &text) {
+  std::string out = "\"";
+  for (const auto ch : text) {
+    if (ch == '"' || ch == '\\') {
+      out += '\\';
+    }
+    out += ch;
+  }
+  out += "\"";
+  return out;
+}
+
 inline std::string dasgoclient_executable() {
   const auto *value = std::getenv("SCALE_FACTOR_DASGOCLIENT");
   if (value && std::string(value).size() > 0) {
@@ -428,17 +440,23 @@ inline std::vector<std::string> resolve_dataset_entry(const std::string &entry) 
   const auto normalized = normalize_input_path(entry);
   if (starts_with(entry, "/") && std::count(entry.begin(), entry.end(), '/') >= 3 && !fs::exists(entry) && !starts_with(entry, "/store/")) {
     std::vector<std::string> files;
-    const auto query = "file dataset=" + entry;
+    const auto query = "file dataset=" + das_query_quote(entry);
+    const auto legacy_query = "file dataset=" + entry;
     const auto das = das_command_prefix();
     std::vector<std::string> commands = {
         das + " -query=" + shell_quote(query),
+        das + " -query=" + shell_quote(legacy_query),
     };
     if (ends_with(entry, "/USER")) {
       commands = {
-          das + " -query=" + shell_quote(query + " instance=prod/phys03"),
-          das + " -query=" + shell_quote(query + " system=rucio"),
-          das + " -query=" + shell_quote(query + " system=dbs3"),
+          das + " -query=" + shell_quote(query + " instance=" + das_query_quote("prod/phys03")),
+          das + " -query=" + shell_quote(query + " system=" + das_query_quote("rucio")),
+          das + " -query=" + shell_quote(query + " system=" + das_query_quote("dbs3")),
           das + " -query=" + shell_quote(query),
+          das + " -query=" + shell_quote(legacy_query + " instance=prod/phys03"),
+          das + " -query=" + shell_quote(legacy_query + " system=rucio"),
+          das + " -query=" + shell_quote(legacy_query + " system=dbs3"),
+          das + " -query=" + shell_quote(legacy_query),
       };
     }
     std::string output;
