@@ -135,7 +135,7 @@ Current configured target:
 
 Remote ScoutingNano inputs may be DAS datasets, `/store/...` files, `root://...` files, local directories, local ROOT files, or text/list/YAML file lists. Remote ROOT files are streamed by default; do not change to full local download unless requested. Step-1 output and all step-2 paths are local.
 
-For `/.../USER` dataset resolution, scale-factor `nano.cpp` first tries the legacy DAS `instance=prod/phys03` query and then falls back to `system=rucio`, `system=dbs3`, and plain DAS queries. The controller sets `SCALE_FACTOR_DASGOCLIENT` to a `dasgoclient` outside `CONDA_PREFIX` when possible; users may override it explicitly if pixi shadows the working CMS client.
+For `/.../USER` dataset resolution, scale-factor `nano.cpp` first tries the legacy DAS `instance=prod/phys03` query and then falls back to `system=rucio`, `system=dbs3`, and plain DAS queries. The controller sets `SCALE_FACTOR_DASGOCLIENT` to a `dasgoclient` outside `CONDA_PREFIX` when possible; users may override it explicitly if pixi shadows the working CMS client. DAS queries preserve the caller environment because the IHEP CVMFS `dasgoclient` can behave differently when wrapped with `env -u PYTHONHOME -u PYTHONPATH`.
 
 The scale-factor ntuple config uses `ntuple.build_jobs` for the local `nano.cpp` build; `"auto"` uses the visible CPU count. Condor ntuple jobs still request one CPU, but worker builds use all CPUs visible inside the slot unless `BUILD_JOBS` is set.
 

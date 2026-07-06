@@ -423,14 +423,14 @@ inline std::vector<std::string> resolve_dataset_entry(const std::string &entry) 
     const auto query = "file dataset=" + entry;
     const auto das = dasgoclient_executable();
     std::vector<std::string> commands = {
-        "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query),
+        das + " -query=" + shell_quote(query),
     };
     if (ends_with(entry, "/USER")) {
       commands = {
-          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " instance=prod/phys03"),
-          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " system=rucio"),
-          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " system=dbs3"),
-          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query),
+          das + " -query=" + shell_quote(query + " instance=prod/phys03"),
+          das + " -query=" + shell_quote(query + " system=rucio"),
+          das + " -query=" + shell_quote(query + " system=dbs3"),
+          das + " -query=" + shell_quote(query),
       };
     }
     std::string output;

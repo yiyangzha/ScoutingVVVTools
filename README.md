@@ -97,7 +97,7 @@ Important `sf_config.json` fields:
 
 Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Condor jobs still request one CPU in `submit.jdl`; their build step uses all CPUs visible inside the worker slot unless `BUILD_JOBS` is set. Workers unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory and build with the same pixi/conda compiler and CMake package paths resolved by mode 11.
 
-Mode 11 resolves DAS datasets before submission. If pixi shadows a working CMS `dasgoclient`, set `SCALE_FACTOR_DASGOCLIENT=/path/to/dasgoclient`; otherwise the controller prefers a `dasgoclient` outside `CONDA_PREFIX`.
+Mode 11 resolves DAS datasets before submission. If pixi shadows a working CMS `dasgoclient`, set `SCALE_FACTOR_DASGOCLIENT=/path/to/dasgoclient`; otherwise the controller prefers a `dasgoclient` outside `CONDA_PREFIX` and calls it with the current shell environment.
 
 Missing configured samples, missing xsections/lumi, missing non-`GenPart_*` ScoutingNano branches, missing ntuple branches, missing local ntuple files, and missing `Runs/genEventSumw` fail explicitly. Missing `GenPart_*` branches warn in the affected ntuple job log and use default W/Z matching with `GenJet` flavour hints.
 
