@@ -241,6 +241,21 @@ def correctionlib_dir_arg():
     return []
 
 
+def yaml_cpp_dir_arg():
+    candidates = []
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        prefix = Path(conda_prefix)
+        candidates.extend([
+            prefix / "lib" / "cmake" / "yaml-cpp",
+            prefix / "share" / "cmake" / "yaml-cpp",
+        ])
+    for path in candidates:
+        if (path / "yaml-cpp-config.cmake").exists() or (path / "yaml-cppConfig.cmake").exists():
+            return [f"-Dyaml-cpp_DIR={path}"]
+    return []
+
+
 def make_ntuple(cfg, args):
     samples = sample_map(cfg)
     data_names, mc_groups = selected_sample_groups(cfg, samples, "ntuple")
@@ -264,6 +279,7 @@ def make_ntuple(cfg, args):
             "cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build"),
             *cmake_prefix_path_arg(),
             *correctionlib_dir_arg(),
+            *yaml_cpp_dir_arg(),
         ])
         commands.append(["cmake", "--build", str(nano_repo / "build"), "-j"])
 

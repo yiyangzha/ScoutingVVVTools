@@ -10,6 +10,14 @@ find_package(yaml-cpp REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 enable_testing()
 
+if(TARGET yaml-cpp::yaml-cpp)
+  set(NANO_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+  set(NANO_YAML_CPP_TARGET yaml-cpp)
+else()
+  set(NANO_YAML_CPP_TARGET yaml-cpp)
+endif()
+
 set(SKBUILD ON CACHE BOOL "Disable CMSJMECalculators python/dictionary build" FORCE)
 add_subdirectory(external/CMSJMECalculators EXCLUDE_FROM_ALL)
 unset(SKBUILD CACHE)
@@ -34,7 +42,7 @@ add_library(nanoaodtools_cpp
 )
 
 target_include_directories(nanoaodtools_cpp PUBLIC include)
-target_link_libraries(nanoaodtools_cpp PUBLIC CMSJMECalculators ROOT::Core ROOT::MathCore ROOT::Physics ROOT::RIO ROOT::Tree ROOT::TreePlayer yaml-cpp)
+target_link_libraries(nanoaodtools_cpp PUBLIC CMSJMECalculators ROOT::Core ROOT::MathCore ROOT::Physics ROOT::RIO ROOT::Tree ROOT::TreePlayer ${NANO_YAML_CPP_TARGET})
 
 add_executable(nano_run app/nano_run.cpp)
 target_link_libraries(nano_run PRIVATE nanoaodtools_cpp)

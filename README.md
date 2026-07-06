@@ -4,7 +4,7 @@ CMS Run 3 Scouting VVV analysis tools. The main workflow converts ScoutingNano R
 
 ## Environment
 
-Use the project's normal ROOT/CMSSW environment on the batch machine. The Python environment is described by `pixi.toml`; it includes the Python packages needed by training, plotting, coffea/topwsf, and the scale-factor controller. The C++ tools also require ROOT, XRootD, C++17, and `root-config`. The `nano.cpp` JME helper dependency `external/CMSJMECalculators` is vendored in-tree with nested git metadata removed; mode 11 passes the active pixi/conda prefix and `correctionlib_DIR` to CMake so this dependency can find correctionlib.
+Use the project's normal ROOT/CMSSW environment on the batch machine. The Python environment is described by `pixi.toml`; it includes the Python packages needed by training, plotting, coffea/topwsf, and the scale-factor controller. The C++ tools also require ROOT, XRootD, C++17, and `root-config`. The `nano.cpp` JME helper dependency `external/CMSJMECalculators` is vendored in-tree with nested git metadata removed; mode 11 passes the active pixi/conda prefix plus `correctionlib_DIR` and `yaml-cpp_DIR` to CMake so C++ dependencies resolve inside the pixi environment.
 
 Do not use the scale-factor ntuple step as a replacement for `selections/convert`: it reads ScoutingNano directly and writes topwsf ntuples, not `fat2`/`fat3` BDT trees.
 

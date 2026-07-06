@@ -154,4 +154,4 @@ Key outputs:
 
 ## Dependencies
 
-The repository expects ROOT, C++17, XRootD tools, Python 3, and the packages listed in `pixi.toml`. `systematics/scale_factor/nano.cpp` additionally uses `yaml-cpp` and correctionlib payloads; mode 11 forwards the active pixi/conda Python prefix and `correctionlib_DIR` to CMake so `CMSJMECalculators` can find `correctionlibConfig.cmake`. `boohft-calib/topwsf` uses coffea/uproot/hist/correctionlib-style Python packages and requires CMSSW/combine only for the fit step that invokes combine.
+The repository expects ROOT, C++17, XRootD tools, Python 3, and the packages listed in `pixi.toml`. `systematics/scale_factor/nano.cpp` additionally uses `yaml-cpp` and correctionlib payloads; mode 11 forwards the active pixi/conda Python prefix, `correctionlib_DIR`, and `yaml-cpp_DIR` to CMake so vendored C++ dependencies resolve inside the pixi environment. `boohft-calib/topwsf` uses coffea/uproot/hist/correctionlib-style Python packages and requires CMSSW/combine only for the fit step that invokes combine.
