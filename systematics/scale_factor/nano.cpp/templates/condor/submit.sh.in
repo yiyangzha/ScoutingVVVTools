@@ -23,13 +23,14 @@ if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.c
   fi
   echo "Detected lxlogin host ${HOSTNAME_FULL}; submitting with IHEP HepJob"
   hep_sub \
+    ./process.sh \
     -g cms \
     -wt mid \
     -n "${JOB_COUNT}" \
+    -dir "${SCRIPT_DIR}" \
     -o "logs/%{ClusterId}.%{ProcId}.out" \
     -e "logs/%{ClusterId}.%{ProcId}.err" \
-    -argu "%{ProcId} ${TREE_NAME} ${NUM_EVENTS} ${CONFIG} ${CHANNEL} ${VARIATIONS} ${RUN_DATA}" \
-    ./process.sh
+    -argu "%{ProcId}" "${TREE_NAME}" "${NUM_EVENTS}" "${CONFIG}" "${CHANNEL}" "${VARIATIONS}" "${RUN_DATA}"
 else
   if ! command -v condor_submit >/dev/null 2>&1; then
     echo "Error: condor_submit is not available in PATH" >&2
