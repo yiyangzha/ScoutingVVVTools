@@ -342,7 +342,8 @@ inline std::map<std::string, std::vector<std::string>> parse_sample_yaml(const s
 inline std::string run_command(const std::string &command) {
   std::array<char, 4096> buffer{};
   std::string output;
-  FILE *pipe = popen(command.c_str(), "r");
+  const auto logged_command = command + " 2>&1";
+  FILE *pipe = popen(logged_command.c_str(), "r");
   if (!pipe) {
     throw std::runtime_error("Failed to run command: " + command);
   }
@@ -351,9 +352,45 @@ inline std::string run_command(const std::string &command) {
   }
   const auto rc = pclose(pipe);
   if (rc != 0) {
-    throw std::runtime_error("Command failed: " + command);
+    throw std::runtime_error("Command failed: " + command + "\n" + output);
   }
   return output;
+}
+
+inline bool try_run_command(const std::string &command, std::string &output) {
+  std::array<char, 4096> buffer{};
+  output.clear();
+  const auto logged_command = command + " 2>&1";
+  FILE *pipe = popen(logged_command.c_str(), "r");
+  if (!pipe) {
+    output = "Failed to run command: " + command;
+    return false;
+  }
+  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+    output.append(buffer.data());
+  }
+  return pclose(pipe) == 0;
+}
+
+inline std::string shell_quote(const std::string &text) {
+  std::string out = "'";
+  for (const auto ch : text) {
+    if (ch == '\'') {
+      out += "'\\''";
+    } else {
+      out += ch;
+    }
+  }
+  out += "'";
+  return out;
+}
+
+inline std::string dasgoclient_executable() {
+  const auto *value = std::getenv("SCALE_FACTOR_DASGOCLIENT");
+  if (value && std::string(value).size() > 0) {
+    return shell_quote(value);
+  }
+  return "dasgoclient";
 }
 
 inline std::vector<std::string> list_remote_dir(const std::string &path) {
@@ -363,7 +400,7 @@ inline std::vector<std::string> list_remote_dir(const std::string &path) {
   }
   const auto host = path.substr(0, pos);
   const auto remote_path = path.substr(pos);
-  const auto output = run_command("xrdfs " + host + " ls -R " + remote_path);
+  const auto output = run_command("xrdfs " + shell_quote(host) + " ls -R " + shell_quote(remote_path));
   std::vector<std::string> files;
   std::stringstream ss(output);
   std::string line;
@@ -383,11 +420,37 @@ inline std::vector<std::string> resolve_dataset_entry(const std::string &entry) 
   const auto normalized = normalize_input_path(entry);
   if (starts_with(entry, "/") && std::count(entry.begin(), entry.end(), '/') >= 3 && !fs::exists(entry) && !starts_with(entry, "/store/")) {
     std::vector<std::string> files;
-    auto query = "file dataset=" + entry;
+    const auto query = "file dataset=" + entry;
+    const auto das = dasgoclient_executable();
+    std::vector<std::string> commands = {
+        "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query),
+    };
     if (ends_with(entry, "/USER")) {
-      query += " instance=prod/phys03";
+      commands = {
+          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " instance=prod/phys03"),
+          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " system=rucio"),
+          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query + " system=dbs3"),
+          "env -u PYTHONHOME -u PYTHONPATH " + das + " -query=" + shell_quote(query),
+      };
     }
-    const auto output = run_command("env -u PYTHONHOME -u PYTHONPATH dasgoclient -query=\"" + query + "\"");
+    std::string output;
+    std::vector<std::string> failures;
+    bool ok = false;
+    for (const auto &command : commands) {
+      if (try_run_command(command, output)) {
+        ok = true;
+        break;
+      }
+      failures.push_back(command + "\n" + output);
+    }
+    if (!ok) {
+      std::ostringstream message;
+      message << "All DAS queries failed for dataset: " << entry;
+      for (const auto &failure : failures) {
+        message << "\n---\n" << failure;
+      }
+      throw std::runtime_error(message.str());
+    }
     std::stringstream ss(output);
     std::string line;
     while (std::getline(ss, line)) {

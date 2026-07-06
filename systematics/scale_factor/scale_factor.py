@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -256,6 +257,30 @@ def prepend_env_path(env, key, paths):
     env[key] = os.pathsep.join(values)
 
 
+def resolve_dasgoclient():
+    override = os.environ.get("SCALE_FACTOR_DASGOCLIENT")
+    if override:
+        path = Path(override).expanduser()
+        if not path.exists():
+            raise SystemExit(f"SCALE_FACTOR_DASGOCLIENT does not exist: {override}")
+        return str(path)
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    candidates = []
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        path = Path(entry) / "dasgoclient"
+        if path.exists() and os.access(path, os.X_OK):
+            candidates.append(path)
+    for path in candidates:
+        if conda_prefix and is_under(path, conda_prefix):
+            continue
+        return str(path)
+    found = shutil.which("dasgoclient")
+    return found or ""
+
+
 def base_command_env():
     env = os.environ.copy()
     conda_prefix = os.environ.get("CONDA_PREFIX")
@@ -274,6 +299,9 @@ def base_command_env():
 
 def command_env():
     env = base_command_env()
+    dasgoclient = resolve_dasgoclient()
+    if dasgoclient:
+        env["SCALE_FACTOR_DASGOCLIENT"] = dasgoclient
     if os.environ.get("CONDA_PREFIX"):
         exports = pixi_env_exports()
         env.update(exports)
