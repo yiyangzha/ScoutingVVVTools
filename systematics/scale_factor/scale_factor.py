@@ -199,11 +199,35 @@ def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
 
 
+def prepend_env_path(env, key, paths):
+    values = [str(path) for path in paths if path and Path(path).exists()]
+    if not values:
+        return
+    current = env.get(key, "")
+    if current:
+        values.append(current)
+    env[key] = os.pathsep.join(values)
+
+
+def command_env():
+    env = os.environ.copy()
+    lib_dirs = runtime_library_dirs()
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    include_dirs = []
+    if conda_prefix:
+        include_dirs.append(Path(conda_prefix) / "include")
+    prepend_env_path(env, "LD_LIBRARY_PATH", lib_dirs)
+    prepend_env_path(env, "LIBRARY_PATH", lib_dirs)
+    prepend_env_path(env, "CPATH", include_dirs)
+    prepend_env_path(env, "CPLUS_INCLUDE_PATH", include_dirs)
+    return env
+
+
 def run_command(cmd, cwd=None, dry_run=False):
     print(" ".join(str(part) for part in cmd), flush=True)
     if dry_run:
         return
-    result = subprocess.run([str(part) for part in cmd], cwd=cwd)
+    result = subprocess.run([str(part) for part in cmd], cwd=cwd, env=command_env())
     if result.returncode != 0:
         raise SystemExit(result.returncode)
 
@@ -241,6 +265,29 @@ def correctionlib_dir_arg():
     return []
 
 
+def correctionlib_package_dir():
+    try:
+        import correctionlib
+    except ImportError:
+        return None
+    return Path(correctionlib.__file__).resolve().parent
+
+
+def runtime_library_dirs():
+    dirs = []
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        dirs.append(Path(conda_prefix) / "lib")
+    correctionlib_dir = correctionlib_package_dir()
+    if correctionlib_dir:
+        dirs.append(correctionlib_dir / "lib")
+    out = []
+    for path in dirs:
+        if path.exists() and path not in out:
+            out.append(path)
+    return out
+
+
 def yaml_cpp_dir_arg():
     candidates = []
     conda_prefix = os.environ.get("CONDA_PREFIX")
@@ -254,6 +301,43 @@ def yaml_cpp_dir_arg():
         if (path / "yaml-cpp-config.cmake").exists() or (path / "yaml-cppConfig.cmake").exists():
             return [f"-Dyaml-cpp_DIR={path}"]
     return []
+
+
+def cmake_runtime_link_args():
+    lib_dirs = runtime_library_dirs()
+    if not lib_dirs:
+        return []
+    flags = []
+    for path in lib_dirs:
+        flags.extend([f"-L{path}", f"-Wl,-rpath,{path}", f"-Wl,-rpath-link,{path}"])
+    joined_flags = " ".join(flags)
+    joined_rpath = ";".join(str(path) for path in lib_dirs)
+    return [
+        f"-DCMAKE_EXE_LINKER_FLAGS={joined_flags}",
+        f"-DCMAKE_SHARED_LINKER_FLAGS={joined_flags}",
+        f"-DCMAKE_MODULE_LINKER_FLAGS={joined_flags}",
+        f"-DCMAKE_BUILD_RPATH={joined_rpath}",
+        f"-DCMAKE_INSTALL_RPATH={joined_rpath}",
+    ]
+
+
+def conda_compiler_args(build_dir):
+    if (build_dir / "CMakeCache.txt").exists():
+        return []
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        return []
+    bin_dir = Path(conda_prefix) / "bin"
+    c_candidates = ["x86_64-conda-linux-gnu-cc", "gcc", "cc"]
+    cxx_candidates = ["x86_64-conda-linux-gnu-c++", "g++", "c++"]
+    c_compiler = next((bin_dir / name for name in c_candidates if (bin_dir / name).exists()), None)
+    cxx_compiler = next((bin_dir / name for name in cxx_candidates if (bin_dir / name).exists()), None)
+    args = []
+    if c_compiler:
+        args.append(f"-DCMAKE_C_COMPILER={c_compiler}")
+    if cxx_compiler:
+        args.append(f"-DCMAKE_CXX_COMPILER={cxx_compiler}")
+    return args
 
 
 def make_ntuple(cfg, args):
@@ -274,14 +358,17 @@ def make_ntuple(cfg, args):
                 mc_names.append(name)
 
     commands = []
+    build_dir = nano_repo / "build"
     if ntuple.get("build_before_make_condor", True):
         commands.append([
-            "cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build"),
+            "cmake", "-S", str(nano_repo), "-B", str(build_dir),
+            *conda_compiler_args(build_dir),
             *cmake_prefix_path_arg(),
             *correctionlib_dir_arg(),
             *yaml_cpp_dir_arg(),
+            *cmake_runtime_link_args(),
         ])
-        commands.append(["cmake", "--build", str(nano_repo / "build"), "-j"])
+        commands.append(["cmake", "--build", str(build_dir), "-j"])
 
     binary = nano_repo / "build" / "nano_make_condor"
     config_card = resolve_path(ntuple["config"])
