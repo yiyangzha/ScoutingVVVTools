@@ -796,7 +796,7 @@ def make_ntuple(cfg, args):
                 cmd.append("--no-download-remote-inputs")
             commands.append(cmd)
             if ntuple.get("submit_condor", False):
-                commands.append(["condor_submit", "submit.jdl", {"cwd": job_dir}])
+                commands.append(["./submit.sh", {"cwd": job_dir}])
 
     command_log = []
     for cmd in commands:

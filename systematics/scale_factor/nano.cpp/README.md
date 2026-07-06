@@ -153,15 +153,16 @@ build/nano_make_condor \
   --download-remote-inputs
 ```
 
-This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, and writes `submit.jdl`.
-For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
+This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, writes `submit.jdl`, and writes `submit.sh`. For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
 
 Submit manually:
 
 ```bash
 cd jobs/condor_muon_2018_v9_MC
-condor_submit submit.jdl
+./submit.sh
 ```
+
+On IHEP `lxlogin*` hosts, `submit.sh` uses `hep_sub -g cms -wt mid`; on other hosts it falls back to `condor_submit submit.jdl`.
 
 Each job runs `process.sh`, unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
 

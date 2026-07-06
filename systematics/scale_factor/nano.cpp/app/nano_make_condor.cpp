@@ -235,8 +235,8 @@ std::string env_or_empty(const char *name) {
   return value ? std::string(value) : std::string();
 }
 
-void write_process_script(const fs::path &path, const fs::path &template_dir, const std::map<std::string, std::string> &replacements) {
-  write_text_file(path, render_template(template_dir / "process.sh.in", replacements));
+void write_executable_template(const fs::path &path, const fs::path &template_path, const std::map<std::string, std::string> &replacements) {
+  write_text_file(path, render_template(template_path, replacements));
   fs::permissions(path, fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_exec |
                             fs::perms::group_read | fs::perms::others_exec | fs::perms::others_read,
                   fs::perm_options::add);
@@ -257,21 +257,21 @@ int main(int argc, char **argv) {
     fs::create_directories(workdir);
     const auto template_dir = fs::path("templates") / "condor";
     const auto merged_config = write_merged_config(workdir / "config_snapshot.yaml", settings);
-    write_process_script(workdir / "process.sh", template_dir,
-                         {
-                             {"@CONDA_PREFIX@", require_env("SCALE_FACTOR_CONDA_PREFIX")},
-                             {"@CC_COMPILER@", require_env("SCALE_FACTOR_CC_COMPILER")},
-                             {"@CXX_COMPILER@", require_env("SCALE_FACTOR_CXX_COMPILER")},
-                             {"@ROOT_CMAKE_DIR@", require_env("SCALE_FACTOR_ROOT_DIR")},
-                             {"@CORRECTIONLIB_CMAKE_DIR@", require_env("SCALE_FACTOR_CORRECTIONLIB_DIR")},
-                             {"@CORRECTIONLIB_LIB_DIR@", env_or_empty("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")},
-                             {"@YAML_CPP_CMAKE_DIR@", require_env("SCALE_FACTOR_YAML_CPP_DIR")},
-                             {"@CMAKE_PREFIX_PATH@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH")},
-                             {"@CMAKE_PREFIX_PATH_ENV@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV")},
-                             {"@CMAKE_LINK_FLAGS@", require_env("SCALE_FACTOR_CMAKE_LINK_FLAGS")},
-                             {"@CMAKE_RPATH@", require_env("SCALE_FACTOR_CMAKE_RPATH")},
-                             {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
-                         });
+    write_executable_template(workdir / "process.sh", template_dir / "process.sh.in",
+                              {
+                                  {"@CONDA_PREFIX@", require_env("SCALE_FACTOR_CONDA_PREFIX")},
+                                  {"@CC_COMPILER@", require_env("SCALE_FACTOR_CC_COMPILER")},
+                                  {"@CXX_COMPILER@", require_env("SCALE_FACTOR_CXX_COMPILER")},
+                                  {"@ROOT_CMAKE_DIR@", require_env("SCALE_FACTOR_ROOT_DIR")},
+                                  {"@CORRECTIONLIB_CMAKE_DIR@", require_env("SCALE_FACTOR_CORRECTIONLIB_DIR")},
+                                  {"@CORRECTIONLIB_LIB_DIR@", env_or_empty("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")},
+                                  {"@YAML_CPP_CMAKE_DIR@", require_env("SCALE_FACTOR_YAML_CPP_DIR")},
+                                  {"@CMAKE_PREFIX_PATH@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH")},
+                                  {"@CMAKE_PREFIX_PATH_ENV@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV")},
+                                  {"@CMAKE_LINK_FLAGS@", require_env("SCALE_FACTOR_CMAKE_LINK_FLAGS")},
+                                  {"@CMAKE_RPATH@", require_env("SCALE_FACTOR_CMAKE_RPATH")},
+                                  {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
+                              });
 
     const auto tarball = (workdir / "repo.tar.gz").string();
     const auto tar_cmd = "tar czf " + tarball +
@@ -332,17 +332,20 @@ int main(int argc, char **argv) {
     const auto variations_arg = normalized_variations_arg(cli);
     const auto run_data_arg = cli.run_data ? std::string("true") : std::string("false");
     const auto download_remote_inputs_arg = cli.download_remote_inputs ? std::string("true") : std::string("false");
+    const auto submit_replacements = std::map<std::string, std::string>{
+        {"@TREE_NAME@", cli.tree_name},
+        {"@NUM_EVENTS@", std::to_string(cli.num_events)},
+        {"@CHANNEL@", cli.channel},
+        {"@VARIATIONS@", variations_arg},
+        {"@RUN_DATA@", run_data_arg},
+        {"@DOWNLOAD_REMOTE_INPUTS@", download_remote_inputs_arg},
+        {"@NUM_JOBS@", std::to_string(jobs.size())},
+    };
     const auto submit_jdl = render_template(
         template_dir / "submit.jdl.in",
-        {
-            {"@TREE_NAME@", cli.tree_name},
-            {"@NUM_EVENTS@", std::to_string(cli.num_events)},
-            {"@CHANNEL@", cli.channel},
-            {"@VARIATIONS@", variations_arg},
-            {"@RUN_DATA@", run_data_arg},
-            {"@DOWNLOAD_REMOTE_INPUTS@", download_remote_inputs_arg},
-        });
+        submit_replacements);
     write_text_file(workdir / "submit.jdl", submit_jdl);
+    write_executable_template(workdir / "submit.sh", template_dir / "submit.sh.in", submit_replacements);
 
     fs::create_directories(workdir / "logs");
     std::cout << "Created condor workdir: " << workdir << "\n";
@@ -356,7 +359,7 @@ int main(int argc, char **argv) {
     std::cout << "Job index list: " << (workdir / "job_indices.txt") << "\n";
     std::cout << "Jobs: " << jobs.size() << "\n";
     std::cout << "Next step:\n";
-    std::cout << "  cd " << workdir << " && condor_submit submit.jdl\n";
+    std::cout << "  cd " << workdir << " && ./submit.sh\n";
     return 0;
   } catch (const std::exception &ex) {
     std::cerr << "nano_make_condor failed: " << ex.what() << "\n";
