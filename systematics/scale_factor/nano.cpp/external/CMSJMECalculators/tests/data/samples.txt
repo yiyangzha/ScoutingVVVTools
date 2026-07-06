@@ -1,0 +1,4 @@
+# Test samples generated with:
+(QCD_Run2018.root, QCD_Run2022.root, JetMET_Run2022F.root, JetHT_Run2018D.root)
+bambooRun -m examples/nanoqcdjets.py:SkimNanoQCDJets examples/analysis_qcdjets.yaml -o test2 --maxSelected 1000
+

@@ -1,0 +1,9 @@
+<lcgdict>
+  <class name="JetMETVariationsCalculatorBase" persistent="false" />
+  <class name="JetVariationsCalculator" persistent="false" />
+  <class name="Type1METVariationsCalculator" persistent="false" />
+  <class name="FatJetVariationsCalculator" persistent="false" />
+  <class name="EGammaVariationsCalculator" persistent="false" />
+  <class name="TauVariationsCalculator" persistent="false" />
+  <class name="MuonVariationsCalculator" persistent="false" />
+</lcgdict>

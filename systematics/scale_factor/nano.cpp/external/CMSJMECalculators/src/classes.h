@@ -1,0 +1,8 @@
+#include "CMSCalculatorsUtilities.h"
+#include "JetMETVariationsCalculatorBase.h"
+#include "JetVariationsCalculator.h"
+#include "Type1METVariationsCalculator.h"
+#include "FatJetVariationsCalculator.h"
+#include "EGammaVariationsCalculator.h"
+#include "TauVariationsCalculator.h"
+#include "MuonVariationsCalculator.h"

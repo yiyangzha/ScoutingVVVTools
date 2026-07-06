@@ -124,7 +124,7 @@ For sample-parallel C++ modes (`0`, `1`, `6`), `run.py --slurm` submits SLURM jo
 
 ## Scale-Factor Workflow
 
-`systematics/scale_factor/` vendors `nano.cpp` for ntuple production and `boohft-calib` for the top/W SF fit. The controller in `scale_factor.py` only generates sample YAMLs and topwsf cards and launches those existing tools.
+`systematics/scale_factor/` vendors `nano.cpp` for ntuple production and `boohft-calib` for the top/W SF fit. The controller in `scale_factor.py` only generates sample YAMLs and topwsf cards and launches those existing tools. `nano.cpp/external/CMSJMECalculators` is vendored source from the upstream `nano.cpp` submodule at commit `f31313d87bc917b0e6a2114b08a83a408bf8608c`; keep nested git metadata out of that directory.
 
 Current configured target:
 

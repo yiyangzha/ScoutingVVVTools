@@ -1,0 +1,73 @@
+image: gitlab-registry.cern.ch/sft/docker/alma9-core
+
+stages:
+  - build
+  - test
+
+variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    MAMBA_ROOT_PREFIX: "$CI_PROJECT_DIR/.gitlab-ci/install/micromamba"
+    MAMBA_EXE: "$CI_PROJECT_DIR/.gitlab-ci/install/.local/bin/micromamba"
+cache:
+  paths:
+    - tests/data
+build_108:
+  tags: [cvmfs]
+  stage: build
+  before_script:  # LCG_105, ROOT v6-30-00
+    - yum install -y libgfortran make atlas
+    - export LC_ALL="C.utf8"
+    - source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc13-opt/setup.sh
+    - python -m venv venv108
+    - source venv108/bin/activate
+  artifacts:
+    paths: [venv108]
+    expire_in: 30min
+  cache:
+    paths: [.cache/pip]
+  retry: 2
+  script:
+    - python -m pip install scikit-build
+    - python -m pip install --no-build-isolation .
+test_108:
+  tags: [cvmfs]
+  stage: test
+  needs: [build_108]
+  before_script:
+    - export LC_ALL="C.utf8"
+    - source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc13-opt/setup.sh
+    - source venv108/bin/activate
+  script:
+    - pytest --junitxml=report.xml tests
+  retry: 2
+  artifacts:
+    paths: [report.xml]
+    reports:
+      junit: report.xml
+
+build_mamba:
+  tags: [cvmfs]
+  stage: build
+  before_script:
+    - source .gitlab-ci/setup.sh
+    - micromamba activate
+  script:
+    - python -m pip install scikit-build setuptools setuptools_scm
+    - python -m pip install --no-build-isolation .
+  retry: 2
+  cache:
+    paths: [.gitlab-ci/install]
+test_mamba:
+  tags: [cvmfs]
+  stage: test
+  needs: [build_mamba]
+  retry: 2
+  before_script:
+    - eval "$(${MAMBA_EXE} shell hook bash)"
+    - micromamba activate
+  script:
+    - pytest --junitxml=reportMamba.xml tests
+  artifacts:
+    paths: [reportMamba.xml]
+    reports:
+      junit: reportMamba.xml
