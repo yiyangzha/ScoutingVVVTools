@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -216,6 +217,30 @@ def cmake_prefix_path_arg():
     return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"] if prefixes else []
 
 
+def correctionlib_dir_arg():
+    candidates = []
+    try:
+        import correctionlib
+    except ImportError:
+        pass
+    else:
+        candidates.append(Path(correctionlib.__file__).resolve().parent / "cmake")
+
+    for key in ("purelib", "platlib"):
+        site_path = sysconfig.get_paths().get(key)
+        if site_path:
+            candidates.append(Path(site_path) / "correctionlib" / "cmake")
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidates.extend(Path(conda_prefix).glob("lib/python*/site-packages/correctionlib/cmake"))
+
+    for path in candidates:
+        if (path / "correctionlibConfig.cmake").exists() or (path / "correctionlib-config.cmake").exists():
+            return [f"-Dcorrectionlib_DIR={path}"]
+    return []
+
+
 def make_ntuple(cfg, args):
     samples = sample_map(cfg)
     data_names, mc_groups = selected_sample_groups(cfg, samples, "ntuple")
@@ -235,7 +260,11 @@ def make_ntuple(cfg, args):
 
     commands = []
     if ntuple.get("build_before_make_condor", True):
-        commands.append(["cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build"), *cmake_prefix_path_arg()])
+        commands.append([
+            "cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build"),
+            *cmake_prefix_path_arg(),
+            *correctionlib_dir_arg(),
+        ])
         commands.append(["cmake", "--build", str(nano_repo / "build"), "-j"])
 
     binary = nano_repo / "build" / "nano_make_condor"
