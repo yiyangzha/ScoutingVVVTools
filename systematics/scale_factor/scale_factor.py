@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -206,6 +207,15 @@ def run_command(cmd, cwd=None, dry_run=False):
         raise SystemExit(result.returncode)
 
 
+def cmake_prefix_path_arg():
+    prefixes = []
+    for value in (os.environ.get("CMAKE_PREFIX_PATH", ""), os.environ.get("CONDA_PREFIX", ""), sys.prefix):
+        for part in str(value).split(os.pathsep):
+            if part and part not in prefixes:
+                prefixes.append(part)
+    return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"] if prefixes else []
+
+
 def make_ntuple(cfg, args):
     samples = sample_map(cfg)
     data_names, mc_groups = selected_sample_groups(cfg, samples, "ntuple")
@@ -225,7 +235,7 @@ def make_ntuple(cfg, args):
 
     commands = []
     if ntuple.get("build_before_make_condor", True):
-        commands.append(["cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build")])
+        commands.append(["cmake", "-S", str(nano_repo), "-B", str(nano_repo / "build"), *cmake_prefix_path_arg()])
         commands.append(["cmake", "--build", str(nano_repo / "build"), "-j"])
 
     binary = nano_repo / "build" / "nano_make_condor"
