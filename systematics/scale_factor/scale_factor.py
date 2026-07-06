@@ -295,6 +295,15 @@ def clean_path_value(value, conda_prefix):
     return os.pathsep.join(cleaned)
 
 
+def clean_single_path_value(value, conda_prefix):
+    if not value:
+        return ""
+    path = Path(value).expanduser()
+    if conda_prefix and is_under(path, conda_prefix):
+        return ""
+    return value
+
+
 def das_env_prefix():
     conda_prefix = os.environ.get("CONDA_PREFIX")
     unset_vars = [
@@ -309,22 +318,36 @@ def das_env_prefix():
         "PIXI_EXE",
         "PIXI_HOME",
         "PIXI_IN_SHELL",
-        "PYTHONHOME",
+    ]
+    path_vars = [
+        "PATH",
         "PYTHONPATH",
         "LD_LIBRARY_PATH",
         "LIBRARY_PATH",
         "CPATH",
         "CPLUS_INCLUDE_PATH",
-        "ROOTSYS",
         "CMAKE_PREFIX_PATH",
+    ]
+    single_path_vars = [
+        "PYTHONHOME",
+        "ROOTSYS",
         "CC",
         "CXX",
     ]
     parts = ["env"]
     parts.extend(f"-u {name}" for name in unset_vars)
-    clean_path = clean_path_value(os.environ.get("PATH", ""), conda_prefix)
-    if clean_path:
-        parts.append("PATH=" + shlex.quote(clean_path))
+    for name in path_vars:
+        clean_value = clean_path_value(os.environ.get(name, ""), conda_prefix)
+        if clean_value:
+            parts.append(f"{name}=" + shlex.quote(clean_value))
+        else:
+            parts.append(f"-u {name}")
+    for name in single_path_vars:
+        clean_value = clean_single_path_value(os.environ.get(name, ""), conda_prefix)
+        if clean_value:
+            parts.append(f"{name}=" + shlex.quote(clean_value))
+        else:
+            parts.append(f"-u {name}")
     return " ".join(parts)
 
 
