@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import sysconfig
@@ -281,6 +282,52 @@ def resolve_dasgoclient():
     return found or ""
 
 
+def clean_path_value(value, conda_prefix):
+    if not value:
+        return ""
+    cleaned = []
+    for item in value.split(os.pathsep):
+        if not item:
+            continue
+        if conda_prefix and is_under(item, conda_prefix):
+            continue
+        cleaned.append(item)
+    return os.pathsep.join(cleaned)
+
+
+def das_env_prefix():
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    unset_vars = [
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_SHLVL",
+        "CONDA_EXE",
+        "CONDA_PYTHON_EXE",
+        "PIXI_PROJECT_NAME",
+        "PIXI_PROJECT_ROOT",
+        "PIXI_ENVIRONMENT_NAME",
+        "PIXI_EXE",
+        "PIXI_HOME",
+        "PIXI_IN_SHELL",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "LIBRARY_PATH",
+        "CPATH",
+        "CPLUS_INCLUDE_PATH",
+        "ROOTSYS",
+        "CMAKE_PREFIX_PATH",
+        "CC",
+        "CXX",
+    ]
+    parts = ["env"]
+    parts.extend(f"-u {name}" for name in unset_vars)
+    clean_path = clean_path_value(os.environ.get("PATH", ""), conda_prefix)
+    if clean_path:
+        parts.append("PATH=" + shlex.quote(clean_path))
+    return " ".join(parts)
+
+
 def base_command_env():
     env = os.environ.copy()
     conda_prefix = os.environ.get("CONDA_PREFIX")
@@ -302,6 +349,7 @@ def command_env():
     dasgoclient = resolve_dasgoclient()
     if dasgoclient:
         env["SCALE_FACTOR_DASGOCLIENT"] = dasgoclient
+        env["SCALE_FACTOR_DAS_ENV_PREFIX"] = das_env_prefix()
     if os.environ.get("CONDA_PREFIX"):
         exports = pixi_env_exports()
         env.update(exports)

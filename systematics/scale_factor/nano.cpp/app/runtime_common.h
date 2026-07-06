@@ -393,6 +393,14 @@ inline std::string dasgoclient_executable() {
   return "dasgoclient";
 }
 
+inline std::string das_command_prefix() {
+  const auto *value = std::getenv("SCALE_FACTOR_DAS_ENV_PREFIX");
+  if (value && std::string(value).size() > 0) {
+    return std::string(value) + " " + dasgoclient_executable();
+  }
+  return dasgoclient_executable();
+}
+
 inline std::vector<std::string> list_remote_dir(const std::string &path) {
   const auto pos = path.find('/', std::string("root://").size());
   if (pos == std::string::npos) {
@@ -421,7 +429,7 @@ inline std::vector<std::string> resolve_dataset_entry(const std::string &entry) 
   if (starts_with(entry, "/") && std::count(entry.begin(), entry.end(), '/') >= 3 && !fs::exists(entry) && !starts_with(entry, "/store/")) {
     std::vector<std::string> files;
     const auto query = "file dataset=" + entry;
-    const auto das = dasgoclient_executable();
+    const auto das = das_command_prefix();
     std::vector<std::string> commands = {
         das + " -query=" + shell_quote(query),
     };
