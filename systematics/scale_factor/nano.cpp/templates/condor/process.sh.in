@@ -100,7 +100,21 @@ if [ ! -f "${EXTRACT_STAMP}" ]; then
   touch "${EXTRACT_STAMP}"
 fi
 
+detect_build_jobs() {
+  if [[ -n "${BUILD_JOBS:-}" && "${BUILD_JOBS}" != "auto" && "${BUILD_JOBS}" != "all" ]]; then
+    echo "${BUILD_JOBS}"
+    return
+  fi
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+    return
+  fi
+  getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1
+}
+
 if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
+  BUILD_THREADS="$(detect_build_jobs)"
+  echo "Building nano.cpp with ${BUILD_THREADS} parallel jobs"
   cmake -S "${REPO_DIR}" -B "${REPO_DIR}/build" \
     -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
     -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH_ARG}" \
@@ -112,7 +126,7 @@ if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
     -DCMAKE_MODULE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
     -DCMAKE_BUILD_RPATH="${CMAKE_RPATH}" \
     -DCMAKE_INSTALL_RPATH="${CMAKE_RPATH}"
-  cmake --build "${REPO_DIR}/build" -j "${BUILD_JOBS:-1}"
+  cmake --build "${REPO_DIR}/build" -j "${BUILD_THREADS}"
 fi
 
 JOB_INDEX=$1

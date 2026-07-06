@@ -135,7 +135,7 @@ Current configured target:
 
 Remote ScoutingNano inputs may be DAS datasets, `/store/...` files, `root://...` files, local directories, local ROOT files, or text/list/YAML file lists. Remote ROOT files are streamed by default; do not change to full local download unless requested. Step-1 output and all step-2 paths are local.
 
-The scale-factor ntuple config uses `ntuple.build_jobs` for the local `nano.cpp` build; the default is `1` to avoid oversubscribing login nodes. Condor worker builds also default to one build job.
+The scale-factor ntuple config uses `ntuple.build_jobs` for the local `nano.cpp` build; `"auto"` uses the visible CPU count. Condor ntuple jobs still request one CPU, but worker builds use all CPUs visible inside the slot unless `BUILD_JOBS` is set.
 
 The Scouting ntuple card uses strict branch binding. Missing configured ScoutingNano branches fail immediately, except `GenPart_*`: MC jobs warn in their per-job Condor logs and fall back to default W/Z matches with `GenJet` flavour hints. `GenJet_*` remains required for MC jobs. The topwsf step also fails on missing local ntuple files, missing Events branches, missing xsections, or missing `Runs/genEventSumw`.
 

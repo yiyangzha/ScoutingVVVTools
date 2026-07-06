@@ -196,6 +196,20 @@ def variation_names(ntuple_cfg):
     return variations
 
 
+def build_jobs(value):
+    if value is None:
+        return os.cpu_count() or 1
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("", "auto", "all", "available"):
+            return os.cpu_count() or 1
+        value = text
+    jobs = int(value)
+    if jobs <= 0:
+        raise SystemExit("ntuple.build_jobs must be a positive integer or 'auto'")
+    return jobs
+
+
 def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
 
@@ -584,7 +598,7 @@ def make_ntuple(cfg, args):
             "cmake", "-S", str(nano_repo), "-B", str(build_dir),
             *pixi_cmake_args(build_dir),
         ])
-        commands.append(["cmake", "--build", str(build_dir), "-j", int(ntuple.get("build_jobs", 1))])
+        commands.append(["cmake", "--build", str(build_dir), "-j", build_jobs(ntuple.get("build_jobs", "auto"))])
 
     binary = nano_repo / "build" / "nano_make_condor"
     config_card = resolve_path(ntuple["config"])

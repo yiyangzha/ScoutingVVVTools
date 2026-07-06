@@ -62,7 +62,7 @@ Important `ntuple_config.json` fields:
 - `ntuple.samples`: data and MC groups, by names from `src/sample.json`.
 - `ntuple.sample_base`: local output prefix; the year/nano suffix is appended.
 - `ntuple.job_dir`: local Condor work directory pattern.
-- `ntuple.build_jobs`: local `nano.cpp` build parallelism; default config keeps this at `1`.
+- `ntuple.build_jobs`: local `nano.cpp` build parallelism; `"auto"` uses the visible CPU count.
 - `ntuple.download_remote_inputs`: defaults to `false`, so remote `root://` ScoutingNano inputs are streamed rather than copied locally.
 - `ntuple.variations`: JES/JER/MET switches are present but disabled for Scouting until implemented.
 
@@ -95,7 +95,7 @@ Important `sf_config.json` fields:
 - `calibration.systematics.enabled`: currently `pu`, `jms`, and `jmr`; JES/JER/MET/LHE switches are listed but disabled.
 - `calibration.run_launcher`: set `false` to only generate cards.
 
-Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Condor workers unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory and build with the same pixi/conda compiler and CMake package paths resolved by mode 11.
+Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Condor jobs still request one CPU in `submit.jdl`; their build step uses all CPUs visible inside the worker slot unless `BUILD_JOBS` is set. Workers unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory and build with the same pixi/conda compiler and CMake package paths resolved by mode 11.
 
 Missing configured samples, missing xsections/lumi, missing non-`GenPart_*` ScoutingNano branches, missing ntuple branches, missing local ntuple files, and missing `Runs/genEventSumw` fail explicitly. Missing `GenPart_*` branches warn in the affected ntuple job log and use default W/Z matching with `GenJet` flavour hints.
 
