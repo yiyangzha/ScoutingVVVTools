@@ -7,7 +7,7 @@
     {
       "jet_type": "ak8",
       "jet_category": "W",
-      "taggers": ["WvsQCD", "ZvsQCD", "VvsQCD"]
+      "taggers": ["WvsQCD"]
     }
   ],
   "calibration": {
@@ -33,7 +33,7 @@
       "fit_auto_mc_stats": 0
     },
     "samples": {
-      "data": ["data_2024"],
+      "data": ["2024I"],
       "mc_groups": {
         "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
         "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],
@@ -59,19 +59,19 @@
           "WvsQCD": {
             "label": "Scouting GloParT WvsQCD",
             "expr": "fj_1_WvsQCD",
-            "pt_bins": [[200, 300], [300, 400], [400, 600], [600, 1200]],
+            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
             "score_bins": [[0.0, 0.50], [0.50, 0.80], [0.80, 0.90], [0.90, 0.95], [0.95, 0.98], [0.98, 1.0]]
           },
           "ZvsQCD": {
             "label": "Scouting GloParT ZvsQCD",
             "expr": "fj_1_ZvsQCD",
-            "pt_bins": [[200, 300], [300, 400], [400, 600], [600, 1200]],
+            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
             "score_bins": [[0.0, 0.20], [0.20, 0.50], [0.50, 0.75], [0.75, 0.90], [0.90, 0.97], [0.97, 1.0]]
           },
           "VvsQCD": {
             "label": "Scouting GloParT VvsQCD",
             "expr": "fj_1_VvsQCD",
-            "pt_bins": [[200, 300], [300, 400], [400, 600], [600, 1200]],
+            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
             "score_bins": [[0.0, 0.40], [0.40, 0.70], [0.70, 0.85], [0.85, 0.93], [0.93, 0.97], [0.97, 1.0]]
           }
         }
