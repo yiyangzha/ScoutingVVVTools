@@ -1,6 +1,7 @@
 #include "runtime_common.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -221,8 +222,16 @@ void write_job_manifest(const fs::path &path, const std::vector<JobSpec> &jobs) 
   out << "}\n";
 }
 
-void write_process_script(const fs::path &path, const fs::path &template_dir) {
-  write_text_file(path, read_text_file(template_dir / "process.sh.in"));
+std::string require_env(const char *name) {
+  const auto *value = std::getenv(name);
+  if (!value || std::string(value).empty()) {
+    throw std::runtime_error(std::string("Required environment variable is not set: ") + name);
+  }
+  return value;
+}
+
+void write_process_script(const fs::path &path, const fs::path &template_dir, const std::map<std::string, std::string> &replacements) {
+  write_text_file(path, render_template(template_dir / "process.sh.in", replacements));
   fs::permissions(path, fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_exec |
                             fs::perms::group_read | fs::perms::others_exec | fs::perms::others_read,
                   fs::perm_options::add);
@@ -242,9 +251,10 @@ int main(int argc, char **argv) {
     const auto workdir = fs::path(cli.job_dir);
     fs::create_directories(workdir);
     const auto template_dir = fs::path("templates") / "condor";
+    const auto conda_prefix = require_env("CONDA_PREFIX");
 
     const auto merged_config = write_merged_config(workdir / "config_snapshot.yaml", settings);
-    write_process_script(workdir / "process.sh", template_dir);
+    write_process_script(workdir / "process.sh", template_dir, {{"@CONDA_PREFIX@", conda_prefix}});
 
     const auto tarball = (workdir / "repo.tar.gz").string();
     const auto tar_cmd = "tar czf " + tarball +

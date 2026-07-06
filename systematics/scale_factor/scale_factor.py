@@ -199,6 +199,21 @@ def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
 
 
+def require_conda_prefix():
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        raise SystemExit("Mode 11 must run inside the pixi/conda environment so C++ dependencies all come from one prefix.")
+    path = Path(conda_prefix)
+    if not path.exists():
+        raise SystemExit(f"CONDA_PREFIX does not exist: {conda_prefix}")
+    if not is_under(sys.executable, path):
+        raise SystemExit(
+            "Mode 11 must be run with the python3 from the active pixi/conda environment. "
+            f"Current python3 is {sys.executable}, CONDA_PREFIX is {path}."
+        )
+    return path
+
+
 def prepend_env_path(env, key, paths):
     values = [str(path) for path in paths if path and Path(path).exists()]
     if not values:
@@ -215,7 +230,10 @@ def command_env():
     conda_prefix = os.environ.get("CONDA_PREFIX")
     include_dirs = []
     if conda_prefix:
-        include_dirs.append(Path(conda_prefix) / "include")
+        prefix = Path(conda_prefix)
+        prepend_env_path(env, "PATH", [prefix / "bin"])
+        include_dirs.append(prefix / "include")
+        env["ROOTSYS"] = str(prefix)
     prepend_env_path(env, "LD_LIBRARY_PATH", lib_dirs)
     prepend_env_path(env, "LIBRARY_PATH", lib_dirs)
     prepend_env_path(env, "CPATH", include_dirs)
@@ -233,15 +251,29 @@ def run_command(cmd, cwd=None, dry_run=False):
 
 
 def cmake_prefix_path_arg():
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        prefix = Path(conda_prefix)
+        prefixes = [str(prefix), str(prefix / "x86_64-conda-linux-gnu" / "sysroot" / "usr")]
+        return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"]
     prefixes = []
-    for value in (os.environ.get("CMAKE_PREFIX_PATH", ""), os.environ.get("CONDA_PREFIX", ""), sys.prefix):
+    for value in (os.environ.get("CMAKE_PREFIX_PATH", ""), sys.prefix):
         for part in str(value).split(os.pathsep):
             if part and part not in prefixes:
                 prefixes.append(part)
     return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"] if prefixes else []
 
 
-def correctionlib_dir_arg():
+def correctionlib_dir_arg(build_dir):
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    cached = read_cmake_cache_value(build_dir, "correctionlib_DIR")
+    if cached and conda_prefix:
+        if is_under(cached, conda_prefix):
+            return []
+        raise SystemExit(
+            "nano.cpp build cache uses correctionlib outside the active pixi/conda environment: "
+            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
     candidates = []
     try:
         import correctionlib
@@ -255,12 +287,13 @@ def correctionlib_dir_arg():
         if site_path:
             candidates.append(Path(site_path) / "correctionlib" / "cmake")
 
-    conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
         candidates.extend(Path(conda_prefix).glob("lib/python*/site-packages/correctionlib/cmake"))
 
     for path in candidates:
         if (path / "correctionlibConfig.cmake").exists() or (path / "correctionlib-config.cmake").exists():
+            if conda_prefix and not is_under(path, conda_prefix):
+                raise SystemExit(f"Resolved correctionlib outside CONDA_PREFIX: {path}")
             return [f"-Dcorrectionlib_DIR={path}"]
     return []
 
@@ -270,7 +303,11 @@ def correctionlib_package_dir():
         import correctionlib
     except ImportError:
         return None
-    return Path(correctionlib.__file__).resolve().parent
+    package_dir = Path(correctionlib.__file__).resolve().parent
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix and not is_under(package_dir, conda_prefix):
+        raise SystemExit(f"Resolved correctionlib Python package outside CONDA_PREFIX: {package_dir}")
+    return package_dir
 
 
 def runtime_library_dirs():
@@ -288,9 +325,17 @@ def runtime_library_dirs():
     return out
 
 
-def yaml_cpp_dir_arg():
-    candidates = []
+def yaml_cpp_dir_arg(build_dir):
     conda_prefix = os.environ.get("CONDA_PREFIX")
+    cached = read_cmake_cache_value(build_dir, "yaml-cpp_DIR")
+    if cached and conda_prefix:
+        if is_under(cached, conda_prefix):
+            return []
+        raise SystemExit(
+            "nano.cpp build cache uses yaml-cpp outside the active pixi/conda environment: "
+            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
+    candidates = []
     if conda_prefix:
         prefix = Path(conda_prefix)
         candidates.extend([
@@ -301,6 +346,32 @@ def yaml_cpp_dir_arg():
         if (path / "yaml-cpp-config.cmake").exists() or (path / "yaml-cppConfig.cmake").exists():
             return [f"-Dyaml-cpp_DIR={path}"]
     return []
+
+
+def root_dir_arg(build_dir):
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        return []
+    cached = read_cmake_cache_value(build_dir, "ROOT_DIR")
+    if cached:
+        if is_under(cached, conda_prefix):
+            return []
+        raise SystemExit(
+            "nano.cpp build cache uses ROOT outside the active pixi/conda environment: "
+            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
+    prefix = Path(conda_prefix)
+    candidates = [
+        prefix / "lib" / "cmake" / "ROOT",
+        prefix / "cmake" / "ROOT",
+    ]
+    for path in candidates:
+        if (path / "ROOTConfig.cmake").exists():
+            return [f"-DROOT_DIR={path}"]
+    raise SystemExit(
+        "Could not find ROOTConfig.cmake under the active pixi/conda environment. "
+        "Run pixi install after pulling the updated pixi.toml; mode 11 must not mix the pixi compiler with system ROOT."
+    )
 
 
 def cmake_runtime_link_args():
@@ -385,6 +456,7 @@ def conda_compiler_args(build_dir):
 
 
 def make_ntuple(cfg, args):
+    require_conda_prefix()
     samples = sample_map(cfg)
     data_names, mc_groups = selected_sample_groups(cfg, samples, "ntuple")
     ntuple = cfg["ntuple"]
@@ -408,8 +480,9 @@ def make_ntuple(cfg, args):
             "cmake", "-S", str(nano_repo), "-B", str(build_dir),
             *conda_compiler_args(build_dir),
             *cmake_prefix_path_arg(),
-            *correctionlib_dir_arg(),
-            *yaml_cpp_dir_arg(),
+            *root_dir_arg(build_dir),
+            *correctionlib_dir_arg(build_dir),
+            *yaml_cpp_dir_arg(build_dir),
             *cmake_runtime_link_args(),
         ])
         commands.append(["cmake", "--build", str(build_dir), "-j"])
