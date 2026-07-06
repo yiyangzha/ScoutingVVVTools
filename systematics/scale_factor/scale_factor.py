@@ -321,23 +321,67 @@ def cmake_runtime_link_args():
     ]
 
 
+def read_cmake_cache_value(build_dir, key):
+    cache = build_dir / "CMakeCache.txt"
+    if not cache.exists():
+        return None
+    with open(cache, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith(f"{key}:"):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+def is_under(path, base):
+    try:
+        Path(path).resolve().relative_to(Path(base).resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def first_existing_path(paths):
+    for path in paths:
+        if path and Path(path).exists():
+            return Path(path)
+    return None
+
+
+def conda_cxx_compiler(conda_prefix):
+    bin_dir = Path(conda_prefix) / "bin"
+    candidates = []
+    if os.environ.get("CXX"):
+        candidates.append(Path(os.environ["CXX"]))
+    for pattern in (
+        "*-conda-linux-gnu-c++",
+        "*-conda_cos*-linux-gnu-c++",
+        "*-conda-linux-gnu-g++",
+        "*-conda_cos*-linux-gnu-g++",
+    ):
+        candidates.extend(sorted(bin_dir.glob(pattern)))
+    candidates.extend(bin_dir / name for name in ("g++", "c++"))
+    return first_existing_path(candidates)
+
+
 def conda_compiler_args(build_dir):
-    if (build_dir / "CMakeCache.txt").exists():
-        return []
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if not conda_prefix:
         return []
-    bin_dir = Path(conda_prefix) / "bin"
-    c_candidates = ["x86_64-conda-linux-gnu-cc", "gcc", "cc"]
-    cxx_candidates = ["x86_64-conda-linux-gnu-c++", "g++", "c++"]
-    c_compiler = next((bin_dir / name for name in c_candidates if (bin_dir / name).exists()), None)
-    cxx_compiler = next((bin_dir / name for name in cxx_candidates if (bin_dir / name).exists()), None)
-    args = []
-    if c_compiler:
-        args.append(f"-DCMAKE_C_COMPILER={c_compiler}")
-    if cxx_compiler:
-        args.append(f"-DCMAKE_CXX_COMPILER={cxx_compiler}")
-    return args
+    cached = read_cmake_cache_value(build_dir, "CMAKE_CXX_COMPILER")
+    if cached:
+        if is_under(cached, conda_prefix):
+            return []
+        raise SystemExit(
+            "nano.cpp build cache uses a C++ compiler outside the active pixi/conda environment: "
+            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
+    cxx_compiler = conda_cxx_compiler(conda_prefix)
+    if not cxx_compiler:
+        raise SystemExit(
+            "Could not find a pixi/conda C++ compiler wrapper under CONDA_PREFIX. "
+            "Run pixi install after pulling the updated pixi.toml."
+        )
+    return [f"-DCMAKE_CXX_COMPILER={cxx_compiler}"]
 
 
 def make_ntuple(cfg, args):

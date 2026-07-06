@@ -22,17 +22,30 @@ endif()
 find_package(ROOT REQUIRED COMPONENTS MathCore Hist ROOTVecOps Physics)
 
 find_package(correctionlib REQUIRED)
+find_package(Boost REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads)
 find_package(ZLIB)
+
+if(TARGET Boost::headers)
+  set(CMSJME_BOOST_TARGET Boost::headers)
+elseif(TARGET Boost::boost)
+  set(CMSJME_BOOST_TARGET Boost::boost)
+else()
+  set(CMSJME_BOOST_TARGET "")
+endif()
 
 install(DIRECTORY interface/ DESTINATION ${PKG_HDR_INSTALL})
 
 add_library(CMSJMECalculators SHARED src/FatJetVariationsCalculator.cc src/JetMETVariationsCalculatorBase.cc src/JetVariationsCalculator.cc src/Type1METVariationsCalculator.cc src/EGammaVariationsCalculator.cc src/TauVariationsCalculator.cc src/MuonVariationsCalculator.cc)
 target_include_directories(CMSJMECalculators PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/interface>
-    $<INSTALL_INTERFACE:${PKG_HDR_INSTALL}>)
+    $<INSTALL_INTERFACE:${PKG_HDR_INSTALL}>
+    ${Boost_INCLUDE_DIRS})
 target_link_libraries(CMSJMECalculators correctionlib ROOT::Hist ROOT::ROOTVecOps ROOT::Physics)
+if(CMSJME_BOOST_TARGET)
+  target_link_libraries(CMSJMECalculators ${CMSJME_BOOST_TARGET})
+endif()
 install(TARGETS CMSJMECalculators EXPORT CMSJMECalculators-targets LIBRARY DESTINATION ${PKG_LIB_INSTALL})
 
 if(NOT SKBUILD) # also build the dictionary and install python modules
