@@ -103,12 +103,22 @@ PY
 )"
 REPO_DIR="${WORKDIR}/repo_${REPO_STAMP}"
 EXTRACT_STAMP="${REPO_DIR}/.extract_complete_${REPO_STAMP}"
+EXTRACT_LOCK="${WORKDIR}/.extract_${REPO_STAMP}.lock"
+BUILD_LOCK="${WORKDIR}/.build_${REPO_STAMP}.lock"
 
-if [ ! -f "${EXTRACT_STAMP}" ]; then
-  mkdir -p "${REPO_DIR}"
-  tar -xzf repo.tar.gz -C "${REPO_DIR}" --strip-components=0
-  touch "${EXTRACT_STAMP}"
+if ! command -v flock >/dev/null 2>&1; then
+  echo "Error: flock is required to serialize shared Condor worker setup" >&2
+  exit 1
 fi
+
+(
+  flock 200
+  if [ ! -f "${EXTRACT_STAMP}" ]; then
+    mkdir -p "${REPO_DIR}"
+    tar -xzf repo.tar.gz -C "${REPO_DIR}" --strip-components=0
+    touch "${EXTRACT_STAMP}"
+  fi
+) 200>"${EXTRACT_LOCK}"
 
 detect_build_jobs() {
   if [[ -n "${BUILD_JOBS:-}" && "${BUILD_JOBS}" != "auto" && "${BUILD_JOBS}" != "all" ]]; then
@@ -122,22 +132,25 @@ detect_build_jobs() {
   getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1
 }
 
-if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
-  BUILD_THREADS="$(detect_build_jobs)"
-  echo "Building nano.cpp with ${BUILD_THREADS} parallel jobs"
-  cmake -S "${REPO_DIR}" -B "${REPO_DIR}/build" \
-    -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
-    -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH_ARG}" \
-    -DROOT_DIR="${ROOT_CMAKE_DIR}" \
-    -Dcorrectionlib_DIR="${CORRECTIONLIB_CMAKE_DIR}" \
-    -Dyaml-cpp_DIR="${YAML_CPP_CMAKE_DIR}" \
-    -DCMAKE_EXE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
-    -DCMAKE_SHARED_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
-    -DCMAKE_MODULE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
-    -DCMAKE_BUILD_RPATH="${CMAKE_RPATH}" \
-    -DCMAKE_INSTALL_RPATH="${CMAKE_RPATH}"
-  cmake --build "${REPO_DIR}/build" -j "${BUILD_THREADS}"
-fi
+(
+  flock 200
+  if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
+    BUILD_THREADS="$(detect_build_jobs)"
+    echo "Building nano.cpp with ${BUILD_THREADS} parallel jobs"
+    cmake -S "${REPO_DIR}" -B "${REPO_DIR}/build" \
+      -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
+      -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH_ARG}" \
+      -DROOT_DIR="${ROOT_CMAKE_DIR}" \
+      -Dcorrectionlib_DIR="${CORRECTIONLIB_CMAKE_DIR}" \
+      -Dyaml-cpp_DIR="${YAML_CPP_CMAKE_DIR}" \
+      -DCMAKE_EXE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
+      -DCMAKE_SHARED_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
+      -DCMAKE_MODULE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
+      -DCMAKE_BUILD_RPATH="${CMAKE_RPATH}" \
+      -DCMAKE_INSTALL_RPATH="${CMAKE_RPATH}"
+    cmake --build "${REPO_DIR}/build" -j "${BUILD_THREADS}"
+  fi
+) 200>"${BUILD_LOCK}"
 
 JOB_INDEX=$1
 TREE_NAME=$2
