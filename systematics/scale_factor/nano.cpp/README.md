@@ -154,6 +154,7 @@ build/nano_make_condor \
 ```
 
 This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, and writes `submit.jdl`.
+For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
 
 Submit manually:
 

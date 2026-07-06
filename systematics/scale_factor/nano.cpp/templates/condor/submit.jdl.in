@@ -7,7 +7,8 @@ transfer_input_files = repo.tar.gz,config_snapshot.yaml,job_manifest.json
 transfer_output_files = dummy.cc
 use_x509userproxy = true
 
-+JobFlavour = "tomorrow"
++AcctGroup = "cms"
++HepJob_WallTime = "mid"
 
 environment = "DOWNLOAD_FILE=@DOWNLOAD_REMOTE_INPUTS@"
 output = logs/$(Cluster).$(Process).out
