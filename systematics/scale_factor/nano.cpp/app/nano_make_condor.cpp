@@ -230,6 +230,11 @@ std::string require_env(const char *name) {
   return value;
 }
 
+std::string env_or_empty(const char *name) {
+  const auto *value = std::getenv(name);
+  return value ? std::string(value) : std::string();
+}
+
 void write_process_script(const fs::path &path, const fs::path &template_dir, const std::map<std::string, std::string> &replacements) {
   write_text_file(path, render_template(template_dir / "process.sh.in", replacements));
   fs::permissions(path, fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_exec |
@@ -251,10 +256,21 @@ int main(int argc, char **argv) {
     const auto workdir = fs::path(cli.job_dir);
     fs::create_directories(workdir);
     const auto template_dir = fs::path("templates") / "condor";
-    const auto conda_prefix = require_env("CONDA_PREFIX");
-
     const auto merged_config = write_merged_config(workdir / "config_snapshot.yaml", settings);
-    write_process_script(workdir / "process.sh", template_dir, {{"@CONDA_PREFIX@", conda_prefix}});
+    write_process_script(workdir / "process.sh", template_dir,
+                         {
+                             {"@CONDA_PREFIX@", require_env("SCALE_FACTOR_CONDA_PREFIX")},
+                             {"@CC_COMPILER@", require_env("SCALE_FACTOR_CC_COMPILER")},
+                             {"@CXX_COMPILER@", require_env("SCALE_FACTOR_CXX_COMPILER")},
+                             {"@ROOT_CMAKE_DIR@", require_env("SCALE_FACTOR_ROOT_DIR")},
+                             {"@CORRECTIONLIB_CMAKE_DIR@", require_env("SCALE_FACTOR_CORRECTIONLIB_DIR")},
+                             {"@CORRECTIONLIB_LIB_DIR@", env_or_empty("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")},
+                             {"@YAML_CPP_CMAKE_DIR@", require_env("SCALE_FACTOR_YAML_CPP_DIR")},
+                             {"@CMAKE_PREFIX_PATH@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH")},
+                             {"@CMAKE_PREFIX_PATH_ENV@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV")},
+                             {"@CMAKE_LINK_FLAGS@", require_env("SCALE_FACTOR_CMAKE_LINK_FLAGS")},
+                             {"@CMAKE_RPATH@", require_env("SCALE_FACTOR_CMAKE_RPATH")},
+                         });
 
     const auto tarball = (workdir / "repo.tar.gz").string();
     const auto tar_cmd = "tar czf " + tarball +

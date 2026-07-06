@@ -4,7 +4,7 @@ CMS Run 3 Scouting VVV analysis tools. The main workflow converts ScoutingNano R
 
 ## Environment
 
-Use the project's normal ROOT/CMSSW environment on the batch machine for non-pixi workflows. The Python environment is described by `pixi.toml`; it includes the Python packages needed by training, plotting, coffea/topwsf, the scale-factor controller, conda-forge C/C++ compiler wrappers, ROOT, XRootD, `yaml-cpp`, `correctionlib`, and Boost C++ headers. The `nano.cpp` JME helper dependency `external/CMSJMECalculators` is vendored in-tree with nested git metadata removed; mode 11 passes the active pixi/conda prefix plus `ROOT_DIR`, `correctionlib_DIR`, `yaml-cpp_DIR`, and pixi runtime library paths to CMake so C++ dependencies resolve inside one environment. If an existing `nano.cpp/build` cache was configured with a system compiler, ROOT, `correctionlib`, or `yaml-cpp`, mode 11 exits with a clear message instead of mixing system and pixi libraries.
+Use the project's normal ROOT/CMSSW environment on the batch machine for non-pixi workflows. The Python environment is described by `pixi.toml`; it includes the Python packages needed by training, plotting, coffea/topwsf, the scale-factor controller, conda-forge C/C++ compiler wrappers, ROOT, XRootD, `yaml-cpp`, `correctionlib`, and Boost C++ headers. The `nano.cpp` JME helper dependency `external/CMSJMECalculators` is vendored in-tree with nested git metadata removed; mode 11 resolves `ROOTConfig.cmake` from the active pixi/conda prefix and passes `CC`, `CXX`, `ROOT_DIR`, `correctionlib_DIR`, `yaml-cpp_DIR`, and pixi runtime library paths to CMake so C++ dependencies resolve inside one environment. If an existing `nano.cpp/build` cache was configured with a system compiler, ROOT, `correctionlib`, or `yaml-cpp`, mode 11 exits with a clear message instead of mixing system and pixi libraries.
 
 Do not use the scale-factor ntuple step as a replacement for `selections/convert`: it reads ScoutingNano directly and writes topwsf ntuples, not `fat2`/`fat3` BDT trees.
 
@@ -62,6 +62,7 @@ Important `ntuple_config.json` fields:
 - `ntuple.samples`: data and MC groups, by names from `src/sample.json`.
 - `ntuple.sample_base`: local output prefix; the year/nano suffix is appended.
 - `ntuple.job_dir`: local Condor work directory pattern.
+- `ntuple.build_jobs`: local `nano.cpp` build parallelism; default config keeps this at `1`.
 - `ntuple.download_remote_inputs`: defaults to `false`, so remote `root://` ScoutingNano inputs are streamed rather than copied locally.
 - `ntuple.variations`: JES/JER/MET switches are present but disabled for Scouting until implemented.
 
@@ -94,7 +95,7 @@ Important `sf_config.json` fields:
 - `calibration.systematics.enabled`: currently `pu`, `jms`, and `jmr`; JES/JER/MET/LHE switches are listed but disabled.
 - `calibration.run_launcher`: set `false` to only generate cards.
 
-Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`.
+Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Condor workers unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory and build with the same pixi/conda compiler and CMake package paths resolved by mode 11.
 
 Missing configured samples, missing xsections/lumi, missing non-`GenPart_*` ScoutingNano branches, missing ntuple branches, missing local ntuple files, and missing `Runs/genEventSumw` fail explicitly. Missing `GenPart_*` branches warn in the affected ntuple job log and use default W/Z matching with `GenJet` flavour hints.
 

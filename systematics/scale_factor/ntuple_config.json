@@ -20,6 +20,7 @@
     "job_dir": "jobs/ntuples/{jet_type}_{jet_category}_{year}_{sample_set}",
     "nfiles_per_job": 5,
     "num_events": -1,
+    "build_jobs": 1,
     "build_before_make_condor": true,
     "run_make_condor": true,
     "submit_condor": false,

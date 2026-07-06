@@ -33,7 +33,7 @@
       "fit_auto_mc_stats": 0
     },
     "samples": {
-      "data": ["2024I"],
+      "data": ["data_2024"],
       "mc_groups": {
         "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
         "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],

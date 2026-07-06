@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
+_PIXI_ENV_EXPORTS = None
 
 
 def load_json(path):
@@ -199,6 +200,14 @@ def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
 
 
+def is_under(path, base):
+    try:
+        Path(path).resolve().relative_to(Path(base).resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def require_conda_prefix():
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if not conda_prefix:
@@ -214,6 +223,15 @@ def require_conda_prefix():
     return path
 
 
+def unique_paths(paths):
+    out = []
+    for path in paths:
+        path = Path(path)
+        if path not in out:
+            out.append(path)
+    return out
+
+
 def prepend_env_path(env, key, paths):
     values = [str(path) for path in paths if path and Path(path).exists()]
     if not values:
@@ -224,9 +242,8 @@ def prepend_env_path(env, key, paths):
     env[key] = os.pathsep.join(values)
 
 
-def command_env():
+def base_command_env():
     env = os.environ.copy()
-    lib_dirs = runtime_library_dirs()
     conda_prefix = os.environ.get("CONDA_PREFIX")
     include_dirs = []
     if conda_prefix:
@@ -234,10 +251,24 @@ def command_env():
         prepend_env_path(env, "PATH", [prefix / "bin"])
         include_dirs.append(prefix / "include")
         env["ROOTSYS"] = str(prefix)
-    prepend_env_path(env, "LD_LIBRARY_PATH", lib_dirs)
-    prepend_env_path(env, "LIBRARY_PATH", lib_dirs)
+        prepend_env_path(env, "LD_LIBRARY_PATH", [prefix / "lib"])
+        prepend_env_path(env, "LIBRARY_PATH", [prefix / "lib"])
     prepend_env_path(env, "CPATH", include_dirs)
     prepend_env_path(env, "CPLUS_INCLUDE_PATH", include_dirs)
+    return env
+
+
+def command_env():
+    env = base_command_env()
+    if os.environ.get("CONDA_PREFIX"):
+        exports = pixi_env_exports()
+        env.update(exports)
+        env["CC"] = exports["SCALE_FACTOR_CC_COMPILER"]
+        env["CXX"] = exports["SCALE_FACTOR_CXX_COMPILER"]
+        env["CMAKE_PREFIX_PATH"] = exports["SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV"]
+        lib_dirs = [exports.get("SCALE_FACTOR_CONDA_LIB_DIR"), exports.get("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")]
+        prepend_env_path(env, "LD_LIBRARY_PATH", lib_dirs)
+        prepend_env_path(env, "LIBRARY_PATH", lib_dirs)
     return env
 
 
@@ -250,30 +281,8 @@ def run_command(cmd, cwd=None, dry_run=False):
         raise SystemExit(result.returncode)
 
 
-def cmake_prefix_path_arg():
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if conda_prefix:
-        prefix = Path(conda_prefix)
-        prefixes = [str(prefix), str(prefix / "x86_64-conda-linux-gnu" / "sysroot" / "usr")]
-        return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"]
-    prefixes = []
-    for value in (os.environ.get("CMAKE_PREFIX_PATH", ""), sys.prefix):
-        for part in str(value).split(os.pathsep):
-            if part and part not in prefixes:
-                prefixes.append(part)
-    return [f"-DCMAKE_PREFIX_PATH={os.pathsep.join(prefixes)}"] if prefixes else []
-
-
-def correctionlib_dir_arg(build_dir):
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    cached = read_cmake_cache_value(build_dir, "correctionlib_DIR")
-    if cached and conda_prefix:
-        if is_under(cached, conda_prefix):
-            return []
-        raise SystemExit(
-            "nano.cpp build cache uses correctionlib outside the active pixi/conda environment: "
-            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
-        )
+def correctionlib_cmake_dir():
+    conda_prefix = require_conda_prefix()
     candidates = []
     try:
         import correctionlib
@@ -287,15 +296,14 @@ def correctionlib_dir_arg(build_dir):
         if site_path:
             candidates.append(Path(site_path) / "correctionlib" / "cmake")
 
-    if conda_prefix:
-        candidates.extend(Path(conda_prefix).glob("lib/python*/site-packages/correctionlib/cmake"))
+    candidates.extend(conda_prefix.glob("lib/python*/site-packages/correctionlib/cmake"))
 
     for path in candidates:
         if (path / "correctionlibConfig.cmake").exists() or (path / "correctionlib-config.cmake").exists():
-            if conda_prefix and not is_under(path, conda_prefix):
+            if not is_under(path, conda_prefix):
                 raise SystemExit(f"Resolved correctionlib outside CONDA_PREFIX: {path}")
-            return [f"-Dcorrectionlib_DIR={path}"]
-    return []
+            return path
+    raise SystemExit("Could not find correctionlib CMake config under the active pixi/conda environment.")
 
 
 def correctionlib_package_dir():
@@ -310,87 +318,191 @@ def correctionlib_package_dir():
     return package_dir
 
 
-def runtime_library_dirs():
-    dirs = []
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if conda_prefix:
-        dirs.append(Path(conda_prefix) / "lib")
-    correctionlib_dir = correctionlib_package_dir()
-    if correctionlib_dir:
-        dirs.append(correctionlib_dir / "lib")
-    out = []
-    for path in dirs:
-        if path.exists() and path not in out:
-            out.append(path)
-    return out
-
-
-def yaml_cpp_dir_arg(build_dir):
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    cached = read_cmake_cache_value(build_dir, "yaml-cpp_DIR")
-    if cached and conda_prefix:
-        if is_under(cached, conda_prefix):
-            return []
-        raise SystemExit(
-            "nano.cpp build cache uses yaml-cpp outside the active pixi/conda environment: "
-            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
-        )
-    candidates = []
-    if conda_prefix:
-        prefix = Path(conda_prefix)
-        candidates.extend([
-            prefix / "lib" / "cmake" / "yaml-cpp",
-            prefix / "share" / "cmake" / "yaml-cpp",
-        ])
-    for path in candidates:
-        if (path / "yaml-cpp-config.cmake").exists() or (path / "yaml-cppConfig.cmake").exists():
-            return [f"-Dyaml-cpp_DIR={path}"]
-    return []
-
-
-def root_dir_arg(build_dir):
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if not conda_prefix:
-        return []
-    cached = read_cmake_cache_value(build_dir, "ROOT_DIR")
-    if cached:
-        if is_under(cached, conda_prefix):
-            return []
-        raise SystemExit(
-            "nano.cpp build cache uses ROOT outside the active pixi/conda environment: "
-            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
-        )
-    prefix = Path(conda_prefix)
+def yaml_cpp_cmake_dir():
+    prefix = require_conda_prefix()
     candidates = [
-        prefix / "lib" / "cmake" / "ROOT",
-        prefix / "cmake" / "ROOT",
+        prefix / "lib" / "cmake" / "yaml-cpp",
+        prefix / "share" / "cmake" / "yaml-cpp",
     ]
     for path in candidates:
+        if (path / "yaml-cpp-config.cmake").exists() or (path / "yaml-cppConfig.cmake").exists():
+            return path
+    for pattern in ("lib/**/yaml-cpp-config.cmake", "lib/**/yaml-cppConfig.cmake", "share/**/yaml-cpp-config.cmake", "share/**/yaml-cppConfig.cmake"):
+        for config_path in sorted(prefix.glob(pattern)):
+            parent = config_path.parent
+            if is_under(parent, prefix):
+                return parent
+    raise SystemExit("Could not find yaml-cpp CMake config under the active pixi/conda environment.")
+
+
+def root_config_value(option):
+    try:
+        result = subprocess.run(["root-config", option], capture_output=True, text=True, env=base_command_env())
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    return Path(text) if text else None
+
+
+def root_cmake_dir():
+    prefix = require_conda_prefix()
+    cmake_dir = root_config_value("--cmakedir")
+    if cmake_dir:
+        if not is_under(cmake_dir, prefix):
+            raise SystemExit(f"root-config --cmakedir resolves ROOT outside CONDA_PREFIX: {cmake_dir}")
+        if (cmake_dir / "ROOTConfig.cmake").exists():
+            return cmake_dir
+    root_prefix = root_config_value("--prefix")
+    if root_prefix and not is_under(root_prefix, prefix):
+        raise SystemExit(f"root-config resolves ROOT outside CONDA_PREFIX: {root_prefix}")
+    search_roots = [prefix]
+    if root_prefix and root_prefix != prefix:
+        search_roots.append(root_prefix)
+    candidates = []
+    for base in search_roots:
+        candidates.extend([
+            base / "lib" / "cmake" / "ROOT",
+            base / "lib" / "cmake",
+            base / "cmake" / "ROOT",
+            base / "cmake",
+            base / "lib" / "root" / "cmake",
+            base / "share" / "root" / "cmake",
+            base / "etc" / "root" / "cmake",
+        ])
+    candidates = unique_paths(candidates)
+    for path in candidates:
         if (path / "ROOTConfig.cmake").exists():
-            return [f"-DROOT_DIR={path}"]
+            return path
+    for pattern in ("lib/**/ROOTConfig.cmake", "cmake/**/ROOTConfig.cmake", "share/**/ROOTConfig.cmake", "etc/**/ROOTConfig.cmake"):
+        for config_path in sorted(prefix.glob(pattern)):
+            parent = config_path.parent
+            if is_under(parent, prefix):
+                return parent
+    tried = ", ".join(str(path) for path in candidates)
     raise SystemExit(
         "Could not find ROOTConfig.cmake under the active pixi/conda environment. "
-        "Run pixi install after pulling the updated pixi.toml; mode 11 must not mix the pixi compiler with system ROOT."
+        "mode 11 must not mix the pixi compiler with system ROOT. Checked: " + tried
     )
 
 
-def cmake_runtime_link_args():
-    lib_dirs = runtime_library_dirs()
-    if not lib_dirs:
-        return []
-    flags = []
-    for path in lib_dirs:
-        flags.extend([f"-L{path}", f"-Wl,-rpath,{path}", f"-Wl,-rpath-link,{path}"])
-    joined_flags = " ".join(flags)
-    joined_rpath = ";".join(str(path) for path in lib_dirs)
-    return [
-        f"-DCMAKE_EXE_LINKER_FLAGS={joined_flags}",
-        f"-DCMAKE_SHARED_LINKER_FLAGS={joined_flags}",
-        f"-DCMAKE_MODULE_LINKER_FLAGS={joined_flags}",
-        f"-DCMAKE_BUILD_RPATH={joined_rpath}",
-        f"-DCMAKE_INSTALL_RPATH={joined_rpath}",
-    ]
+def validate_cached_cmake_path(build_dir, key, expected, label, required_files=None, any_required_files=None):
+    cached = read_cmake_cache_value(build_dir, key)
+    if not cached:
+        return
+    cached_path = Path(cached)
+    expected_path = Path(expected)
+    if cached_path.resolve() != expected_path.resolve():
+        raise SystemExit(
+            f"nano.cpp build cache uses {label}={cached}, but the active pixi/conda environment resolves "
+            f"{label}={expected_path}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
+    for name in required_files or []:
+        if not (cached_path / name).exists():
+            raise SystemExit(
+                f"nano.cpp build cache uses {label}={cached}, but required file {name} is missing. "
+                "Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+            )
+    if any_required_files and not any((cached_path / name).exists() for name in any_required_files):
+        names = ", ".join(any_required_files)
+        raise SystemExit(
+            f"nano.cpp build cache uses {label}={cached}, but none of these required files exists: {names}. "
+            "Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
 
+
+def validate_cached_compiler(build_dir, cache_key, expected, label):
+    cached = read_cmake_cache_value(build_dir, cache_key)
+    if not cached:
+        return
+    if Path(cached).resolve() != Path(expected).resolve():
+        raise SystemExit(
+            f"nano.cpp build cache uses {label}={cached}, but the active pixi/conda environment resolves "
+            f"{label}={expected}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
+        )
+
+
+def pixi_env_exports():
+    global _PIXI_ENV_EXPORTS
+    if _PIXI_ENV_EXPORTS is not None:
+        return dict(_PIXI_ENV_EXPORTS)
+    prefix = require_conda_prefix()
+    cc_compiler = conda_c_compiler(prefix)
+    cxx_compiler = conda_cxx_compiler(prefix)
+    if not cc_compiler:
+        raise SystemExit(
+            "Could not find a pixi/conda C compiler wrapper under CONDA_PREFIX. "
+            "Run pixi install after pulling the updated pixi.toml."
+        )
+    if not cxx_compiler:
+        raise SystemExit(
+            "Could not find a pixi/conda C++ compiler wrapper under CONDA_PREFIX. "
+            "Run pixi install after pulling the updated pixi.toml."
+        )
+    root_dir = root_cmake_dir()
+    correction_dir = correctionlib_cmake_dir()
+    correction_package_dir = correctionlib_package_dir()
+    if not correction_package_dir:
+        raise SystemExit("Could not import correctionlib from the active pixi/conda environment.")
+    correction_lib_dir = correction_package_dir / "lib"
+    yaml_dir = yaml_cpp_cmake_dir()
+    conda_lib_dir = prefix / "lib"
+    lib_dirs = [conda_lib_dir]
+    if correction_lib_dir.exists():
+        lib_dirs.append(correction_lib_dir)
+    link_flags = []
+    for path in lib_dirs:
+        link_flags.extend([f"-L{path}", f"-Wl,-rpath,{path}", f"-Wl,-rpath-link,{path}"])
+    cmake_prefixes = [str(prefix), str(prefix / "x86_64-conda-linux-gnu" / "sysroot" / "usr")]
+    _PIXI_ENV_EXPORTS = {
+        "SCALE_FACTOR_CONDA_PREFIX": str(prefix),
+        "SCALE_FACTOR_CONDA_LIB_DIR": str(conda_lib_dir),
+        "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
+        "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),
+        "SCALE_FACTOR_ROOT_DIR": str(root_dir),
+        "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
+        "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": str(correction_lib_dir) if correction_lib_dir.exists() else "",
+        "SCALE_FACTOR_YAML_CPP_DIR": str(yaml_dir),
+        "SCALE_FACTOR_CMAKE_PREFIX_PATH": ";".join(cmake_prefixes),
+        "SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV": os.pathsep.join(cmake_prefixes),
+        "SCALE_FACTOR_CMAKE_LINK_FLAGS": " ".join(link_flags),
+        "SCALE_FACTOR_CMAKE_RPATH": ";".join(str(path) for path in lib_dirs),
+    }
+    return dict(_PIXI_ENV_EXPORTS)
+
+
+def pixi_cmake_args(build_dir):
+    exports = pixi_env_exports()
+    validate_cached_compiler(build_dir, "CMAKE_C_COMPILER", exports["SCALE_FACTOR_CC_COMPILER"], "CMAKE_C_COMPILER")
+    validate_cached_compiler(build_dir, "CMAKE_CXX_COMPILER", exports["SCALE_FACTOR_CXX_COMPILER"], "CMAKE_CXX_COMPILER")
+    validate_cached_cmake_path(build_dir, "ROOT_DIR", exports["SCALE_FACTOR_ROOT_DIR"], "ROOT_DIR", ["ROOTConfig.cmake"])
+    validate_cached_cmake_path(
+        build_dir,
+        "correctionlib_DIR",
+        exports["SCALE_FACTOR_CORRECTIONLIB_DIR"],
+        "correctionlib_DIR",
+        any_required_files=["correctionlibConfig.cmake", "correctionlib-config.cmake"],
+    )
+    validate_cached_cmake_path(
+        build_dir,
+        "yaml-cpp_DIR",
+        exports["SCALE_FACTOR_YAML_CPP_DIR"],
+        "yaml-cpp_DIR",
+        any_required_files=["yaml-cpp-config.cmake", "yaml-cppConfig.cmake"],
+    )
+    return [
+        f"-DCMAKE_CXX_COMPILER={exports['SCALE_FACTOR_CXX_COMPILER']}",
+        f"-DCMAKE_PREFIX_PATH={exports['SCALE_FACTOR_CMAKE_PREFIX_PATH']}",
+        f"-DROOT_DIR={exports['SCALE_FACTOR_ROOT_DIR']}",
+        f"-Dcorrectionlib_DIR={exports['SCALE_FACTOR_CORRECTIONLIB_DIR']}",
+        f"-Dyaml-cpp_DIR={exports['SCALE_FACTOR_YAML_CPP_DIR']}",
+        f"-DCMAKE_EXE_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
+        f"-DCMAKE_SHARED_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
+        f"-DCMAKE_MODULE_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
+        f"-DCMAKE_BUILD_RPATH={exports['SCALE_FACTOR_CMAKE_RPATH']}",
+        f"-DCMAKE_INSTALL_RPATH={exports['SCALE_FACTOR_CMAKE_RPATH']}",
+    ]
 
 def read_cmake_cache_value(build_dir, key):
     cache = build_dir / "CMakeCache.txt"
@@ -403,19 +515,33 @@ def read_cmake_cache_value(build_dir, key):
     return None
 
 
-def is_under(path, base):
-    try:
-        Path(path).resolve().relative_to(Path(base).resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def first_existing_path(paths):
+def first_existing_path(paths, base=None):
     for path in paths:
-        if path and Path(path).exists():
-            return Path(path)
+        if not path:
+            continue
+        path = Path(path).expanduser()
+        if not path.exists():
+            continue
+        if base and not is_under(path, base):
+            continue
+        return path
     return None
+
+
+def conda_c_compiler(conda_prefix):
+    bin_dir = Path(conda_prefix) / "bin"
+    candidates = []
+    if os.environ.get("CC"):
+        candidates.append(Path(os.environ["CC"]))
+    for pattern in (
+        "*-conda-linux-gnu-cc",
+        "*-conda_cos*-linux-gnu-cc",
+        "*-conda-linux-gnu-gcc",
+        "*-conda_cos*-linux-gnu-gcc",
+    ):
+        candidates.extend(sorted(bin_dir.glob(pattern)))
+    candidates.extend(bin_dir / name for name in ("gcc", "cc"))
+    return first_existing_path(candidates, conda_prefix)
 
 
 def conda_cxx_compiler(conda_prefix):
@@ -431,29 +557,7 @@ def conda_cxx_compiler(conda_prefix):
     ):
         candidates.extend(sorted(bin_dir.glob(pattern)))
     candidates.extend(bin_dir / name for name in ("g++", "c++"))
-    return first_existing_path(candidates)
-
-
-def conda_compiler_args(build_dir):
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if not conda_prefix:
-        return []
-    cached = read_cmake_cache_value(build_dir, "CMAKE_CXX_COMPILER")
-    if cached:
-        if is_under(cached, conda_prefix):
-            return []
-        raise SystemExit(
-            "nano.cpp build cache uses a C++ compiler outside the active pixi/conda environment: "
-            f"{cached}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
-        )
-    cxx_compiler = conda_cxx_compiler(conda_prefix)
-    if not cxx_compiler:
-        raise SystemExit(
-            "Could not find a pixi/conda C++ compiler wrapper under CONDA_PREFIX. "
-            "Run pixi install after pulling the updated pixi.toml."
-        )
-    return [f"-DCMAKE_CXX_COMPILER={cxx_compiler}"]
-
+    return first_existing_path(candidates, conda_prefix)
 
 def make_ntuple(cfg, args):
     require_conda_prefix()
@@ -478,14 +582,9 @@ def make_ntuple(cfg, args):
     if ntuple.get("build_before_make_condor", True):
         commands.append([
             "cmake", "-S", str(nano_repo), "-B", str(build_dir),
-            *conda_compiler_args(build_dir),
-            *cmake_prefix_path_arg(),
-            *root_dir_arg(build_dir),
-            *correctionlib_dir_arg(build_dir),
-            *yaml_cpp_dir_arg(build_dir),
-            *cmake_runtime_link_args(),
+            *pixi_cmake_args(build_dir),
         ])
-        commands.append(["cmake", "--build", str(build_dir), "-j"])
+        commands.append(["cmake", "--build", str(build_dir), "-j", int(ntuple.get("build_jobs", 1))])
 
     binary = nano_repo / "build" / "nano_make_condor"
     config_card = resolve_path(ntuple["config"])

@@ -135,6 +135,8 @@ Current configured target:
 
 Remote ScoutingNano inputs may be DAS datasets, `/store/...` files, `root://...` files, local directories, local ROOT files, or text/list/YAML file lists. Remote ROOT files are streamed by default; do not change to full local download unless requested. Step-1 output and all step-2 paths are local.
 
+The scale-factor ntuple config uses `ntuple.build_jobs` for the local `nano.cpp` build; the default is `1` to avoid oversubscribing login nodes. Condor worker builds also default to one build job.
+
 The Scouting ntuple card uses strict branch binding. Missing configured ScoutingNano branches fail immediately, except `GenPart_*`: MC jobs warn in their per-job Condor logs and fall back to default W/Z matches with `GenJet` flavour hints. `GenJet_*` remains required for MC jobs. The topwsf step also fails on missing local ntuple files, missing Events branches, missing xsections, or missing `Runs/genEventSumw`.
 
 ## Logs And Outputs
@@ -154,4 +156,4 @@ Key outputs:
 
 ## Dependencies
 
-The repository expects ROOT, C++17, XRootD tools, Python 3, and the packages listed in `pixi.toml`, including the conda-forge C/C++ compiler wrappers, ROOT, XRootD, `yaml-cpp`, `correctionlib`, and Boost C++ headers. Mode 11 forwards the active pixi/conda Python prefix, `ROOT_DIR`, `correctionlib_DIR`, `yaml-cpp_DIR`, and pixi runtime library paths to CMake so vendored C++ dependencies resolve inside one pixi environment; it rejects a stale `nano.cpp/build` cache configured with a compiler, ROOT, `correctionlib`, or `yaml-cpp` outside the active pixi/conda prefix. `boohft-calib/topwsf` uses coffea/uproot/hist/correctionlib-style Python packages and requires CMSSW/combine only for the fit step that invokes combine.
+The repository expects ROOT, C++17, XRootD tools, Python 3, and the packages listed in `pixi.toml`, including the conda-forge C/C++ compiler wrappers, ROOT, XRootD, `yaml-cpp`, `correctionlib`, and Boost C++ headers. Mode 11 resolves `ROOTConfig.cmake` from the active pixi/conda prefix and forwards `CC`, `CXX`, `ROOT_DIR`, `correctionlib_DIR`, `yaml-cpp_DIR`, and pixi runtime library paths to CMake so vendored C++ dependencies resolve inside one pixi environment; it rejects a stale `nano.cpp/build` cache configured with a compiler, ROOT, `correctionlib`, or `yaml-cpp` outside the active pixi/conda prefix. Condor ntuple jobs unpack into a tarball-hash-specific work directory so a regenerated job directory cannot silently reuse an old extracted `nano.cpp` tree. `boohft-calib/topwsf` uses coffea/uproot/hist/correctionlib-style Python packages and requires CMSSW/combine only for the fit step that invokes combine.

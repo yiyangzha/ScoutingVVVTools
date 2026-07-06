@@ -13,14 +13,44 @@ fi
 export CONDA_PREFIX
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 export ROOTSYS="${CONDA_PREFIX}"
-export CMAKE_PREFIX_PATH="${CONDA_PREFIX}:${CONDA_PREFIX}/x86_64-conda-linux-gnu/sysroot/usr"
+export CMAKE_PREFIX_PATH="@CMAKE_PREFIX_PATH_ENV@"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export LIBRARY_PATH="${CONDA_PREFIX}/lib:${LIBRARY_PATH:-}"
 export CPATH="${CONDA_PREFIX}/include:${CPATH:-}"
 export CPLUS_INCLUDE_PATH="${CONDA_PREFIX}/include:${CPLUS_INCLUDE_PATH:-}"
 
-ROOT_CMAKE_DIR="${CONDA_PREFIX}/lib/cmake/ROOT"
-YAML_CPP_CMAKE_DIR="${CONDA_PREFIX}/lib/cmake/yaml-cpp"
+require_under_prefix() {
+  local label=$1
+  local value=$2
+  if [[ -z "${value}" ]]; then
+    return
+  fi
+  case "${value}" in
+    "${CONDA_PREFIX}"|"${CONDA_PREFIX}"/*) ;;
+    *)
+      echo "Error: ${label} is outside pixi/conda prefix: ${value}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ROOT_CMAKE_DIR="@ROOT_CMAKE_DIR@"
+YAML_CPP_CMAKE_DIR="@YAML_CPP_CMAKE_DIR@"
+CORRECTIONLIB_CMAKE_DIR="@CORRECTIONLIB_CMAKE_DIR@"
+CORRECTIONLIB_LIB_DIR="@CORRECTIONLIB_LIB_DIR@"
+CC_COMPILER="@CC_COMPILER@"
+CXX_COMPILER="@CXX_COMPILER@"
+CMAKE_PREFIX_PATH_ARG="@CMAKE_PREFIX_PATH@"
+CMAKE_LINK_FLAGS="@CMAKE_LINK_FLAGS@"
+CMAKE_RPATH="@CMAKE_RPATH@"
+
+require_under_prefix ROOT_CMAKE_DIR "${ROOT_CMAKE_DIR}"
+require_under_prefix YAML_CPP_CMAKE_DIR "${YAML_CPP_CMAKE_DIR}"
+require_under_prefix CORRECTIONLIB_CMAKE_DIR "${CORRECTIONLIB_CMAKE_DIR}"
+require_under_prefix CORRECTIONLIB_LIB_DIR "${CORRECTIONLIB_LIB_DIR}"
+require_under_prefix CC_COMPILER "${CC_COMPILER}"
+require_under_prefix CXX_COMPILER "${CXX_COMPILER}"
+
 if [[ ! -f "${ROOT_CMAKE_DIR}/ROOTConfig.cmake" ]]; then
   echo "Error: ROOTConfig.cmake is missing under pixi/conda prefix: ${ROOT_CMAKE_DIR}" >&2
   exit 1
@@ -29,68 +59,60 @@ if [[ ! -f "${YAML_CPP_CMAKE_DIR}/yaml-cpp-config.cmake" && ! -f "${YAML_CPP_CMA
   echo "Error: yaml-cpp CMake config is missing under pixi/conda prefix: ${YAML_CPP_CMAKE_DIR}" >&2
   exit 1
 fi
-
-CXX_COMPILER=""
-for candidate in "${CONDA_PREFIX}"/bin/*-conda-linux-gnu-c++ "${CONDA_PREFIX}"/bin/*-conda_cos*-linux-gnu-c++ "${CONDA_PREFIX}"/bin/g++ "${CONDA_PREFIX}"/bin/c++; do
-  if [[ -x "${candidate}" ]]; then
-    CXX_COMPILER="${candidate}"
-    break
-  fi
-done
-if [[ -z "${CXX_COMPILER}" ]]; then
-  echo "Error: no pixi/conda C++ compiler found under ${CONDA_PREFIX}/bin" >&2
+if [[ ! -f "${CORRECTIONLIB_CMAKE_DIR}/correctionlibConfig.cmake" && ! -f "${CORRECTIONLIB_CMAKE_DIR}/correctionlib-config.cmake" ]]; then
+  echo "Error: correctionlib CMake config is missing under pixi/conda prefix: ${CORRECTIONLIB_CMAKE_DIR}" >&2
   exit 1
 fi
-
-CORRECTIONLIB_CMAKE_DIR="$(
-  env -u PYTHONHOME -u PYTHONPATH python3 - <<'PY'
-from pathlib import Path
-import correctionlib
-path = Path(correctionlib.__file__).resolve().parent / "cmake"
-if not ((path / "correctionlibConfig.cmake").exists() or (path / "correctionlib-config.cmake").exists()):
-    raise SystemExit(f"missing correctionlib CMake config: {path}")
-print(path)
-PY
-)"
-CORRECTIONLIB_LIB_DIR="$(
-  env -u PYTHONHOME -u PYTHONPATH python3 - <<'PY'
-from pathlib import Path
-import correctionlib
-path = Path(correctionlib.__file__).resolve().parent / "lib"
-print(path if path.exists() else "")
-PY
-)"
+if [[ ! -x "${CC_COMPILER}" ]]; then
+  echo "Error: pixi/conda C compiler is missing or not executable: ${CC_COMPILER}" >&2
+  exit 1
+fi
+if [[ ! -x "${CXX_COMPILER}" ]]; then
+  echo "Error: pixi/conda C++ compiler is missing or not executable: ${CXX_COMPILER}" >&2
+  exit 1
+fi
+export CC="${CC_COMPILER}"
+export CXX="${CXX_COMPILER}"
 if [[ -n "${CORRECTIONLIB_LIB_DIR}" ]]; then
   export LD_LIBRARY_PATH="${CORRECTIONLIB_LIB_DIR}:${LD_LIBRARY_PATH}"
   export LIBRARY_PATH="${CORRECTIONLIB_LIB_DIR}:${LIBRARY_PATH}"
 fi
 
-CMAKE_LINK_FLAGS="-L${CONDA_PREFIX}/lib -Wl,-rpath,${CONDA_PREFIX}/lib -Wl,-rpath-link,${CONDA_PREFIX}/lib"
-if [[ -n "${CORRECTIONLIB_LIB_DIR}" ]]; then
-  CMAKE_LINK_FLAGS="${CMAKE_LINK_FLAGS} -L${CORRECTIONLIB_LIB_DIR} -Wl,-rpath,${CORRECTIONLIB_LIB_DIR} -Wl,-rpath-link,${CORRECTIONLIB_LIB_DIR}"
-fi
-
 WORKDIR=$(pwd)
-REPO_DIR="${WORKDIR}/repo"
+REPO_STAMP="$(
+  env -u PYTHONHOME -u PYTHONPATH python3 - <<'PY'
+from pathlib import Path
+import hashlib
 
-if [ ! -d "${REPO_DIR}" ]; then
+h = hashlib.sha256()
+with Path("repo.tar.gz").open("rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        h.update(chunk)
+print(h.hexdigest()[:16])
+PY
+)"
+REPO_DIR="${WORKDIR}/repo_${REPO_STAMP}"
+EXTRACT_STAMP="${REPO_DIR}/.extract_complete_${REPO_STAMP}"
+
+if [ ! -f "${EXTRACT_STAMP}" ]; then
   mkdir -p "${REPO_DIR}"
   tar -xzf repo.tar.gz -C "${REPO_DIR}" --strip-components=0
+  touch "${EXTRACT_STAMP}"
 fi
 
 if [ ! -x "${REPO_DIR}/build/nano_run" ]; then
   cmake -S "${REPO_DIR}" -B "${REPO_DIR}/build" \
     -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
-    -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" \
+    -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH_ARG}" \
     -DROOT_DIR="${ROOT_CMAKE_DIR}" \
     -Dcorrectionlib_DIR="${CORRECTIONLIB_CMAKE_DIR}" \
     -Dyaml-cpp_DIR="${YAML_CPP_CMAKE_DIR}" \
     -DCMAKE_EXE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
     -DCMAKE_SHARED_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
     -DCMAKE_MODULE_LINKER_FLAGS="${CMAKE_LINK_FLAGS}" \
-    -DCMAKE_BUILD_RPATH="${CONDA_PREFIX}/lib;${CORRECTIONLIB_LIB_DIR}" \
-    -DCMAKE_INSTALL_RPATH="${CONDA_PREFIX}/lib;${CORRECTIONLIB_LIB_DIR}"
-  cmake --build "${REPO_DIR}/build" -j
+    -DCMAKE_BUILD_RPATH="${CMAKE_RPATH}" \
+    -DCMAKE_INSTALL_RPATH="${CMAKE_RPATH}"
+  cmake --build "${REPO_DIR}/build" -j "${BUILD_JOBS:-1}"
 fi
 
 JOB_INDEX=$1

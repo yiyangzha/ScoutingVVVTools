@@ -383,7 +383,7 @@ def copy_log_to_output_dirs(mode, config_path, work_dir, log_path):
 def run_python_mode(mode_cfg, config_path, work_dir, passthrough=None):
     env = {**os.environ, mode_cfg["config_env"]: str(config_path)}
     script = mode_cfg["script"]
-    cmd = ["python3", f"./{script}", *mode_cfg.get("script_args", []), *(passthrough or [])]
+    cmd = [sys.executable, f"./{script}", *mode_cfg.get("script_args", []), *(passthrough or [])]
     log(f"run: env {mode_cfg['config_env']}={config_path} {' '.join(cmd)}")
     r = subprocess.run(cmd, env=env, cwd=work_dir)
     return r.returncode
