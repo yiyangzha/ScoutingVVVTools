@@ -266,6 +266,10 @@ def resolve_dasgoclient():
             raise SystemExit(f"SCALE_FACTOR_DASGOCLIENT does not exist: {override}")
         return str(path)
 
+    cvmfs_dasgoclient = Path("/cvmfs/cms.cern.ch/common/dasgoclient")
+    if cvmfs_dasgoclient.exists() and os.access(cvmfs_dasgoclient, os.X_OK):
+        return str(cvmfs_dasgoclient)
+
     conda_prefix = os.environ.get("CONDA_PREFIX")
     candidates = []
     for entry in os.environ.get("PATH", "").split(os.pathsep):
@@ -334,20 +338,25 @@ def das_env_prefix():
         "CC",
         "CXX",
     ]
-    parts = ["env"]
-    parts.extend(f"-u {name}" for name in unset_vars)
+    unsets = list(unset_vars)
+    assignments = []
     for name in path_vars:
         clean_value = clean_path_value(os.environ.get(name, ""), conda_prefix)
         if clean_value:
-            parts.append(f"{name}=" + shlex.quote(clean_value))
+            assignments.append(f"{name}=" + shlex.quote(clean_value))
         else:
-            parts.append(f"-u {name}")
+            unsets.append(name)
     for name in single_path_vars:
         clean_value = clean_single_path_value(os.environ.get(name, ""), conda_prefix)
         if clean_value:
-            parts.append(f"{name}=" + shlex.quote(clean_value))
+            assignments.append(f"{name}=" + shlex.quote(clean_value))
         else:
-            parts.append(f"-u {name}")
+            unsets.append(name)
+    parts = ["env"]
+    parts.extend(f"-u {name}" for name in unsets)
+    parts.extend(assignments)
+    cms_setup = "[ -r /cvmfs/cms.cern.ch/cmsset_default.sh ] && source /cvmfs/cms.cern.ch/cmsset_default.sh >/dev/null 2>&1; exec \"$@\""
+    parts.extend([shlex.quote("/bin/bash"), "-lc", shlex.quote(cms_setup), "scale-factor-das"])
     return " ".join(parts)
 
 
