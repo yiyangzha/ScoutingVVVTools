@@ -270,6 +270,7 @@ int main(int argc, char **argv) {
                              {"@CMAKE_PREFIX_PATH_ENV@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV")},
                              {"@CMAKE_LINK_FLAGS@", require_env("SCALE_FACTOR_CMAKE_LINK_FLAGS")},
                              {"@CMAKE_RPATH@", require_env("SCALE_FACTOR_CMAKE_RPATH")},
+                             {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
                          });
 
     const auto tarball = (workdir / "repo.tar.gz").string();

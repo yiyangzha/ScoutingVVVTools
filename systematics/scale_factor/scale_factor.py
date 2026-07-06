@@ -286,6 +286,43 @@ def resolve_dasgoclient():
     return found or ""
 
 
+def resolve_das_home():
+    override = os.environ.get("SCALE_FACTOR_DAS_HOME")
+    if override:
+        path = Path(override).expanduser()
+        if not path.exists():
+            raise SystemExit(f"SCALE_FACTOR_DAS_HOME does not exist: {override}")
+        return str(path)
+
+    current_home = os.environ.get("HOME", "")
+    if current_home.startswith("/afs/") and Path(current_home).exists():
+        return current_home
+
+    names = []
+    for key in ("USER", "LOGNAME"):
+        value = os.environ.get(key)
+        if value and value not in names:
+            names.append(value)
+    if current_home:
+        home_name = Path(current_home).name
+        if home_name and home_name not in names:
+            names.append(home_name)
+
+    candidates = [Path("/afs/ihep.ac.cn/users") / name[0] / name for name in names if name]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+
+    if current_home.startswith("/publicfs/cms/user/") and candidates:
+        tried = ", ".join(str(path) for path in candidates)
+        raise SystemExit(
+            "Could not resolve an AFS HOME for DAS key definitions. "
+            f"Set SCALE_FACTOR_DAS_HOME explicitly. Tried: {tried}"
+        )
+
+    return current_home
+
+
 def clean_path_value(value, conda_prefix):
     if not value:
         return ""
@@ -310,6 +347,7 @@ def clean_single_path_value(value, conda_prefix):
 
 def das_env_prefix():
     conda_prefix = os.environ.get("CONDA_PREFIX")
+    das_home = resolve_das_home()
     unset_vars = [
         "CONDA_PREFIX",
         "CONDA_DEFAULT_ENV",
@@ -352,6 +390,8 @@ def das_env_prefix():
             assignments.append(f"{name}=" + shlex.quote(clean_value))
         else:
             unsets.append(name)
+    if das_home:
+        assignments.append("HOME=" + shlex.quote(das_home))
     parts = ["env"]
     parts.extend(f"-u {name}" for name in unsets)
     parts.extend(assignments)
@@ -381,6 +421,9 @@ def command_env():
     dasgoclient = resolve_dasgoclient()
     if dasgoclient:
         env["SCALE_FACTOR_DASGOCLIENT"] = dasgoclient
+        das_home = resolve_das_home()
+        if das_home:
+            env["SCALE_FACTOR_DAS_HOME"] = das_home
         env["SCALE_FACTOR_DAS_ENV_PREFIX"] = das_env_prefix()
     if os.environ.get("CONDA_PREFIX"):
         exports = pixi_env_exports()

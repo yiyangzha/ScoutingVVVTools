@@ -4,6 +4,16 @@ sleep $(( ( RANDOM % 200 ) + 1 ))
 
 set -euo pipefail
 
+DAS_HOME="@DAS_HOME@"
+if [[ -n "${DAS_HOME}" ]]; then
+  if [[ ! -d "${DAS_HOME}" ]]; then
+    echo "Error: generated DAS HOME is not accessible on this worker: ${DAS_HOME}" >&2
+    exit 1
+  fi
+  export HOME="${DAS_HOME}"
+  export SCALE_FACTOR_DAS_HOME="${DAS_HOME}"
+fi
+
 CONDA_PREFIX="@CONDA_PREFIX@"
 if [[ -z "${CONDA_PREFIX}" || ! -d "${CONDA_PREFIX}" ]]; then
   echo "Error: generated CONDA_PREFIX is not accessible on this worker: ${CONDA_PREFIX}" >&2
