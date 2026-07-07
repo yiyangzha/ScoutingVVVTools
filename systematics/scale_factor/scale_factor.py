@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import shlex
 import subprocess
@@ -15,9 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 _PIXI_ENV_EXPORTS = None
 _LCG_ENV_EXPORTS = None
-PREFERRED_LCG_VIEWS = (
-    Path("/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt"),
-)
+FIXED_LCG_VIEW = Path("/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt")
 
 
 def load_json(path):
@@ -815,49 +812,11 @@ def lcg_setup_from_value(value):
 
 
 def discover_lcg_setup():
-    if env_truthy(os.environ.get("SCALE_FACTOR_DISABLE_LCG_RUNTIME")):
-        return None
-    for key in ("SCALE_FACTOR_CPP_SETUP", "SCALE_FACTOR_LCG_VIEW"):
-        setup = lcg_setup_from_value(os.environ.get(key))
-        if setup:
-            return setup
-
-    for view in PREFERRED_LCG_VIEWS:
-        setup = lcg_setup_from_value(view)
-        if setup:
-            return setup
-
-    views = Path("/cvmfs/sft.cern.ch/lcg/views")
-    if not views.exists():
-        return None
-
-    def is_generic_view(path):
-        return bool(re.fullmatch(r"LCG_\d+[a-z]?", path.parent.parent.name))
-
-    def gcc_preference(path):
-        match = re.search(r"-gcc(\d+)-", path.parent.name)
-        gcc = int(match.group(1)) if match else -1
-        return {13: 5, 14: 4, 12: 3, 11: 2}.get(gcc, 0)
-
-    def release_key(path):
-        match = re.fullmatch(r"LCG_(\d+)([a-z]?)", path.parent.parent.name)
-        release = int(match.group(1)) if match else -1
-        suffix = match.group(2) if match else ""
-        suffix_key = ord(suffix) if suffix else 0
-        return (release, suffix_key, gcc_preference(path), str(path))
-
-    patterns = [
-        "LCG_*/x86_64-el9-gcc*-opt/setup.sh",
-        "LCG_*/x86_64-*-gcc*-opt/setup.sh",
-    ]
-    for pattern in patterns:
-        matches = sorted(
-            (path for path in views.glob(pattern) if is_generic_view(path)),
-            key=release_key,
-            reverse=True,
-        )
-        if matches:
-            return matches[0]
+    setup = lcg_setup_from_value(FIXED_LCG_VIEW)
+    if setup:
+        return setup
+    if FIXED_LCG_VIEW.parent.exists():
+        raise SystemExit(f"Fixed CVMFS LCG view is required but missing: {FIXED_LCG_VIEW}")
     return None
 
 
@@ -910,16 +869,64 @@ def which_in_env(name, env):
     return Path(found) if found else None
 
 
-def lcg_root_cmake_dir(env):
+def lcg_root_config_value(root_config, option, env):
+    result = subprocess.run([str(root_config), option], capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    return Path(text) if text else None
+
+
+def root_cmake_candidate_dirs(base):
+    return [
+        base,
+        base / "ROOT",
+        base / "root",
+        base / "lib" / "cmake" / "ROOT",
+        base / "lib" / "cmake" / "root",
+        base / "lib64" / "cmake" / "ROOT",
+        base / "lib64" / "cmake" / "root",
+        base / "lib" / "cmake",
+        base / "lib64" / "cmake",
+        base / "cmake" / "ROOT",
+        base / "cmake" / "root",
+        base / "cmake",
+        base / "share" / "root" / "cmake",
+        base / "share" / "ROOT" / "cmake",
+        base / "etc" / "root" / "cmake",
+    ]
+
+
+def first_root_cmake_dir(candidates):
+    for path in unique_paths(path for path in candidates if path):
+        if (path / "ROOTConfig.cmake").exists():
+            return path
+    return None
+
+
+def lcg_root_cmake_dir(env, view_root):
     root_config = which_in_env("root-config", env)
     if not root_config:
         raise SystemExit("LCG/CVMFS C++ runtime was selected, but root-config is not available after sourcing the setup script.")
-    result = subprocess.run([str(root_config), "--cmakedir"], capture_output=True, text=True, env=env)
-    if result.returncode == 0 and result.stdout.strip():
-        path = Path(result.stdout.strip())
-        if (path / "ROOTConfig.cmake").exists():
-            return path
-    raise SystemExit(f"Could not resolve ROOTConfig.cmake from LCG root-config: {root_config}")
+    search_roots = [
+        lcg_root_config_value(root_config, "--cmakedir", env),
+        lcg_root_config_value(root_config, "--prefix", env),
+        Path(env["ROOTSYS"]) if env.get("ROOTSYS") else None,
+        view_root,
+    ]
+    for item in env.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
+        if item:
+            search_roots.append(Path(item))
+    candidates = []
+    for base in search_roots:
+        if base:
+            candidates.extend(root_cmake_candidate_dirs(base))
+    root_dir = first_root_cmake_dir(candidates)
+    if root_dir:
+        return root_dir
+
+    tried = ", ".join(str(path) for path in unique_paths(path for path in candidates if path))
+    raise SystemExit(f"Could not resolve ROOTConfig.cmake from fixed LCG root-config: {root_config}. Checked: {tried}")
 
 
 def find_cmake_package_dir(base, names):
@@ -958,7 +965,7 @@ def lcg_env_exports():
     if not cc_compiler or not cxx_compiler:
         raise SystemExit(f"LCG setup does not provide gcc/g++ compilers: {setup}")
 
-    root_dir = lcg_root_cmake_dir(env)
+    root_dir = lcg_root_cmake_dir(env, view_root)
     correction_dir = find_cmake_package_dir(view_root, ("correctionlib", "correctionlib-cpp"))
     if not correction_dir:
         raise SystemExit(f"Could not find correctionlib CMake config in LCG view: {view_root}")
@@ -976,8 +983,6 @@ def lcg_env_exports():
     _LCG_ENV_EXPORTS = {
         "SCALE_FACTOR_CPP_RUNTIME": "lcg",
         "SCALE_FACTOR_SETUP_ENV": env,
-        "SCALE_FACTOR_WORKER_SETUP": str(setup),
-        "SCALE_FACTOR_LCG_VIEW": str(view_root),
         "SCALE_FACTOR_RUNTIME_PREFIX": "",
         "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
         "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),

@@ -26,14 +26,6 @@ export SCALE_FACTOR_XRD_REDIRECTORS="${SCALE_FACTOR_XRD_REDIRECTORS:-cms-xrd-glo
 export SCALE_FACTOR_XRD_STAT_TIMEOUT="${SCALE_FACTOR_XRD_STAT_TIMEOUT:-30}"
 
 DAS_HOME="@DAS_HOME@"
-GENERATED_WORKER_SETUP="@WORKER_SETUP@"
-GENERATED_LCG_VIEW="@LCG_VIEW@"
-if [[ -z "${SCALE_FACTOR_WORKER_SETUP:-}" && -n "${GENERATED_WORKER_SETUP}" ]]; then
-  export SCALE_FACTOR_WORKER_SETUP="${GENERATED_WORKER_SETUP}"
-fi
-if [[ -z "${SCALE_FACTOR_LCG_VIEW:-}" && -n "${GENERATED_LCG_VIEW}" ]]; then
-  export SCALE_FACTOR_LCG_VIEW="${GENERATED_LCG_VIEW}"
-fi
 
 if [[ -n "${DAS_HOME}" ]]; then
   if [[ ! -d "${DAS_HOME}" ]]; then
@@ -97,82 +89,32 @@ have_site_tools() {
   command -v hadd >/dev/null 2>&1 && command -v xrdcp >/dev/null 2>&1 && command -v xrdfs >/dev/null 2>&1
 }
 
-lcg_setup_from_value() {
-  local value=$1
-  [[ -z "${value}" ]] && return 1
-  if [[ -f "${value}" ]]; then
-    echo "${value}"
+discover_lcg_setup() {
+  local setup="/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt/setup.sh"
+  if [[ -f "${setup}" ]]; then
+    echo "${setup}"
     return 0
   fi
-  if [[ -f "${value}/setup.sh" ]]; then
-    echo "${value}/setup.sh"
-    return 0
+
+  if [[ -d /cvmfs/sft.cern.ch/lcg/views ]]; then
+    return 2
   fi
   return 1
 }
 
-discover_lcg_setup() {
-  local setup=""
-  setup="$(lcg_setup_from_value "${SCALE_FACTOR_WORKER_SETUP:-}" || true)"
-  if [[ -n "${setup}" ]]; then
-    echo "${setup}"
-    return 0
-  fi
-
-  setup="$(lcg_setup_from_value "${SCALE_FACTOR_LCG_VIEW:-}" || true)"
-  if [[ -n "${setup}" ]]; then
-    echo "${setup}"
-    return 0
-  fi
-
-  local preferred="/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt/setup.sh"
-  if [[ -f "${preferred}" ]]; then
-    echo "${preferred}"
-    return 0
-  fi
-
-  if [[ ! -d /cvmfs/sft.cern.ch/lcg/views ]]; then
-    return 1
-  fi
-
-  local candidates=()
-  local candidate=""
-  while IFS= read -r candidate; do
-    local release_dir=""
-    release_dir="$(basename "$(dirname "$(dirname "${candidate}")")")"
-    [[ "${release_dir}" =~ ^LCG_[0-9]+[a-z]?$ ]] || continue
-    candidates+=("${candidate}")
-  done < <(find /cvmfs/sft.cern.ch/lcg/views -path '*/x86_64-el9-gcc13-opt/setup.sh' -print 2>/dev/null)
-
-  if (( ${#candidates[@]} )); then
-    printf '%s\n' "${candidates[@]}" | sort -Vr | head -n 1
-    return 0
-  fi
-
-  while IFS= read -r candidate; do
-    local release_dir=""
-    release_dir="$(basename "$(dirname "$(dirname "${candidate}")")")"
-    [[ "${release_dir}" =~ ^LCG_[0-9]+[a-z]?$ ]] || continue
-    candidates+=("${candidate}")
-  done < <(find /cvmfs/sft.cern.ch/lcg/views -path '*/x86_64-el9-gcc*-opt/setup.sh' -print 2>/dev/null)
-
-  if (( ${#candidates[@]} )); then
-    printf '%s\n' "${candidates[@]}" | sort -Vr | head -n 1
-  fi
-}
-
 setup_site_tools() {
-  if have_site_tools; then
-    SCALE_FACTOR_SITE_SETUP="worker environment"
-    return 0
-  fi
-
   local setup=""
-  setup="$(discover_lcg_setup || true)"
-  if [[ -n "${setup}" ]]; then
+  local setup_status=0
+  setup="$(discover_lcg_setup)" || setup_status=$?
+  if [[ "${setup_status}" == 0 ]]; then
     # shellcheck disable=SC1090
     source "${setup}"
     SCALE_FACTOR_SITE_SETUP="${setup}"
+  elif [[ "${setup_status}" == 2 ]]; then
+    echo "Error: fixed CVMFS LCG setup is missing on this worker: /cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt/setup.sh" >&2
+    exit 1
+  elif have_site_tools; then
+    SCALE_FACTOR_SITE_SETUP="worker environment"
   fi
 
   if ! have_site_tools && [[ -r /cvmfs/cms.cern.ch/cmsset_default.sh ]]; then
@@ -183,7 +125,7 @@ setup_site_tools() {
 
   if ! have_site_tools; then
     echo "Error: worker site environment does not provide required tools: hadd, xrdcp, xrdfs." >&2
-    echo "Set SCALE_FACTOR_WORKER_SETUP to a readable CVMFS setup.sh, for example an LCG view under /cvmfs/sft.cern.ch/lcg/views, then regenerate the Condor job directory." >&2
+    echo "The fixed LCG view should provide them on lxplus: /cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt." >&2
     exit 127
   fi
 }

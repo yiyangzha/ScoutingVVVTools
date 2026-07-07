@@ -344,8 +344,6 @@ int main(int argc, char **argv) {
     write_executable_template(workdir / "process.sh", template_dir / "process.sh.in",
                               {
                                   {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
-                                  {"@WORKER_SETUP@", env_or_empty("SCALE_FACTOR_WORKER_SETUP")},
-                                  {"@LCG_VIEW@", env_or_empty("SCALE_FACTOR_LCG_VIEW")},
                               });
 
     const auto tarball = (workdir / "repo.tar.gz").string();
