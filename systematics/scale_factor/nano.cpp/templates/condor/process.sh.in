@@ -102,13 +102,38 @@ discover_lcg_setup() {
   return 1
 }
 
+source_setup_file() {
+  local setup=$1
+  local saved_flags=$-
+  local rc=0
+
+  set +e
+  set +u
+  # shellcheck disable=SC1090
+  source "${setup}"
+  rc=$?
+
+  case "${saved_flags}" in
+    *e*) set -e ;;
+    *) set +e ;;
+  esac
+  case "${saved_flags}" in
+    *u*) set -u ;;
+    *) set +u ;;
+  esac
+
+  return "${rc}"
+}
+
 setup_site_tools() {
   local setup=""
   local setup_status=0
   setup="$(discover_lcg_setup)" || setup_status=$?
   if [[ "${setup_status}" == 0 ]]; then
-    # shellcheck disable=SC1090
-    source "${setup}"
+    if ! source_setup_file "${setup}"; then
+      echo "Error: failed to source fixed CVMFS LCG setup: ${setup}" >&2
+      exit 1
+    fi
     SCALE_FACTOR_SITE_SETUP="${setup}"
   elif [[ "${setup_status}" == 2 ]]; then
     echo "Error: fixed CVMFS LCG setup is missing on this worker: /cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt/setup.sh" >&2
@@ -118,8 +143,7 @@ setup_site_tools() {
   fi
 
   if ! have_site_tools && [[ -r /cvmfs/cms.cern.ch/cmsset_default.sh ]]; then
-    # shellcheck disable=SC1091
-    source /cvmfs/cms.cern.ch/cmsset_default.sh >/dev/null 2>&1 || true
+    source_setup_file /cvmfs/cms.cern.ch/cmsset_default.sh >/dev/null 2>&1 || true
     SCALE_FACTOR_SITE_SETUP="${SCALE_FACTOR_SITE_SETUP:-/cvmfs/cms.cern.ch/cmsset_default.sh}"
   fi
 

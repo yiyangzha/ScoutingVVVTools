@@ -17,6 +17,29 @@ DOWNLOAD_REMOTE_INPUTS="@DOWNLOAD_REMOTE_INPUTS@"
 
 HOSTNAME_FULL="$(hostname -f 2>/dev/null || hostname)"
 
+source_setup_file() {
+  local setup=$1
+  local saved_flags=$-
+  local rc=0
+
+  set +e
+  set +u
+  # shellcheck disable=SC1090
+  source "${setup}"
+  rc=$?
+
+  case "${saved_flags}" in
+    *e*) set -e ;;
+    *) set +e ;;
+  esac
+  case "${saved_flags}" in
+    *u*) set -u ;;
+    *) set +u ;;
+  esac
+
+  return "${rc}"
+}
+
 is_lxplus_host() {
   [[ "${HOSTNAME_FULL}" == lxplus* || "${HOSTNAME_FULL}" == lxplus*.cern.ch ]]
 }
@@ -32,8 +55,7 @@ load_cern_eossubmit() {
   if ! command -v module >/dev/null 2>&1; then
     for module_init in /etc/profile.d/modules.sh /usr/share/Modules/init/bash; do
       if [[ -r "${module_init}" ]]; then
-        # shellcheck disable=SC1090
-        source "${module_init}"
+        source_setup_file "${module_init}"
         break
       fi
     done
@@ -46,7 +68,9 @@ load_cern_eossubmit() {
   fi
 
   echo "Detected CERN lxplus EOS workdir; enabling EosSubmit schedds"
+  set +u
   module load lxbatch/eossubmit
+  set -u
 }
 
 stage_x509_proxy() {
