@@ -30,14 +30,14 @@ needs_build=0
 if [ -d HiggsAnalysis/CombinedLimit/.git ] ; then
     echo HiggsAnalysis/CombinedLimit already exists
 else
-    git -c advice.detachedHead=false clone --depth 1 --branch $COMBINE_TAG https://github.com/cms-analysis/HiggsAnalysis-CombinedLimit.git HiggsAnalysis/CombinedLimit
+    git -c advice.detachedHead=false clone --depth 1 --branch $COMBINE_TAG git@github.com:cms-analysis/HiggsAnalysis-CombinedLimit.git HiggsAnalysis/CombinedLimit
     needs_build=1
 fi
 
 if [ -d CombineHarvester/.git ] ; then
     echo CombineHarvester already exists
 else
-    git clone https://github.com/cms-analysis/CombineHarvester.git CombineHarvester
+    git clone git@github.com:cms-analysis/CombineHarvester.git CombineHarvester
     needs_build=1
 fi
 
