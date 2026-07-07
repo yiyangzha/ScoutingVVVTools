@@ -174,7 +174,7 @@ def run_targets(cfg):
 
 def require_local_path(path, label):
     text = str(path)
-    if text.startswith("root://") or text.startswith("/store/") or text.startswith("/eos/"):
+    if text.startswith("root://") or text.startswith("/store/"):
         raise SystemExit(f"{label} must be a local path, got: {text}")
 
 
