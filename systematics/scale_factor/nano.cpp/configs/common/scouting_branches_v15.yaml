@@ -46,7 +46,7 @@ nano_branches:
           ScoutingFatPFJetRecluster_chHEF: {type: vec_float}
           ScoutingFatPFJetRecluster_chEmEF: {type: vec_float}
           ScoutingFatPFJetRecluster_muEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_nConstituents: {type: vec_int32}
+          ScoutingFatPFJetRecluster_nConstituents: {type: vec_uint8}
           ScoutingFatPFJetRecluster_nCh: {type: vec_int32}
           ScoutingFatPFJetRecluster_nNh: {type: vec_int32}
           ScoutingFatPFJetRecluster_tau1: {type: vec_float}
@@ -72,12 +72,12 @@ nano_branches:
           ScoutingPFJetRecluster2_chEmEF: {type: vec_float}
           ScoutingPFJetRecluster2_muEF: {type: vec_float}
           ScoutingPFJetRecluster2_nConstituents: {type: vec_int32}
-          ScoutingPFJetRecluster2_chHadMultiplicity: {type: vec_int32}
+          ScoutingPFJetRecluster2_chHadMultiplicity: {type: vec_int16}
           ScoutingPFJetRecluster2_neHadMultiplicity: {type: vec_int32}
           ScoutingPFJetRecluster2_scoutUParT_probb: {type: vec_float}
-          ScoutingPFJetRecluster2_hadronFlavour: {type: vec_int32}
-          ScoutingPFJetRecluster2_partonFlavour: {type: vec_int32}
-          ScoutingPFJetRecluster2_genJetIdx: {type: vec_int32}
+          ScoutingPFJetRecluster2_hadronFlavour: {type: vec_uint8}
+          ScoutingPFJetRecluster2_partonFlavour: {type: vec_int16}
+          ScoutingPFJetRecluster2_genJetIdx: {type: vec_int16}
           # Optional MC truth. The Scouting analysis objects above must remain
           # Scouting branches; GenPart is only used when available for topwsf
           # W/top process splitting.
@@ -93,7 +93,7 @@ nano_branches:
           GenJet_eta: {type: vec_float}
           GenJet_phi: {type: vec_float}
           GenJet_mass: {type: vec_float}
-          GenJet_hadronFlavour: {type: vec_int32}
-          GenJet_nBHadrons: {type: vec_int32}
-          GenJet_nCHadrons: {type: vec_int32}
-          GenJet_partonFlavour: {type: vec_int32}
+          GenJet_hadronFlavour: {type: vec_uint8}
+          GenJet_nBHadrons: {type: vec_uint8}
+          GenJet_nCHadrons: {type: vec_uint8}
+          GenJet_partonFlavour: {type: vec_int16}

@@ -296,7 +296,7 @@ std::string shell_quote(const std::string &value) {
 }
 
 void create_worker_runtime_bundle(const fs::path &workdir) {
-  const auto prefix = require_env("SCALE_FACTOR_CONDA_PREFIX");
+  const auto prefix = env_or_empty("SCALE_FACTOR_RUNTIME_PREFIX");
   const auto script = fs::path("tools") / "package_worker_runtime.py";
   const auto build_dir = fs::path("build");
   if (!fs::exists(script)) {
@@ -307,9 +307,11 @@ void create_worker_runtime_bundle(const fs::path &workdir) {
   }
 
   const auto output = workdir / "worker_runtime.tar.gz";
-  const auto cmd = std::string("env -u PYTHONHOME -u PYTHONPATH python3 ") + shell_quote(script.string()) +
-                   " --prefix " + shell_quote(prefix) +
-                   " --build-dir " + shell_quote(build_dir.string()) +
+  auto cmd = std::string("env -u PYTHONHOME -u PYTHONPATH python3 ") + shell_quote(script.string());
+  if (!prefix.empty()) {
+    cmd += " --prefix " + shell_quote(prefix);
+  }
+  cmd += " --build-dir " + shell_quote(build_dir.string()) +
                    " --output " + shell_quote(output.string());
   const auto rc = std::system(cmd.c_str());
   if (rc != 0) {
@@ -342,6 +344,8 @@ int main(int argc, char **argv) {
     write_executable_template(workdir / "process.sh", template_dir / "process.sh.in",
                               {
                                   {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
+                                  {"@WORKER_SETUP@", env_or_empty("SCALE_FACTOR_WORKER_SETUP")},
+                                  {"@LCG_VIEW@", env_or_empty("SCALE_FACTOR_LCG_VIEW")},
                               });
 
     const auto tarball = (workdir / "repo.tar.gz").string();

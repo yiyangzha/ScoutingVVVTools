@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 _PIXI_ENV_EXPORTS = None
+_LCG_ENV_EXPORTS = None
 
 
 def load_json(path):
@@ -254,6 +256,10 @@ def build_jobs(value):
     return jobs
 
 
+def env_truthy(value):
+    return str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
 
@@ -471,12 +477,32 @@ def command_env():
         if das_home:
             env["SCALE_FACTOR_DAS_HOME"] = das_home
         env["SCALE_FACTOR_DAS_ENV_PREFIX"] = das_env_prefix()
-    if os.environ.get("CONDA_PREFIX"):
-        exports = pixi_env_exports()
+    if os.environ.get("CONDA_PREFIX") or discover_lcg_setup():
+        exports = cpp_env_exports()
+        setup_env = exports.pop("SCALE_FACTOR_SETUP_ENV", None)
+        if isinstance(setup_env, dict):
+            for name in (
+                "CONDA_PREFIX",
+                "CONDA_DEFAULT_ENV",
+                "CONDA_SHLVL",
+                "CONDA_EXE",
+                "CONDA_PYTHON_EXE",
+                "PIXI_PROJECT_NAME",
+                "PIXI_PROJECT_ROOT",
+                "PIXI_ENVIRONMENT_NAME",
+                "PIXI_EXE",
+                "PIXI_HOME",
+                "PIXI_IN_SHELL",
+            ):
+                env.pop(name, None)
+            env.update(setup_env)
         env.update(exports)
-        env["CC"] = exports["SCALE_FACTOR_CC_COMPILER"]
-        env["CXX"] = exports["SCALE_FACTOR_CXX_COMPILER"]
-        env["CMAKE_PREFIX_PATH"] = exports["SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV"]
+        if exports.get("SCALE_FACTOR_CC_COMPILER"):
+            env["CC"] = exports["SCALE_FACTOR_CC_COMPILER"]
+        if exports.get("SCALE_FACTOR_CXX_COMPILER"):
+            env["CXX"] = exports["SCALE_FACTOR_CXX_COMPILER"]
+        if exports.get("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV"):
+            env["CMAKE_PREFIX_PATH"] = exports["SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV"]
         lib_dirs = [exports.get("SCALE_FACTOR_CONDA_LIB_DIR"), exports.get("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")]
         prepend_env_path(env, "LD_LIBRARY_PATH", lib_dirs)
         prepend_env_path(env, "LIBRARY_PATH", lib_dirs)
@@ -606,7 +632,7 @@ def validate_cached_cmake_path(build_dir, key, expected, label, required_files=N
     expected_path = Path(expected)
     if cached_path.resolve() != expected_path.resolve():
         raise SystemExit(
-            f"nano.cpp build cache uses {label}={cached}, but the active pixi/conda environment resolves "
+            f"nano.cpp build cache uses {label}={cached}, but the active C++ dependency environment resolves "
             f"{label}={expected_path}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
         )
     for name in required_files or []:
@@ -629,7 +655,7 @@ def validate_cached_compiler(build_dir, cache_key, expected, label):
         return
     if Path(cached).resolve() != Path(expected).resolve():
         raise SystemExit(
-            f"nano.cpp build cache uses {label}={cached}, but the active pixi/conda environment resolves "
+            f"nano.cpp build cache uses {label}={cached}, but the active C++ dependency environment resolves "
             f"{label}={expected}. Move systematics/scale_factor/nano.cpp/build aside and rerun mode 11."
         )
 
@@ -667,7 +693,9 @@ def pixi_env_exports():
         link_flags.extend([f"-L{path}", f"-Wl,-rpath,{path}", f"-Wl,-rpath-link,{path}"])
     cmake_prefixes = [str(prefix), str(prefix / "x86_64-conda-linux-gnu" / "sysroot" / "usr")]
     _PIXI_ENV_EXPORTS = {
+        "SCALE_FACTOR_CPP_RUNTIME": "pixi",
         "SCALE_FACTOR_CONDA_PREFIX": str(prefix),
+        "SCALE_FACTOR_RUNTIME_PREFIX": str(prefix),
         "SCALE_FACTOR_CONDA_LIB_DIR": str(conda_lib_dir),
         "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
         "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),
@@ -684,7 +712,7 @@ def pixi_env_exports():
 
 
 def pixi_cmake_args(build_dir):
-    exports = pixi_env_exports()
+    exports = cpp_env_exports()
     validate_cached_compiler(build_dir, "CMAKE_C_COMPILER", exports["SCALE_FACTOR_CC_COMPILER"], "CMAKE_C_COMPILER")
     validate_cached_compiler(build_dir, "CMAKE_CXX_COMPILER", exports["SCALE_FACTOR_CXX_COMPILER"], "CMAKE_CXX_COMPILER")
     validate_cached_cmake_path(build_dir, "ROOT_DIR", exports["SCALE_FACTOR_ROOT_DIR"], "ROOT_DIR", ["ROOTConfig.cmake"])
@@ -770,8 +798,189 @@ def conda_cxx_compiler(conda_prefix):
     candidates.extend(bin_dir / name for name in ("g++", "c++"))
     return first_existing_path(candidates, conda_prefix)
 
+
+def lcg_setup_from_value(value):
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if path.is_file():
+        return path
+    setup = path / "setup.sh"
+    if setup.is_file():
+        return setup
+    return None
+
+
+def discover_lcg_setup():
+    if env_truthy(os.environ.get("SCALE_FACTOR_DISABLE_LCG_RUNTIME")):
+        return None
+    for key in ("SCALE_FACTOR_CPP_SETUP", "SCALE_FACTOR_LCG_VIEW"):
+        setup = lcg_setup_from_value(os.environ.get(key))
+        if setup:
+            return setup
+
+    views = Path("/cvmfs/sft.cern.ch/lcg/views")
+    if not views.exists():
+        return None
+
+    def release_key(path):
+        match = re.search(r"LCG_(\d+)", str(path))
+        release = int(match.group(1)) if match else -1
+        return (release, str(path))
+
+    patterns = [
+        "LCG_*/x86_64-el9-gcc*-opt/setup.sh",
+        "LCG_*/x86_64-*-gcc*-opt/setup.sh",
+    ]
+    for pattern in patterns:
+        matches = sorted(views.glob(pattern), key=release_key, reverse=True)
+        if matches:
+            return matches[0]
+    return None
+
+
+def source_setup_environment(setup):
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    env = os.environ.copy()
+    for name in ("PATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "CPATH", "CPLUS_INCLUDE_PATH", "CMAKE_PREFIX_PATH", "PYTHONPATH"):
+        clean_value = clean_path_value(env.get(name, ""), conda_prefix)
+        if clean_value:
+            env[name] = clean_value
+        else:
+            env.pop(name, None)
+    for name in ("PYTHONHOME", "ROOTSYS", "CC", "CXX"):
+        clean_value = clean_single_path_value(env.get(name, ""), conda_prefix)
+        if clean_value:
+            env[name] = clean_value
+        else:
+            env.pop(name, None)
+    for name in (
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_SHLVL",
+        "CONDA_EXE",
+        "CONDA_PYTHON_EXE",
+        "PIXI_PROJECT_NAME",
+        "PIXI_PROJECT_ROOT",
+        "PIXI_ENVIRONMENT_NAME",
+        "PIXI_EXE",
+        "PIXI_HOME",
+        "PIXI_IN_SHELL",
+    ):
+        env.pop(name, None)
+
+    command = f"set -e; source {shlex.quote(str(setup))} >/dev/null 2>&1; env -0"
+    result = subprocess.run(["/bin/bash", "-lc", command], capture_output=True, env=env)
+    if result.returncode != 0:
+        raise SystemExit(f"Failed to source LCG setup script: {setup}")
+
+    out = {}
+    for item in result.stdout.split(b"\0"):
+        if not item or b"=" not in item:
+            continue
+        key, value = item.split(b"=", 1)
+        out[key.decode("utf-8", errors="replace")] = value.decode("utf-8", errors="replace")
+    return out
+
+
+def which_in_env(name, env):
+    found = shutil.which(name, path=env.get("PATH", ""))
+    return Path(found) if found else None
+
+
+def lcg_root_cmake_dir(env):
+    root_config = which_in_env("root-config", env)
+    if not root_config:
+        raise SystemExit("LCG/CVMFS C++ runtime was selected, but root-config is not available after sourcing the setup script.")
+    result = subprocess.run([str(root_config), "--cmakedir"], capture_output=True, text=True, env=env)
+    if result.returncode == 0 and result.stdout.strip():
+        path = Path(result.stdout.strip())
+        if (path / "ROOTConfig.cmake").exists():
+            return path
+    raise SystemExit(f"Could not resolve ROOTConfig.cmake from LCG root-config: {root_config}")
+
+
+def find_cmake_package_dir(base, names):
+    candidates = []
+    for pkg_name in names:
+        candidates.extend([
+            base / "lib" / "cmake" / pkg_name,
+            base / "lib64" / "cmake" / pkg_name,
+            base / "share" / pkg_name / "cmake",
+            base / "share" / "cmake" / pkg_name,
+        ])
+    for path in candidates:
+        if any(child.exists() for child in path.glob("*Config.cmake")) or any(child.exists() for child in path.glob("*-config.cmake")):
+            return path
+    for pattern in ("lib/**/correctionlib*Config.cmake", "lib/**/correctionlib*-config.cmake", "lib/**/yaml-cpp*Config.cmake", "lib/**/yaml-cpp*-config.cmake"):
+        for config_path in sorted(base.glob(pattern)):
+            parent = config_path.parent
+            if any(name.lower() in str(parent).lower() for name in names):
+                return parent
+    return None
+
+
+def lcg_env_exports():
+    global _LCG_ENV_EXPORTS
+    if _LCG_ENV_EXPORTS is not None:
+        return dict(_LCG_ENV_EXPORTS)
+
+    setup = discover_lcg_setup()
+    if not setup:
+        return None
+
+    env = source_setup_environment(setup)
+    view_root = setup.parent
+    cc_compiler = which_in_env("gcc", env) or which_in_env("cc", env)
+    cxx_compiler = which_in_env("g++", env) or which_in_env("c++", env)
+    if not cc_compiler or not cxx_compiler:
+        raise SystemExit(f"LCG setup does not provide gcc/g++ compilers: {setup}")
+
+    root_dir = lcg_root_cmake_dir(env)
+    correction_dir = find_cmake_package_dir(view_root, ("correctionlib", "correctionlib-cpp"))
+    if not correction_dir:
+        raise SystemExit(f"Could not find correctionlib CMake config in LCG view: {view_root}")
+    yaml_dir = find_cmake_package_dir(view_root, ("yaml-cpp",))
+    if not yaml_dir:
+        raise SystemExit(f"Could not find yaml-cpp CMake config in LCG view: {view_root}")
+
+    cmake_prefixes = []
+    for item in env.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
+        if item and item not in cmake_prefixes:
+            cmake_prefixes.append(item)
+    if str(view_root) not in cmake_prefixes:
+        cmake_prefixes.insert(0, str(view_root))
+
+    _LCG_ENV_EXPORTS = {
+        "SCALE_FACTOR_CPP_RUNTIME": "lcg",
+        "SCALE_FACTOR_SETUP_ENV": env,
+        "SCALE_FACTOR_WORKER_SETUP": str(setup),
+        "SCALE_FACTOR_LCG_VIEW": str(view_root),
+        "SCALE_FACTOR_RUNTIME_PREFIX": "",
+        "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
+        "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),
+        "SCALE_FACTOR_ROOT_DIR": str(root_dir),
+        "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
+        "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": "",
+        "SCALE_FACTOR_YAML_CPP_DIR": str(yaml_dir),
+        "SCALE_FACTOR_CMAKE_PREFIX_PATH": ";".join(cmake_prefixes),
+        "SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV": os.pathsep.join(cmake_prefixes),
+        "SCALE_FACTOR_CMAKE_LINK_FLAGS": "",
+        "SCALE_FACTOR_CMAKE_RPATH": "",
+    }
+    return dict(_LCG_ENV_EXPORTS)
+
+
+def cpp_env_exports():
+    exports = lcg_env_exports()
+    if exports:
+        return dict(exports)
+    return pixi_env_exports()
+
+
 def make_ntuple(cfg, args):
-    require_conda_prefix()
+    if not discover_lcg_setup():
+        require_conda_prefix()
     samples = sample_map(cfg)
     data_names, mc_groups = selected_sample_groups(cfg, samples, "ntuple")
     ntuple = cfg["ntuple"]

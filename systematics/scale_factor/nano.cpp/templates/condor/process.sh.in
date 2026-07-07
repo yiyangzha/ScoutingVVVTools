@@ -26,6 +26,15 @@ export SCALE_FACTOR_XRD_REDIRECTORS="${SCALE_FACTOR_XRD_REDIRECTORS:-cms-xrd-glo
 export SCALE_FACTOR_XRD_STAT_TIMEOUT="${SCALE_FACTOR_XRD_STAT_TIMEOUT:-30}"
 
 DAS_HOME="@DAS_HOME@"
+GENERATED_WORKER_SETUP="@WORKER_SETUP@"
+GENERATED_LCG_VIEW="@LCG_VIEW@"
+if [[ -z "${SCALE_FACTOR_WORKER_SETUP:-}" && -n "${GENERATED_WORKER_SETUP}" ]]; then
+  export SCALE_FACTOR_WORKER_SETUP="${GENERATED_WORKER_SETUP}"
+fi
+if [[ -z "${SCALE_FACTOR_LCG_VIEW:-}" && -n "${GENERATED_LCG_VIEW}" ]]; then
+  export SCALE_FACTOR_LCG_VIEW="${GENERATED_LCG_VIEW}"
+fi
+
 if [[ -n "${DAS_HOME}" ]]; then
   if [[ ! -d "${DAS_HOME}" ]]; then
     echo "Error: generated DAS HOME is not accessible on this worker: ${DAS_HOME}" >&2
@@ -84,6 +93,82 @@ if [[ ! -x "${RUNTIME_DIR}/build/nano_run" ]]; then
   exit 1
 fi
 
+have_site_tools() {
+  command -v hadd >/dev/null 2>&1 && command -v xrdcp >/dev/null 2>&1 && command -v xrdfs >/dev/null 2>&1
+}
+
+lcg_setup_from_value() {
+  local value=$1
+  [[ -z "${value}" ]] && return 1
+  if [[ -f "${value}" ]]; then
+    echo "${value}"
+    return 0
+  fi
+  if [[ -f "${value}/setup.sh" ]]; then
+    echo "${value}/setup.sh"
+    return 0
+  fi
+  return 1
+}
+
+discover_lcg_setup() {
+  local setup=""
+  setup="$(lcg_setup_from_value "${SCALE_FACTOR_WORKER_SETUP:-}" || true)"
+  if [[ -n "${setup}" ]]; then
+    echo "${setup}"
+    return 0
+  fi
+
+  setup="$(lcg_setup_from_value "${SCALE_FACTOR_LCG_VIEW:-}" || true)"
+  if [[ -n "${setup}" ]]; then
+    echo "${setup}"
+    return 0
+  fi
+
+  if [[ ! -d /cvmfs/sft.cern.ch/lcg/views ]]; then
+    return 1
+  fi
+
+  find /cvmfs/sft.cern.ch/lcg/views -path '*/x86_64-el9-gcc*-opt/setup.sh' -print 2>/dev/null | sort -Vr | head -n 1
+}
+
+setup_site_tools() {
+  if have_site_tools; then
+    SCALE_FACTOR_SITE_SETUP="worker environment"
+    return 0
+  fi
+
+  local setup=""
+  setup="$(discover_lcg_setup || true)"
+  if [[ -n "${setup}" ]]; then
+    # shellcheck disable=SC1090
+    source "${setup}"
+    SCALE_FACTOR_SITE_SETUP="${setup}"
+  fi
+
+  if ! have_site_tools && [[ -r /cvmfs/cms.cern.ch/cmsset_default.sh ]]; then
+    # shellcheck disable=SC1091
+    source /cvmfs/cms.cern.ch/cmsset_default.sh >/dev/null 2>&1 || true
+    SCALE_FACTOR_SITE_SETUP="${SCALE_FACTOR_SITE_SETUP:-/cvmfs/cms.cern.ch/cmsset_default.sh}"
+  fi
+
+  if ! have_site_tools; then
+    echo "Error: worker site environment does not provide required tools: hadd, xrdcp, xrdfs." >&2
+    echo "Set SCALE_FACTOR_WORKER_SETUP to a readable CVMFS setup.sh, for example an LCG view under /cvmfs/sft.cern.ch/lcg/views, then regenerate the Condor job directory." >&2
+    exit 127
+  fi
+}
+
+setup_site_tools
+SITE_PATH="${PATH}"
+SITE_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+SITE_ROOTSYS="${ROOTSYS:-}"
+SITE_PYTHONPATH="${PYTHONPATH:-}"
+SITE_HADD="$(command -v hadd)"
+SITE_XRDCP="$(command -v xrdcp)"
+SITE_XRDFS="$(command -v xrdfs)"
+SITE_ROOT_CONFIG="$(command -v root-config 2>/dev/null || true)"
+
 RUNTIME_LD_DIRS=("${RUNTIME_DIR}/build" "${RUNTIME_DIR}/build/external/CMSJMECalculators" "${RUNTIME_DIR}/env/lib")
 if [[ -f "${RUNTIME_DIR}/runtime_ld_paths.txt" ]]; then
   while IFS= read -r rel_dir; do
@@ -95,11 +180,19 @@ if [[ -f "${RUNTIME_DIR}/runtime_ld_paths.txt" ]]; then
 fi
 
 RUNTIME_LD_PATH="$(IFS=:; echo "${RUNTIME_LD_DIRS[*]}")"
-export PATH="${RUNTIME_DIR}/env/bin:${PATH}"
-export ROOTSYS="${RUNTIME_DIR}/env"
-export LD_LIBRARY_PATH="${RUNTIME_LD_PATH}:${LD_LIBRARY_PATH:-}"
 export NANO_RUN="${RUNTIME_DIR}/build/nano_run"
+NANO_PATH="${RUNTIME_DIR}/env/bin:${SITE_PATH}"
+NANO_ROOTSYS="${RUNTIME_DIR}/env"
+if [[ ! -d "${NANO_ROOTSYS}" ]]; then
+  NANO_ROOTSYS="${SITE_ROOTSYS}"
+fi
+NANO_LD_LIBRARY_PATH="${RUNTIME_LD_PATH}"
+if [[ -n "${SITE_LD_LIBRARY_PATH}" ]]; then
+  NANO_LD_LIBRARY_PATH="${NANO_LD_LIBRARY_PATH}:${SITE_LD_LIBRARY_PATH}"
+fi
 log_step "Using bundled worker runtime: ${RUNTIME_DIR}"
+log_step "Using site tool setup: ${SCALE_FACTOR_SITE_SETUP:-none}"
+log_step "Site tools: hadd=${SITE_HADD} xrdcp=${SITE_XRDCP} xrdfs=${SITE_XRDFS} root-config=${SITE_ROOT_CONFIG:-missing}"
 
 JOB_INDEX=$1
 TREE_NAME=$2
@@ -177,7 +270,7 @@ run_one_input() {
   printf " %q" "${cmd[@]}"
   printf "\n"
 
-  (cd "${REPO_DIR}" && "${cmd[@]}")
+  (cd "${REPO_DIR}" && env PATH="${NANO_PATH}" ROOTSYS="${NANO_ROOTSYS}" LD_LIBRARY_PATH="${NANO_LD_LIBRARY_PATH}" "${cmd[@]}")
 }
 
 parse_variations() {
@@ -246,15 +339,15 @@ diagnose_remote_input() {
   path="$(remote_path "${remote}")"
 
   log_step "Remote input diagnostic: host=${host} path=${path}"
-  if command -v xrdfs >/dev/null 2>&1; then
+  if [[ -x "${SITE_XRDFS}" ]]; then
     log_step "Running xrdfs stat with ${SCALE_FACTOR_XRD_STAT_TIMEOUT}s limit"
-    if run_limited "${SCALE_FACTOR_XRD_STAT_TIMEOUT}" xrdfs "root://${host}" stat "${path}" >&2; then
+    if run_limited "${SCALE_FACTOR_XRD_STAT_TIMEOUT}" "${SITE_XRDFS}" "root://${host}" stat "${path}" >&2; then
       log_step "xrdfs stat succeeded for ${remote}"
     else
       log_step "Warning: xrdfs stat failed or timed out for ${remote}"
     fi
   else
-    log_step "Warning: xrdfs is not available in PATH"
+    log_step "Warning: xrdfs is not available from the resolved site tools"
   fi
 }
 
@@ -283,7 +376,7 @@ candidate_remote_inputs() {
 
 log_step "Job context: job_index=${JOB_INDEX} host=$(hostname -f 2>/dev/null || hostname) workdir=${WORKDIR} stage_dir=${STAGE_DIR}"
 log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT} SCALE_FACTOR_XRD_REDIRECTORS=${SCALE_FACTOR_XRD_REDIRECTORS}"
-log_step "Tools: xrdcp=$(command -v xrdcp 2>/dev/null || echo missing) xrdfs=$(command -v xrdfs 2>/dev/null || echo missing) voms-proxy-info=$(command -v voms-proxy-info 2>/dev/null || echo missing)"
+log_step "Tools: xrdcp=${SITE_XRDCP} xrdfs=${SITE_XRDFS} hadd=${SITE_HADD} voms-proxy-info=$(command -v voms-proxy-info 2>/dev/null || echo missing)"
 if [[ -n "${X509_USER_PROXY:-}" ]]; then
   log_step "X509_USER_PROXY=${X509_USER_PROXY}"
   ls -l "${X509_USER_PROXY}" >&2 2>/dev/null || true
@@ -318,7 +411,7 @@ prepare_input() {
       for candidate in "${SOURCE_CANDIDATES[@]}"; do
         diagnose_remote_input "${candidate}"
         log_step "xrdcp attempt round ${round}/${max_rounds}: ${candidate}"
-        if xrdcp -f --nopbar "${candidate}" "${local_name}"; then
+        if "${SITE_XRDCP}" -f --nopbar "${candidate}" "${local_name}"; then
           ls -lh "${local_name}" >&2 || true
           log_step "Copied remote input from ${candidate} to ${local_name}"
           TO_CLEAN+=("${local_name}")
@@ -365,7 +458,7 @@ else
       mv -f "${VARIANT_FILES[0]}" "${local_var_output}"
     else
       echo "Merging ${#VARIANT_FILES[@]} pieces into ${local_var_output} (variation=${var})"
-      hadd -f "${local_var_output}" "${VARIANT_FILES[@]}"
+      "${SITE_HADD}" -f "${local_var_output}" "${VARIANT_FILES[@]}"
     fi
   done
 fi
@@ -376,22 +469,22 @@ copy_output() {
 
   if [[ "${final_file}" == root://* ]]; then
     log_step "Copying ${local_file} to ${final_file}"
-    xrdcp --silent -p -f "${local_file}" "${final_file}"
+    "${SITE_XRDCP}" --silent -p -f "${local_file}" "${final_file}"
   elif [[ "${final_file}" == /eos/cms* ]]; then
     local eos_host="root://eoscms.cern.ch"
     local remote_output="${eos_host}//${final_file}"
     log_step "Copying ${local_file} to ${remote_output}"
-    xrdcp --silent -p -f "${local_file}" "${remote_output}"
+    "${SITE_XRDCP}" --silent -p -f "${local_file}" "${remote_output}"
   elif [[ "${final_file}" == /eos/user* ]]; then
     local eos_host="root://eosuser.cern.ch"
     local remote_output="${eos_host}//${final_file}"
     log_step "Copying ${local_file} to ${remote_output}"
-    xrdcp --silent -p -f "${local_file}" "${remote_output}"
+    "${SITE_XRDCP}" --silent -p -f "${local_file}" "${remote_output}"
   elif [[ "${final_file}" == /eos/uscms* ]]; then
     local eos_host="root://cmseos.fnal.gov"
     local remote_output="${eos_host}//${final_file}"
     log_step "Copying ${local_file} to ${remote_output}"
-    xrdcp --silent -p -f "${local_file}" "${remote_output}"
+    "${SITE_XRDCP}" --silent -p -f "${local_file}" "${remote_output}"
   else
     mkdir -p "$(dirname "${final_file}")"
     log_step "Copying ${local_file} to ${final_file}"
