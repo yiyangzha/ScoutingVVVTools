@@ -15,6 +15,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 _PIXI_ENV_EXPORTS = None
 _LCG_ENV_EXPORTS = None
+PREFERRED_LCG_VIEWS = (
+    Path("/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt"),
+)
 
 
 def load_json(path):
@@ -819,21 +822,40 @@ def discover_lcg_setup():
         if setup:
             return setup
 
+    for view in PREFERRED_LCG_VIEWS:
+        setup = lcg_setup_from_value(view)
+        if setup:
+            return setup
+
     views = Path("/cvmfs/sft.cern.ch/lcg/views")
     if not views.exists():
         return None
 
+    def is_generic_view(path):
+        return bool(re.fullmatch(r"LCG_\d+[a-z]?", path.parent.parent.name))
+
+    def gcc_preference(path):
+        match = re.search(r"-gcc(\d+)-", path.parent.name)
+        gcc = int(match.group(1)) if match else -1
+        return {13: 5, 14: 4, 12: 3, 11: 2}.get(gcc, 0)
+
     def release_key(path):
-        match = re.search(r"LCG_(\d+)", str(path))
+        match = re.fullmatch(r"LCG_(\d+)([a-z]?)", path.parent.parent.name)
         release = int(match.group(1)) if match else -1
-        return (release, str(path))
+        suffix = match.group(2) if match else ""
+        suffix_key = ord(suffix) if suffix else 0
+        return (release, suffix_key, gcc_preference(path), str(path))
 
     patterns = [
         "LCG_*/x86_64-el9-gcc*-opt/setup.sh",
         "LCG_*/x86_64-*-gcc*-opt/setup.sh",
     ]
     for pattern in patterns:
-        matches = sorted(views.glob(pattern), key=release_key, reverse=True)
+        matches = sorted(
+            (path for path in views.glob(pattern) if is_generic_view(path)),
+            key=release_key,
+            reverse=True,
+        )
         if matches:
             return matches[0]
     return None
