@@ -10,6 +10,7 @@ log_step() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+touch "${SCRIPT_DIR}/dummy.cc"
 
 STAGED_X509_PROXY="${SCRIPT_DIR}/x509up_proxy"
 if [[ -f "${STAGED_X509_PROXY}" ]]; then

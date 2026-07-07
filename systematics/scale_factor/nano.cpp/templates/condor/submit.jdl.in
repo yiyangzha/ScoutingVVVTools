@@ -3,9 +3,10 @@ executable = process.sh
 
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT_OR_EVICT
-transfer_input_files = repo.tar.gz,config_snapshot.yaml,job_manifest.json
+transfer_input_files = repo.tar.gz,config_snapshot.yaml,job_manifest.json,x509up_proxy
 transfer_output_files = dummy.cc
-use_x509userproxy = true
+on_exit_hold = (ExitBySignal == True) || (ExitCode != 0)
+on_exit_hold_reason = ifThenElse(ExitBySignal, strcat("Job exited by signal ", ExitSignal), strcat("Job exited with nonzero exit code ", ExitCode))
 
 +AcctGroup = "cms"
 +HepJob_WallTime = "mid"

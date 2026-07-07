@@ -82,7 +82,7 @@ if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.c
     echo "Error: lxlogin host detected, but hep_sub is not available in PATH" >&2
     exit 1
   fi
-  stage_x509_proxy
+  require_staged_x509_proxy
   echo "Detected lxlogin host ${HOSTNAME_FULL}; submitting with IHEP HepJob"
   hep_sub \
     ./process.sh \
@@ -109,6 +109,7 @@ else
     echo "Detected lxplus host ${HOSTNAME_FULL}; submitting with CERN HTCondor settings"
     condor_submit "$@" submit_lxplus.jdl
   else
+    require_staged_x509_proxy
     echo "Submitting with native HTCondor"
     condor_submit "$@" submit.jdl
   fi
