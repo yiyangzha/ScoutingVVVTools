@@ -1055,8 +1055,12 @@ def find_lcg_include_dir(env, view_root, header, label):
     candidates.extend(env_path_entries(env, "CPATH"))
     candidates.extend(env_path_entries(env, "CPLUS_INCLUDE_PATH"))
     for path in unique_paths(path for path in candidates if path):
-        if (path / header).exists() and is_lcg_path(path / header):
-            return path
+        header_path = path / header
+        if header_path.exists() and is_lcg_path(header_path):
+            include_root = header_path.resolve()
+            for _ in header.parts:
+                include_root = include_root.parent
+            return include_root
     tried = ", ".join(str(path) for path in unique_paths(path for path in candidates if path)[:80])
     raise SystemExit(f"Could not find {label} include directory in fixed LCG setup. Checked: {tried}")
 
@@ -1081,7 +1085,7 @@ def find_lcg_library(env, view_root, names, label):
                 candidates.extend(sorted(lib_dir.glob(f"lib{name}.so*")))
     for path in unique_paths(candidates):
         if path.exists() and is_lcg_path(path):
-            return path
+            return path.resolve()
     tried = ", ".join(str(path) for path in unique_paths(candidates)[:80])
     raise SystemExit(f"Could not find {label} library in fixed LCG setup. Checked: {tried}")
 
