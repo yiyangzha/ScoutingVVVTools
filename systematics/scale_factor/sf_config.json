@@ -16,6 +16,8 @@
     "routine": "topwsf",
     "routine_name_prefix": "scouting_topwsf",
     "input_sample_base": "output/ntuples/topwsf_scouting_muon",
+    "use_tier_storage": true,
+    "tier_storage_base": "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
     "generated_card_dir": "generated/topwsf",
     "run_launcher": true,
     "run_step": "11",

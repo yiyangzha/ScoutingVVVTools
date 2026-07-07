@@ -21,6 +21,7 @@ struct CliOptions {
   std::string input_yaml;
   std::string job_dir;
   std::string output_dir;
+  std::string merge_output_dir;
   std::string config_file;
   std::string channel = "muon";
   std::string tree_name = "Events";
@@ -49,6 +50,8 @@ CliOptions parse_args(int argc, char **argv) {
       opts.job_dir = need_value("--job-dir");
     } else if (arg == "--output-dir") {
       opts.output_dir = need_value("--output-dir");
+    } else if (arg == "--merge-output-dir") {
+      opts.merge_output_dir = need_value("--merge-output-dir");
     } else if (arg == "--config") {
       opts.config_file = need_value("--config");
     } else if (arg == "--channel") {
@@ -81,7 +84,10 @@ CliOptions parse_args(int argc, char **argv) {
     }
   }
   if (opts.input_yaml.empty() || opts.job_dir.empty() || opts.output_dir.empty() || opts.config_file.empty()) {
-    throw std::runtime_error("Usage: nano_make_condor --input-yaml <samples.yaml> --job-dir <condor-dir> --output-dir <dir> --config <card.yaml> [--nfiles-per-job 1] [--variations nominal,jes_up,...] [--use-sample-key-nickname] [--download-remote-inputs|--no-download-remote-inputs]. If omitted, --variations defaults to nominal.");
+    throw std::runtime_error("Usage: nano_make_condor --input-yaml <samples.yaml> --job-dir <condor-dir> --output-dir <dir> [--merge-output-dir <local-dir>] --config <card.yaml> [--nfiles-per-job 1] [--variations nominal,jes_up,...] [--use-sample-key-nickname] [--download-remote-inputs|--no-download-remote-inputs]. If omitted, --variations defaults to nominal.");
+  }
+  if (opts.merge_output_dir.empty()) {
+    opts.merge_output_dir = opts.output_dir;
   }
   return opts;
 }
@@ -182,6 +188,24 @@ std::string safe_file_stem(std::string value) {
     }
   }
   return value;
+}
+
+bool is_remote_output(const std::string &path) {
+  return nano::runtime::starts_with(path, "root://");
+}
+
+std::string trim_trailing_slashes(std::string value) {
+  while (!value.empty() && value.back() == '/') {
+    value.pop_back();
+  }
+  return value;
+}
+
+std::string join_path_string(const std::string &base, const std::string &child) {
+  if (is_remote_output(base)) {
+    return trim_trailing_slashes(base) + "/" + child;
+  }
+  return (fs::path(base) / child).string();
 }
 
 struct JobSpec {
@@ -289,9 +313,12 @@ int main(int argc, char **argv) {
       throw std::runtime_error("Failed to create repository tarball");
     }
 
-    const auto output_base = nano::runtime::starts_with(cli.output_dir, "/eos/") ? fs::path(cli.output_dir) : fs::absolute(cli.output_dir);
-    const auto output_root = output_base / "pieces";
-    fs::create_directories(output_root);
+    const bool remote_output = is_remote_output(cli.output_dir);
+    const auto output_base = remote_output ? cli.output_dir : fs::absolute(cli.output_dir).string();
+    const auto output_root = join_path_string(output_base, "pieces");
+    if (!remote_output) {
+      fs::create_directories(output_root);
+    }
 
     const auto sample_map = nano::runtime::parse_sample_yaml(cli.input_yaml);
     std::map<std::string, std::vector<std::string>> files_by_nickname;
@@ -318,7 +345,7 @@ int main(int argc, char **argv) {
         job.nickname = nickname;
         job.nickname_index = nickname_index;
         job.inputs.assign(files.begin() + static_cast<std::ptrdiff_t>(begin), files.begin() + static_cast<std::ptrdiff_t>(end));
-        job.output_file = (output_root / (safe_file_stem(nickname) + "_" + std::to_string(nickname_index) + ".root")).string();
+        job.output_file = join_path_string(output_root, safe_file_stem(nickname) + "_" + std::to_string(nickname_index) + ".root");
         jobs.push_back(std::move(job));
       }
     }
@@ -360,6 +387,14 @@ int main(int argc, char **argv) {
     std::cout << "Jobs: " << jobs.size() << "\n";
     std::cout << "Next step:\n";
     std::cout << "  cd " << workdir << " && ./submit.sh\n";
+    if (remote_output) {
+      std::cout << "After jobs finish, merge Tier pieces to local ntuples with:\n";
+      std::cout << "  " << fs::current_path() / "build" / "nano_merge" << " " << cli.merge_output_dir
+                << " --pieces-dir " << output_root << "\n";
+    } else {
+      std::cout << "After jobs finish, merge local pieces with:\n";
+      std::cout << "  " << fs::current_path() / "build" / "nano_merge" << " " << cli.merge_output_dir << "\n";
+    }
     return 0;
   } catch (const std::exception &ex) {
     std::cerr << "nano_make_condor failed: " << ex.what() << "\n";

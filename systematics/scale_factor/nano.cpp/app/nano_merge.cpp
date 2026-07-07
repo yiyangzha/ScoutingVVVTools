@@ -1,6 +1,7 @@
 // clang-format off
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -36,12 +37,12 @@ constexpr std::array kAllowedVariations = {
 constexpr std::size_t kHaddChunkSize = 200;
 
 constexpr std::string_view kUsage =
-    "Usage: nano_merge <output_dir> [--resume-from <tmp_merge_dir>]\n"
-    "  <output_dir>: base Condor output directory; piece files are read from <output_dir>/pieces\n"
+    "Usage: nano_merge <output_dir> [--pieces-dir <local-or-root-pieces-dir>] [--resume-from <tmp_merge_dir>]\n"
+    "  <output_dir>: local final output directory\n"
+    "  --pieces-dir: optional local or root:// directory containing Condor piece files; defaults to <output_dir>/pieces\n"
     "  --resume-from: reuse a previous nano_merge temporary directory and skip groups whose temporary output already exists";
 
-std::string shell_quote(const fs::path &path) {
-  std::string s = path.string();
+std::string shell_quote_string(const std::string &s) {
   std::string out = "'";
   for (const char c : s) {
     if (c == '\'') {
@@ -52,6 +53,78 @@ std::string shell_quote(const fs::path &path) {
   }
   out += "'";
   return out;
+}
+
+std::string shell_quote(const fs::path &path) {
+  return shell_quote_string(path.string());
+}
+
+bool starts_with(const std::string &value, const std::string &prefix) {
+  return value.rfind(prefix, 0) == 0;
+}
+
+bool ends_with(const std::string &value, const std::string &suffix) {
+  return value.size() >= suffix.size() && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool is_remote_path(const std::string &path) {
+  return starts_with(path, "root://");
+}
+
+std::string describe_system_status(int status);
+
+std::string remote_host(const std::string &remote) {
+  const std::string prefix = "root://";
+  const auto without_scheme = remote.substr(prefix.size());
+  const auto slash = without_scheme.find('/');
+  return slash == std::string::npos ? without_scheme : without_scheme.substr(0, slash);
+}
+
+std::string remote_path(const std::string &remote) {
+  const std::string prefix = "root://";
+  const auto without_scheme = remote.substr(prefix.size());
+  const auto slash = without_scheme.find('/');
+  std::string path = slash == std::string::npos ? std::string("/") : without_scheme.substr(slash);
+  while (starts_with(path, "//")) {
+    path.erase(0, 1);
+  }
+  if (!starts_with(path, "/")) {
+    path = "/" + path;
+  }
+  return path;
+}
+
+std::string remote_url(const std::string &host, const std::string &path) {
+  if (is_remote_path(path)) {
+    return path;
+  }
+  if (starts_with(path, "/")) {
+    return "root://" + host + "/" + path;
+  }
+  return "root://" + host + "/" + path;
+}
+
+std::vector<std::string> command_lines(const std::string &cmd) {
+  std::vector<std::string> lines;
+  FILE *pipe = popen(cmd.c_str(), "r");
+  if (pipe == nullptr) {
+    throw std::runtime_error("Failed to run command: " + cmd);
+  }
+  std::array<char, 4096> buffer{};
+  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+    std::string line(buffer.data());
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+      line.pop_back();
+    }
+    if (!line.empty()) {
+      lines.push_back(line);
+    }
+  }
+  const int status = pclose(pipe);
+  if (status != 0) {
+    throw std::runtime_error("Command failed: " + cmd + " (" + describe_system_status(status) + ")");
+  }
+  return lines;
 }
 
 std::set<std::string> allowed_variations() {
@@ -99,21 +172,34 @@ using FileGroup = std::vector<PieceEntry>;
 
 struct CliOptions {
   fs::path output_dir;
+  std::string pieces_dir;
   fs::path resume_dir;
 };
 
 CliOptions parse_args(int argc, char **argv) {
-  if (argc != 2 && argc != 4) {
+  if (argc < 2) {
     throw std::runtime_error(std::string(kUsage));
   }
   CliOptions options;
   options.output_dir = fs::path(argv[1]);
-  if (argc == 4) {
-    const std::string flag = argv[2];
-    if (flag != "--resume-from") {
+  for (int i = 2; i < argc; ++i) {
+    const std::string flag = argv[i];
+    const auto need_value = [&](const char *name) -> std::string {
+      if (i + 1 >= argc) {
+        throw std::runtime_error(std::string("Missing value for ") + name);
+      }
+      return argv[++i];
+    };
+    if (flag == "--pieces-dir") {
+      options.pieces_dir = need_value("--pieces-dir");
+    } else if (flag == "--resume-from") {
+      options.resume_dir = fs::path(need_value("--resume-from"));
+    } else {
       throw std::runtime_error(std::string(kUsage));
     }
-    options.resume_dir = fs::path(argv[3]);
+  }
+  if (options.pieces_dir.empty()) {
+    options.pieces_dir = (options.output_dir / "pieces").string();
   }
   return options;
 }
@@ -153,6 +239,20 @@ void run_hadd(const HaddInputGroup &files, const fs::path &output) {
   if (status != 0) {
     throw std::runtime_error("hadd failed for " + output.string() + " (" + describe_system_status(status) + ")");
   }
+}
+
+void copy_single_file(const fs::path &src, const fs::path &output) {
+  if (is_remote_path(src.string())) {
+    const std::string cmd = "xrdcp --silent -f " + shell_quote(src) + " " + shell_quote(output);
+    std::cout << "[step] Running: " << cmd << "\n";
+    const int status = std::system(cmd.c_str());
+    if (status != 0) {
+      throw std::runtime_error("xrdcp failed for " + src.string() + " -> " + output.string() + " (" +
+                               describe_system_status(status) + ")");
+    }
+    return;
+  }
+  fs::copy_file(src, output, fs::copy_options::overwrite_existing);
 }
 
 HaddInputGroup to_hadd_inputs(const FileGroup &files) {
@@ -210,7 +310,7 @@ bool merge_or_copy(const FileGroup &files, const fs::path &output, bool resume_m
   }
   if (files.size() == 1) {
     const auto &src = files.front().path;
-    fs::copy_file(src, output, fs::copy_options::overwrite_existing);
+    copy_single_file(src, output);
     std::cout << "[step] Copied single file to " << output << "\n";
     return true;
   }
@@ -251,6 +351,38 @@ void copy_tree_contents(const fs::path &from, const fs::path &to) {
   }
 }
 
+std::vector<fs::path> list_piece_files(const std::string &pieces_dir) {
+  std::vector<fs::path> files;
+  if (is_remote_path(pieces_dir)) {
+    const auto host = remote_host(pieces_dir);
+    const auto path = remote_path(pieces_dir);
+    const std::string cmd = "xrdfs " + shell_quote_string("root://" + host) + " ls -R " + shell_quote_string(path);
+    std::cout << "[step] Listing remote pieces: " << cmd << "\n";
+    for (const auto &line : command_lines(cmd)) {
+      if (!ends_with(line, ".root")) {
+        continue;
+      }
+      files.emplace_back(remote_url(host, line));
+    }
+    return files;
+  }
+
+  const fs::path local_pieces_dir(pieces_dir);
+  if (!fs::exists(local_pieces_dir) || !fs::is_directory(local_pieces_dir)) {
+    throw std::runtime_error("Missing pieces directory: " + local_pieces_dir.string());
+  }
+  for (const auto &entry : fs::recursive_directory_iterator(local_pieces_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    if (entry.path().extension() != ".root") {
+      continue;
+    }
+    files.push_back(entry.path());
+  }
+  return files;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -258,10 +390,11 @@ int main(int argc, char **argv) {
     const auto cli = parse_args(argc, argv);
 
     const fs::path output_dir = cli.output_dir;
-    if (!fs::exists(output_dir) || !fs::is_directory(output_dir)) {
-      std::cerr << "Input path must be a directory: " << output_dir << "\n";
+    if (is_remote_path(output_dir.string())) {
+      std::cerr << "Output path must be local: " << output_dir << "\n";
       return 1;
     }
+    fs::create_directories(output_dir);
     const bool resume_mode = !cli.resume_dir.empty();
     if (resume_mode && (!fs::exists(cli.resume_dir) || !fs::is_directory(cli.resume_dir))) {
       std::cerr << "Resume directory must exist and be a directory: " << cli.resume_dir << "\n";
@@ -271,12 +404,6 @@ int main(int argc, char **argv) {
       std::cerr << "Resume directory must be a nano_merge_* directory under "
                 << (std::getenv("TMPDIR") != nullptr && std::getenv("TMPDIR")[0] != '\0' ? std::getenv("TMPDIR") : "/tmp") << ": "
                 << cli.resume_dir << "\n";
-      return 1;
-    }
-
-    const fs::path pieces_dir = output_dir / "pieces";
-    if (!fs::exists(pieces_dir) || !fs::is_directory(pieces_dir)) {
-      std::cerr << "Missing pieces directory: " << pieces_dir << "\n";
       return 1;
     }
 
@@ -292,16 +419,9 @@ int main(int argc, char **argv) {
     // Pattern2: nickname_idx_variation.root
     const std::regex var_re(R"(^(.*)_([0-9]+)_([A-Za-z0-9_]+)\.root$)");
 
-    std::cout << "Reading piece files from: " << pieces_dir << "\n";
-    for (const auto &entry : fs::recursive_directory_iterator(pieces_dir)) {
-      if (!entry.is_regular_file()) {
-        continue;
-      }
-      if (entry.path().extension() != ".root") {
-        continue;
-      }
-
-      const auto filename = entry.path().filename().string();
+    std::cout << "Reading piece files from: " << cli.pieces_dir << "\n";
+    for (const auto &piece_path : list_piece_files(cli.pieces_dir)) {
+      const auto filename = piece_path.filename().string();
       std::smatch match;
       if (std::regex_match(filename, match, var_re)) {
         const std::string nickname = match[1].str();
@@ -311,14 +431,14 @@ int main(int argc, char **argv) {
           std::cerr << "Skipping unknown variation: " << filename << "\n";
           continue;
         }
-        by_variation[variation][nickname].push_back({idx, entry.path()});
+        by_variation[variation][nickname].push_back({idx, piece_path});
         ++total_root;
         continue;
       }
       if (std::regex_match(filename, match, no_var_re)) {
         const std::string nickname = match[1].str();
         const int idx = std::stoi(match[2].str());
-        no_variation[nickname].push_back({idx, entry.path()});
+        no_variation[nickname].push_back({idx, piece_path});
         ++total_root;
         continue;
       }
@@ -326,7 +446,7 @@ int main(int argc, char **argv) {
     }
 
     if (total_root == 0) {
-      std::cerr << "No matching ROOT files in: " << pieces_dir << "\n";
+      std::cerr << "No matching ROOT files in: " << cli.pieces_dir << "\n";
       return 1;
     }
 

@@ -164,7 +164,7 @@ cd jobs/condor_muon_2018_v9_MC
 
 On IHEP `lxlogin*` hosts, `submit.sh` stages the current X509 proxy as `x509up_proxy` and uses `hep_sub ./process.sh -g cms -wt mid ...`; on other hosts it falls back to `condor_submit submit.jdl` with `use_x509userproxy = true`.
 
-Each job runs `process.sh`, prints proxy, XRootD, host, and input diagnostics, tries multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. The shared extraction and build steps use `flock` so many submitted jobs do not compile in the same build directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
+Each job runs `process.sh`, prints proxy, XRootD, host, and input diagnostics, tries multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. `<output-dir>` may be a local path or a `root://` Tier path. The shared extraction and build steps use `flock` so many submitted jobs do not compile in the same build directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
 
 Use `--download-remote-inputs` to make Condor jobs stage remote `root://` inputs with `xrdcp` into worker scratch when available before processing; this flag is also passed through `submit.sh` for IHEP `hep_sub` jobs. Use `--no-download-remote-inputs` to make jobs stream remote inputs directly.
 
@@ -174,7 +174,11 @@ After jobs finish, return to the repository root and merge Condor pieces with:
 build/nano_merge /path/to/output
 ```
 
-Pass the base output directory, not the `pieces/` subdirectory. `nano_merge` reads input pieces from `<output-dir>/pieces/`.
+Pass the base local output directory, not the `pieces/` subdirectory. `nano_merge` reads input pieces from `<output-dir>/pieces/` by default. For Tier pieces, keep the first argument local and pass the remote pieces directory explicitly:
+
+```bash
+build/nano_merge /path/to/local/output --pieces-dir root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples/.../pieces
+```
 
 It first writes merged ROOT files to a temporary directory, then copies all merged outputs back under `<output-dir>/`.
 

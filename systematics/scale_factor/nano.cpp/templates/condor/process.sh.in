@@ -452,24 +452,27 @@ copy_output() {
   local local_file=$1
   local final_file=$2
 
-  if [[ "${final_file}" == /eos/cms* ]]; then
+  if [[ "${final_file}" == root://* ]]; then
+    log_step "Copying ${local_file} to ${final_file}"
+    xrdcp --silent -p -f "${local_file}" "${final_file}"
+  elif [[ "${final_file}" == /eos/cms* ]]; then
     local eos_host="root://eoscms.cern.ch"
     local remote_output="${eos_host}//${final_file}"
-    echo "Copying ${local_file} to ${remote_output}"
-    xrdcp -f "${local_file}" "${remote_output}"
+    log_step "Copying ${local_file} to ${remote_output}"
+    xrdcp --silent -p -f "${local_file}" "${remote_output}"
   elif [[ "${final_file}" == /eos/user* ]]; then
     local eos_host="root://eosuser.cern.ch"
     local remote_output="${eos_host}//${final_file}"
-    echo "Copying ${local_file} to ${remote_output}"
-    xrdcp -f "${local_file}" "${remote_output}"
+    log_step "Copying ${local_file} to ${remote_output}"
+    xrdcp --silent -p -f "${local_file}" "${remote_output}"
   elif [[ "${final_file}" == /eos/uscms* ]]; then
     local eos_host="root://cmseos.fnal.gov"
     local remote_output="${eos_host}//${final_file}"
-    echo "Copying ${local_file} to ${remote_output}"
-    xrdcp -f "${local_file}" "${remote_output}"
+    log_step "Copying ${local_file} to ${remote_output}"
+    xrdcp --silent -p -f "${local_file}" "${remote_output}"
   else
     mkdir -p "$(dirname "${final_file}")"
-    echo "Copying ${local_file} to ${final_file}"
+    log_step "Copying ${local_file} to ${final_file}"
     cp "${local_file}" "${final_file}"
   fi
 }

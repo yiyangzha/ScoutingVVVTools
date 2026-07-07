@@ -178,6 +178,48 @@ def require_local_path(path, label):
         raise SystemExit(f"{label} must be a local path, got: {text}")
 
 
+def safe_path_token(value):
+    text = str(value)
+    out = []
+    for ch in text:
+        out.append(ch if ch.isalnum() or ch in ("_", "-", ".") else "_")
+    return "".join(out).strip("_") or "value"
+
+
+def join_remote_path(base, *parts):
+    text = str(base).rstrip("/")
+    for part in parts:
+        item = str(part).strip("/")
+        if item:
+            text += "/" + item
+    return text
+
+
+def target_storage_name(cfg, target, ntuple):
+    taggers = "_".join(safe_path_token(name) for name in target["taggers"])
+    pieces = [
+        "scouting_vvv_scale_factor",
+        ntuple.get("channel", "scouting_muon"),
+        target["jet_type"],
+        target["jet_category"],
+        taggers,
+        cfg["year"],
+        cfg["nano_version"],
+    ]
+    return safe_path_token("_".join(str(piece) for piece in pieces))
+
+
+def tier_ntuple_output_dir(cfg, target):
+    ntuple = cfg["ntuple"]
+    base = ntuple.get(
+        "tier_storage_base",
+        "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
+    )
+    if not str(base).startswith("root://"):
+        raise SystemExit(f"ntuple.tier_storage_base must be a root:// path, got: {base}")
+    return join_remote_path(base, target_storage_name(cfg, target, ntuple))
+
+
 def year_output_dir(cfg):
     ntuple = cfg["ntuple"]
     sample_base = resolve_path(ntuple["sample_base"])
@@ -418,6 +460,10 @@ def base_command_env():
 
 def command_env():
     env = base_command_env()
+    if not env.get("X509_USER_PROXY"):
+        default_proxy = Path(f"/tmp/x509up_u{os.getuid()}")
+        if default_proxy.exists():
+            env["X509_USER_PROXY"] = str(default_proxy)
     dasgoclient = resolve_dasgoclient()
     if dasgoclient:
         env["SCALE_FACTOR_DASGOCLIENT"] = dasgoclient
@@ -732,6 +778,7 @@ def make_ntuple(cfg, args):
     nano_repo = resolve_path(ntuple.get("repo", "nano.cpp"))
     sample_dir = resolve_path(ntuple.get("generated_sample_dir", "generated/samples"))
     out_dir = year_output_dir(cfg)
+    use_tier_storage = bool(ntuple.get("use_tier_storage", False))
     require_local_path(resolve_path(ntuple.get("job_dir", "jobs/ntuples")), "ntuple.job_dir")
     variations = ",".join(variation_names(ntuple))
     targets = run_targets(cfg)
@@ -760,6 +807,7 @@ def make_ntuple(cfg, args):
             "year": cfg["year"],
         }
         tagger_override = "stored_tagger_names=" + dump_yaml_value(target["taggers"]).strip()
+        ntuple_output_dir = tier_ntuple_output_dir(cfg, target) if use_tier_storage else str(out_dir)
         sample_files = []
         if mc_names:
             path = sample_dir / f"{tokens['jet_type']}_{tokens['jet_category']}_{cfg['year']}_mc.yaml"
@@ -778,7 +826,8 @@ def make_ntuple(cfg, args):
                 binary,
                 "--input-yaml", sample_yaml,
                 "--job-dir", job_dir,
-                "--output-dir", out_dir,
+                "--output-dir", ntuple_output_dir,
+                "--merge-output-dir", out_dir,
                 "--config", config_card,
                 "--channel", ntuple.get("channel", "scouting_muon"),
                 "--tree-name", ntuple.get("tree_name", "Events"),

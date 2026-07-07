@@ -61,6 +61,8 @@ Important `ntuple_config.json` fields:
 - `run_targets`: the jet type, jet category, and exact tagger list to produce.
 - `ntuple.samples`: data and MC groups, by names from `src/sample.json`.
 - `ntuple.sample_base`: local output prefix; the year/nano suffix is appended.
+- `ntuple.use_tier_storage`: defaults to `true` in the scale-factor config; Condor/HepJob pieces are written to Tier while merged ntuples stay local.
+- `ntuple.tier_storage_base`: Tier base path for job pieces; per-target subdirectories include channel, jet type, jet category, taggers, year, and nano version to avoid overwrites.
 - `ntuple.job_dir`: local Condor work directory pattern.
 - `ntuple.build_jobs`: local `nano.cpp` build parallelism; `"auto"` uses the visible CPU count.
 - `ntuple.download_remote_inputs`: the scale-factor default config sets this to `true`, so batch workers first stage remote `root://` ScoutingNano inputs with `xrdcp` into worker scratch when available and then process local files.
@@ -73,7 +75,7 @@ cd systematics/scale_factor/jobs/ntuples/ak8_W_2024_mc
 ./submit.sh
 ```
 
-After Condor finishes, merge pieces locally:
+After Condor finishes, merge pieces into local ntuples. If Tier storage is enabled, use the `nano_merge ... --pieces-dir root://.../pieces` command printed by `python3 run.py 11`; otherwise merge local pieces:
 
 ```bash
 systematics/scale_factor/nano.cpp/build/nano_merge systematics/scale_factor/output/ntuples/topwsf_scouting_muon_2024_v15
@@ -90,12 +92,13 @@ Important `sf_config.json` fields:
 
 - `run_targets`: the exact taggers/categories to run; only these generate cards.
 - `calibration.input_sample_base`: local merged ntuple prefix from step 1.
+- `calibration.use_tier_storage`: records the Tier workflow expectation for step 2; topwsf still reads the local merged ntuples from `calibration.input_sample_base`.
 - `calibration.samples`: data and MC groups, again resolved from `src/sample.json`.
 - `calibration.binning`: per AK type, jet category, tagger, pT bin, and score bin.
 - `calibration.systematics.enabled`: currently `pu`, `jms`, and `jmr`; JES/JER/MET/LHE switches are listed but disabled.
 - `calibration.run_launcher`: set `false` to only generate cards.
 
-Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Generated job directories include `submit.sh`; on IHEP `lxlogin*` hosts it stages the current X509 proxy as `x509up_proxy` and submits with `hep_sub ./process.sh -g cms -wt mid ...`, while other hosts fall back to `condor_submit submit.jdl` with `use_x509userproxy = true`. Condor jobs still request one CPU in `submit.jdl`; generated JDLs set `AcctGroup="cms"` and IHEP `HepJob_WallTime="mid"`. Their build step uses all CPUs visible inside the worker slot unless `BUILD_JOBS` is set. Workers print proxy, XRootD, host, and input diagnostics, set XRootD to IPv4 by default, try multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory, and build with the same pixi/conda compiler and CMake package paths resolved by mode 11; the shared extraction and build steps are guarded by `flock` so many submitted jobs do not compile in the same build directory at the same time.
+Scale-factor controller logs are written to `systematics/scale_factor/log.txt`. Ntuple Condor job stdout/stderr/scheduler logs are under each generated `ntuple.job_dir` `logs/` directory, which is printed by `python3 run.py 11`. Generated job directories include `submit.sh`; on IHEP `lxlogin*` hosts it stages the current X509 proxy as `x509up_proxy` and submits with `hep_sub ./process.sh -g cms -wt mid ...`, while other hosts fall back to `condor_submit submit.jdl` with `use_x509userproxy = true`. Condor jobs still request one CPU in `submit.jdl`; generated JDLs set `AcctGroup="cms"` and IHEP `HepJob_WallTime="mid"`. Their build step uses all CPUs visible inside the worker slot unless `BUILD_JOBS` is set. Workers print proxy, XRootD, host, and input diagnostics, set XRootD to IPv4 by default, try multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpack the vendored `nano.cpp` tarball into a tarball-hash-specific directory, build with the same pixi/conda compiler and CMake package paths resolved by mode 11, and copy each per-job merged piece to Tier when `ntuple.use_tier_storage` is enabled; the shared extraction and build steps are guarded by `flock` so many submitted jobs do not compile in the same build directory at the same time.
 
 Mode 11 resolves DAS datasets before submission. The controller prefers `/cvmfs/cms.cern.ch/common/dasgoclient` when available; set `SCALE_FACTOR_DASGOCLIENT=/path/to/dasgoclient` only to override it explicitly. DAS queries keep `instance=prod/phys03` inside the query for `/.../USER` datasets, run with pixi/conda variables removed, active `CONDA_PREFIX` paths stripped from path-like variables, `/cvmfs/cms.cern.ch/cmsset_default.sh` sourced immediately before executing the CVMFS DAS client, and `HOME` set to `SCALE_FACTOR_DAS_HOME` so `dasgoclient` can load DAS key definitions. On IHEP, the controller infers `SCALE_FACTOR_DAS_HOME=/afs/ihep.ac.cn/users/<initial>/<user>` when the login script sets `HOME=/publicfs/cms/user/...`; override it explicitly if needed. Generated Condor jobs export the same DAS home.
 
