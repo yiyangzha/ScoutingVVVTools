@@ -21,7 +21,7 @@
     "generated_card_dir": "generated/topwsf",
     "run_launcher": true,
     "run_step": "11",
-    "workers": [20, 20],
+    "workers": [4, 2],
     "category": "w",
     "selection": "(passmetfilters) & (passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 200.) & (leptonicW_pt > 150.)",
     "systematics": {
@@ -31,7 +31,7 @@
     "fit": {
       "skip_fit": false,
       "fit_run_impact": true,
-      "fit_impact_parallel": 8,
+      "fit_impact_parallel": 2,
       "fit_auto_mc_stats": 0
     },
     "samples": {
