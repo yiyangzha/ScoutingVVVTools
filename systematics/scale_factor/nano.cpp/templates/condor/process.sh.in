@@ -20,7 +20,9 @@ fi
 
 export XRD_NETWORKSTACK="${XRD_NETWORKSTACK:-IPv4}"
 export XRD_CONNECTIONWINDOW="${XRD_CONNECTIONWINDOW:-30}"
-export XRD_REQUESTTIMEOUT="${XRD_REQUESTTIMEOUT:-300}"
+export XRD_REQUESTTIMEOUT="${XRD_REQUESTTIMEOUT:-120}"
+export SCALE_FACTOR_XRD_REDIRECTORS="${SCALE_FACTOR_XRD_REDIRECTORS:-cms-xrd-global.cern.ch,cmsxrootd.fnal.gov,xrootd-cms.infn.it}"
+export SCALE_FACTOR_XRD_STAT_TIMEOUT="${SCALE_FACTOR_XRD_STAT_TIMEOUT:-30}"
 
 DAS_HOME="@DAS_HOME@"
 if [[ -n "${DAS_HOME}" ]]; then
@@ -323,8 +325,8 @@ diagnose_remote_input() {
 
   log_step "Remote input diagnostic: host=${host} path=${path}"
   if command -v xrdfs >/dev/null 2>&1; then
-    log_step "Running xrdfs stat with 60s limit"
-    if run_limited 60 xrdfs "root://${host}" stat "${path}" >&2; then
+    log_step "Running xrdfs stat with ${SCALE_FACTOR_XRD_STAT_TIMEOUT}s limit"
+    if run_limited "${SCALE_FACTOR_XRD_STAT_TIMEOUT}" xrdfs "root://${host}" stat "${path}" >&2; then
       log_step "xrdfs stat succeeded for ${remote}"
     else
       log_step "Warning: xrdfs stat failed or timed out for ${remote}"
@@ -334,8 +336,31 @@ diagnose_remote_input() {
   fi
 }
 
+candidate_remote_inputs() {
+  local source_file=$1
+  local source_host
+  local source_path
+  source_host="$(remote_host "${source_file}")"
+  source_path="$(remote_path "${source_file}")"
+
+  echo "${source_file}"
+
+  local seen=",${source_host},"
+  local redirector
+  IFS=',' read -r -a redirectors <<< "${SCALE_FACTOR_XRD_REDIRECTORS}"
+  for redirector in "${redirectors[@]}"; do
+    redirector="${redirector//[[:space:]]/}"
+    [[ -z "${redirector}" ]] && continue
+    case "${seen}" in
+      *",${redirector},"*) continue ;;
+    esac
+    seen="${seen}${redirector},"
+    echo "root://${redirector}/${source_path}"
+  done
+}
+
 log_step "Job context: job_index=${JOB_INDEX} host=$(hostname -f 2>/dev/null || hostname) workdir=${WORKDIR} stage_dir=${STAGE_DIR}"
-log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT}"
+log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT} SCALE_FACTOR_XRD_REDIRECTORS=${SCALE_FACTOR_XRD_REDIRECTORS}"
 log_step "Tools: xrdcp=$(command -v xrdcp 2>/dev/null || echo missing) xrdfs=$(command -v xrdfs 2>/dev/null || echo missing) voms-proxy-info=$(command -v voms-proxy-info 2>/dev/null || echo missing)"
 if [[ -n "${X509_USER_PROXY:-}" ]]; then
   log_step "X509_USER_PROXY=${X509_USER_PROXY}"
@@ -355,31 +380,39 @@ done
 prepare_input() {
   local index=$1
   local source_file=$2
-  local max_retries=5
-  local attempt=1
+  local max_rounds=2
+  local round=1
   local wait_seconds=5
 
   if [[ "${DOWNLOAD_REMOTE}" == "true" && "${source_file}" == root://* ]]; then
     local local_name="${STAGE_DIR}/download_${JOB_INDEX}_${index}_$(basename "${source_file}")"
-    diagnose_remote_input "${source_file}"
-    log_step "Copying remote input ${source_file} to ${local_name}" >&2
-    while true; do
-      if xrdcp -f --nopbar "${source_file}" "${local_name}"; then
-        ls -lh "${local_name}" >&2 || true
-        log_step "Copied remote input to ${local_name}"
-        break
-      fi
-      if (( attempt >= max_retries )); then
-        log_step "Error: failed to copy ${source_file} to ${local_name} after ${max_retries} attempts" >&2
+    mapfile -t SOURCE_CANDIDATES < <(candidate_remote_inputs "${source_file}")
+    log_step "Copying remote input to ${local_name}"
+    for candidate in "${SOURCE_CANDIDATES[@]}"; do
+      log_step "  candidate: ${candidate}"
+    done
+    while (( round <= max_rounds )); do
+      local candidate
+      for candidate in "${SOURCE_CANDIDATES[@]}"; do
+        diagnose_remote_input "${candidate}"
+        log_step "xrdcp attempt round ${round}/${max_rounds}: ${candidate}"
+        if xrdcp -f --nopbar "${candidate}" "${local_name}"; then
+          ls -lh "${local_name}" >&2 || true
+          log_step "Copied remote input from ${candidate} to ${local_name}"
+          TO_CLEAN+=("${local_name}")
+          echo "${local_name}"
+          return
+        fi
+        log_step "Warning: xrdcp failed for ${candidate} in round ${round}/${max_rounds}" >&2
+      done
+      if (( round >= max_rounds )); then
+        log_step "Error: failed to copy ${source_file} to ${local_name} after ${max_rounds} rounds over ${#SOURCE_CANDIDATES[@]} redirector candidates" >&2
         return 1
       fi
-      log_step "Warning: xrdcp failed for ${source_file} (attempt ${attempt}/${max_retries}), retrying in ${wait_seconds}s" >&2
+      log_step "Warning: all xrdcp candidates failed for ${source_file} in round ${round}/${max_rounds}; retrying in ${wait_seconds}s" >&2
       sleep "${wait_seconds}"
-      attempt=$((attempt + 1))
+      round=$((round + 1))
     done
-    TO_CLEAN+=("${local_name}")
-    echo "${local_name}"
-    return
   fi
 
   echo "${source_file}"
