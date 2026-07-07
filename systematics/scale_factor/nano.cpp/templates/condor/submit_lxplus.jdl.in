@@ -21,4 +21,6 @@ RequestCpus = 1
 RequestDisk = @REQUEST_DISK_KB@
 
 arguments = $(job_index) @TREE_NAME@ @NUM_EVENTS@ config_snapshot.yaml @CHANNEL@ @VARIATIONS@ @RUN_DATA@
+max_materialize = 60
+max_idle = 20
 queue job_index from job_indices.txt

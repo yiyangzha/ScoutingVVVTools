@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 
-sleep $(( ( RANDOM % 200 ) + 1 ))
-
 set -euo pipefail
 
 log_step() {
   printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2
 }
+
+random_sleep_up_to() {
+  local max_seconds=$1
+  local reason=$2
+  if [[ "${max_seconds}" =~ ^[0-9]+$ ]] && (( max_seconds > 0 )); then
+    local delay=$(( ( RANDOM % max_seconds ) + 1 ))
+    log_step "${reason}: sleeping ${delay}s (max ${max_seconds}s)"
+    sleep "${delay}"
+  fi
+}
+
+random_sleep_up_to "${SCALE_FACTOR_STARTUP_JITTER_MAX:-900}" "Startup jitter"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -23,6 +33,11 @@ export XRD_CONNECTIONWINDOW="${XRD_CONNECTIONWINDOW:-30}"
 export XRD_REQUESTTIMEOUT="${XRD_REQUESTTIMEOUT:-120}"
 export SCALE_FACTOR_XRD_REDIRECTORS="${SCALE_FACTOR_XRD_REDIRECTORS:-cms-xrd-global.cern.ch,cmsxrootd.fnal.gov,xrootd-cms.infn.it}"
 export SCALE_FACTOR_XRD_STAT_TIMEOUT="${SCALE_FACTOR_XRD_STAT_TIMEOUT:-30}"
+export SCALE_FACTOR_XRD_YIYANGZ_PREFIX="${SCALE_FACTOR_XRD_YIYANGZ_PREFIX:-root://cceos.ihep.ac.cn//eos/ihep/cms}"
+export SCALE_FACTOR_XRD_YIYANGZ_COPY_JITTER_MAX="${SCALE_FACTOR_XRD_YIYANGZ_COPY_JITTER_MAX:-240}"
+export SCALE_FACTOR_XRD_MAX_ROUNDS="${SCALE_FACTOR_XRD_MAX_ROUNDS:-3}"
+export SCALE_FACTOR_XRD_RETRY_WAIT_MIN="${SCALE_FACTOR_XRD_RETRY_WAIT_MIN:-30}"
+export SCALE_FACTOR_XRD_RETRY_WAIT_JITTER="${SCALE_FACTOR_XRD_RETRY_WAIT_JITTER:-120}"
 
 DAS_HOME="@DAS_HOME@"
 
@@ -325,6 +340,46 @@ remote_path() {
   echo "${path}"
 }
 
+is_yiyangz_remote_input() {
+  local remote=$1
+  local path
+  path="$(remote_path "${remote}")"
+  case "${path}" in
+    /store/user/yiyangz/*|/eos/ihep/cms/store/user/yiyangz/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+yiyangz_ihep_remote() {
+  local source_file=$1
+  local source_path
+  source_path="$(remote_path "${source_file}")"
+
+  case "${source_path}" in
+    /store/user/yiyangz/*)
+      echo "${SCALE_FACTOR_XRD_YIYANGZ_PREFIX%/}${source_path}"
+      return 0
+      ;;
+    /eos/ihep/cms/store/user/yiyangz/*)
+      echo "root://cceos.ihep.ac.cn/${source_path}"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+retry_wait_seconds() {
+  local min_seconds="${SCALE_FACTOR_XRD_RETRY_WAIT_MIN}"
+  local jitter_seconds="${SCALE_FACTOR_XRD_RETRY_WAIT_JITTER}"
+
+  [[ "${min_seconds}" =~ ^[0-9]+$ ]] || min_seconds=30
+  [[ "${jitter_seconds}" =~ ^[0-9]+$ ]] || jitter_seconds=120
+
+  echo $(( min_seconds + (jitter_seconds > 0 ? RANDOM % (jitter_seconds + 1) : 0) ))
+}
+
 diagnose_remote_input() {
   local remote=$1
   local host
@@ -352,6 +407,12 @@ candidate_remote_inputs() {
   source_host="$(remote_host "${source_file}")"
   source_path="$(remote_path "${source_file}")"
 
+  local ihep_source=""
+  if ihep_source="$(yiyangz_ihep_remote "${source_file}")"; then
+    echo "${ihep_source}"
+    return
+  fi
+
   echo "${source_file}"
 
   local seen=",${source_host},"
@@ -369,7 +430,7 @@ candidate_remote_inputs() {
 }
 
 log_step "Job context: job_index=${JOB_INDEX} host=$(hostname -f 2>/dev/null || hostname) workdir=${WORKDIR} stage_dir=${STAGE_DIR}"
-log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT} SCALE_FACTOR_XRD_REDIRECTORS=${SCALE_FACTOR_XRD_REDIRECTORS}"
+log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT} SCALE_FACTOR_XRD_REDIRECTORS=${SCALE_FACTOR_XRD_REDIRECTORS} SCALE_FACTOR_XRD_YIYANGZ_PREFIX=${SCALE_FACTOR_XRD_YIYANGZ_PREFIX}"
 log_step "Tools: xrdcp=${SITE_XRDCP} xrdfs=${SITE_XRDFS} hadd=${SITE_HADD} voms-proxy-info=$(command -v voms-proxy-info 2>/dev/null || echo missing)"
 if [[ -n "${X509_USER_PROXY:-}" ]]; then
   log_step "X509_USER_PROXY=${X509_USER_PROXY}"
@@ -389,13 +450,21 @@ done
 prepare_input() {
   local index=$1
   local source_file=$2
-  local max_rounds=2
+  local max_rounds="${SCALE_FACTOR_XRD_MAX_ROUNDS}"
   local round=1
-  local wait_seconds=5
+
+  [[ "${max_rounds}" =~ ^[0-9]+$ ]] || max_rounds=3
+  (( max_rounds > 0 )) || max_rounds=1
 
   if [[ "${DOWNLOAD_REMOTE}" == "true" && "${source_file}" == root://* ]]; then
     local local_name="${STAGE_DIR}/download_${JOB_INDEX}_${index}_$(basename "${source_file}")"
     mapfile -t SOURCE_CANDIDATES < <(candidate_remote_inputs "${source_file}")
+    if is_yiyangz_remote_input "${source_file}"; then
+      if [[ "${SOURCE_CANDIDATES[0]}" != "${source_file}" ]]; then
+        log_step "Rewriting yiyangz input source: ${source_file} -> ${SOURCE_CANDIDATES[0]}"
+      fi
+      random_sleep_up_to "${SCALE_FACTOR_XRD_YIYANGZ_COPY_JITTER_MAX}" "yiyangz input copy jitter"
+    fi
     log_step "Copying remote input to ${local_name}"
     for candidate in "${SOURCE_CANDIDATES[@]}"; do
       log_step "  candidate: ${candidate}"
@@ -418,6 +487,8 @@ prepare_input() {
         log_step "Error: failed to copy ${source_file} to ${local_name} after ${max_rounds} rounds over ${#SOURCE_CANDIDATES[@]} redirector candidates" >&2
         return 1
       fi
+      local wait_seconds
+      wait_seconds="$(retry_wait_seconds)"
       log_step "Warning: all xrdcp candidates failed for ${source_file} in round ${round}/${max_rounds}; retrying in ${wait_seconds}s" >&2
       sleep "${wait_seconds}"
       round=$((round + 1))

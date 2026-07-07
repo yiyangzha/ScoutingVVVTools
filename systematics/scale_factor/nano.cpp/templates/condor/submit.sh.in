@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+SCRIPT_REAL_DIR="$(pwd -P)"
 mkdir -p logs
 
 JOB_COUNT="@NUM_JOBS@"
@@ -14,6 +15,12 @@ CHANNEL="@CHANNEL@"
 VARIATIONS="@VARIATIONS@"
 RUN_DATA="@RUN_DATA@"
 DOWNLOAD_REMOTE_INPUTS="@DOWNLOAD_REMOTE_INPUTS@"
+
+RESUBMIT_UNDONE=false
+if [[ "${1:-}" == "--resubmit-undone" ]]; then
+  RESUBMIT_UNDONE=true
+  shift
+fi
 
 HOSTNAME_FULL="$(hostname -f 2>/dev/null || hostname)"
 
@@ -89,6 +96,7 @@ stage_x509_proxy() {
     cp "${source_proxy}" "${target_proxy}"
   fi
   chmod 600 "${target_proxy}"
+  export X509_USER_PROXY="${target_proxy}"
   echo "Staged X509 proxy for workers: ${target_proxy}"
 }
 
@@ -101,7 +109,277 @@ require_staged_x509_proxy() {
   fi
 }
 
+run_limited() {
+  local seconds=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}" "$@"
+  else
+    "$@"
+  fi
+}
+
+XRDFS_SETUP_DONE=false
+ensure_xrdfs() {
+  if command -v xrdfs >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ "${XRDFS_SETUP_DONE}" == false ]]; then
+    XRDFS_SETUP_DONE=true
+    local setup="/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt/setup.sh"
+    if [[ -r "${setup}" ]]; then
+      source_setup_file "${setup}" || true
+    fi
+  fi
+
+  if ! command -v xrdfs >/dev/null 2>&1; then
+    echo "Error: --resubmit-undone needs xrdfs to check remote output files" >&2
+    exit 1
+  fi
+}
+
+remote_host() {
+  local remote=$1
+  local without_scheme="${remote#root://}"
+  echo "${without_scheme%%/*}"
+}
+
+remote_path() {
+  local remote=$1
+  local without_scheme="${remote#root://}"
+  local host="${without_scheme%%/*}"
+  local path="${without_scheme#${host}}"
+  while [[ "${path}" == //* ]]; do
+    path="${path#/}"
+  done
+  if [[ "${path}" != /* ]]; then
+    path="/${path}"
+  fi
+  echo "${path}"
+}
+
+variation_file() {
+  local base=$1
+  local variation=$2
+
+  if [[ "${base}" == *.root ]]; then
+    echo "${base%.root}_${variation}.root"
+  else
+    echo "${base}_${variation}"
+  fi
+}
+
+declare -A REMOTE_DIR_CACHE_READY=()
+declare -A REMOTE_DIR_CACHE_FAILED=()
+declare -A REMOTE_PATH_CACHE=()
+
+remote_output_exists() {
+  local remote=$1
+  local host
+  local path
+  local dir
+  local key
+
+  ensure_xrdfs
+  host="$(remote_host "${remote}")"
+  path="$(remote_path "${remote}")"
+  dir="${path%/*}"
+  key="${host}|${dir}"
+
+  if [[ -z "${REMOTE_DIR_CACHE_READY[${key}]:-}" && -z "${REMOTE_DIR_CACHE_FAILED[${key}]:-}" ]]; then
+    local listing=""
+    local listed=""
+    if listing="$(run_limited "${SCALE_FACTOR_RESUBMIT_XRDFS_LS_TIMEOUT:-180}" xrdfs "root://${host}" ls "${dir}" 2>/dev/null)"; then
+      while IFS= read -r listed; do
+        [[ -n "${listed}" ]] && REMOTE_PATH_CACHE["${host}|${listed}"]=1
+      done <<< "${listing}"
+      REMOTE_DIR_CACHE_READY["${key}"]=1
+    else
+      REMOTE_DIR_CACHE_FAILED["${key}"]=1
+    fi
+  fi
+
+  if [[ -n "${REMOTE_DIR_CACHE_READY[${key}]:-}" ]]; then
+    [[ -n "${REMOTE_PATH_CACHE["${host}|${path}"]:-}" ]]
+    return
+  fi
+
+  run_limited "${SCALE_FACTOR_RESUBMIT_XRDFS_STAT_TIMEOUT:-30}" xrdfs "root://${host}" stat "${path}" >/dev/null 2>&1
+}
+
+output_exists() {
+  local output=$1
+
+  if [[ "${output}" == root://* ]]; then
+    remote_output_exists "${output}"
+  elif [[ "${output}" == /eos/cms* ]]; then
+    remote_output_exists "root://eoscms.cern.ch/${output}"
+  elif [[ "${output}" == /eos/user* ]]; then
+    remote_output_exists "root://eosuser.cern.ch/${output}"
+  elif [[ "${output}" == /eos/uscms* ]]; then
+    remote_output_exists "root://cmseos.fnal.gov/${output}"
+  else
+    [[ -s "${output}" ]]
+  fi
+}
+
+job_outputs_done() {
+  local final_output=$1
+  local saw_variation=false
+  local var
+  local expected
+  local variations=()
+
+  IFS=',' read -r -a variations <<< "${VARIATIONS}"
+  for var in "${variations[@]}"; do
+    var="${var//[[:space:]]/}"
+    [[ -z "${var}" ]] && continue
+    saw_variation=true
+    expected="$(variation_file "${final_output}" "${var}")"
+    if ! output_exists "${expected}"; then
+      return 1
+    fi
+  done
+
+  if [[ "${saw_variation}" == false ]]; then
+    output_exists "${final_output}"
+  fi
+}
+
+RESUBMIT_INDEX_FILE=""
+RESUBMIT_JDL_FILE=""
+RESUBMIT_UNDONE_COUNT=0
+
+write_resubmit_indices() {
+  local stamp
+  stamp="$(date '+%Y%m%d_%H%M%S')_$$"
+  RESUBMIT_INDEX_FILE="job_indices_resubmit_${stamp}.txt"
+  RESUBMIT_JDL_FILE="submit_resubmit_${stamp}.jdl"
+  : > "${RESUBMIT_INDEX_FILE}"
+
+  declare -A manifest_outputs=()
+  local manifest_index
+  local final_output
+  local unused_inputs
+  while IFS=$'\t' read -r manifest_index final_output unused_inputs; do
+    [[ -z "${manifest_index}" ]] && continue
+    manifest_outputs["${manifest_index}"]="${final_output}"
+  done < job_manifest.tsv
+
+  local total=0
+  local done_count=0
+  local job_index
+  while IFS= read -r job_index; do
+    job_index="${job_index//[[:space:]]/}"
+    [[ -z "${job_index}" ]] && continue
+    final_output="${manifest_outputs[${job_index}]:-}"
+    if [[ -z "${final_output}" ]]; then
+      echo "Error: no manifest entry for job index ${job_index}" >&2
+      exit 1
+    fi
+
+    total=$((total + 1))
+    if job_outputs_done "${final_output}"; then
+      done_count=$((done_count + 1))
+    else
+      printf '%s\n' "${job_index}" >> "${RESUBMIT_INDEX_FILE}"
+      RESUBMIT_UNDONE_COUNT=$((RESUBMIT_UNDONE_COUNT + 1))
+    fi
+  done < job_indices.txt
+
+  echo "Resubmit scan: total=${total} done=${done_count} undone=${RESUBMIT_UNDONE_COUNT}"
+  echo "Undone job index list: ${RESUBMIT_INDEX_FILE}"
+}
+
+write_resubmit_jdl() {
+  local base_jdl=$1
+
+  if ! grep -q '^queue job_index from job_indices.txt$' "${base_jdl}"; then
+    echo "Error: ${base_jdl} does not contain the expected queue line" >&2
+    exit 1
+  fi
+
+  sed "s|^queue job_index from job_indices.txt$|queue job_index from ${RESUBMIT_INDEX_FILE}|" "${base_jdl}" > "${RESUBMIT_JDL_FILE}"
+  echo "Resubmit JDL: ${RESUBMIT_JDL_FILE}"
+}
+
+remove_current_condor_jobs() {
+  if ! command -v condor_q >/dev/null 2>&1 || ! command -v condor_rm >/dev/null 2>&1; then
+    echo "Error: --resubmit-undone needs condor_q and condor_rm" >&2
+    exit 1
+  fi
+
+  declare -A seen_clusters=()
+  local clusters=()
+  local query_output=""
+
+  collect_matching_clusters() {
+    local line
+    local cluster
+    local field
+    while IFS= read -r line; do
+      [[ -z "${line}" ]] && continue
+      cluster="${line%% *}"
+      [[ "${cluster}" =~ ^[0-9]+$ ]] || continue
+      for field in ${line#* }; do
+        case "${field}" in
+          undefined) continue ;;
+          "${SCRIPT_DIR}"*|"${SCRIPT_REAL_DIR}"*|root://*//"${SCRIPT_REAL_DIR}"*)
+            if [[ -z "${seen_clusters[${cluster}]:-}" ]]; then
+              seen_clusters["${cluster}"]=1
+              clusters+=("${cluster}")
+            fi
+            break
+            ;;
+        esac
+      done
+    done
+  }
+
+  if query_output="$(condor_q -af ClusterId UserLog Out Err Iwd 2>/dev/null)"; then
+    collect_matching_clusters <<< "${query_output}"
+  else
+    echo "Warning: condor_q job query failed while looking for current jobs" >&2
+  fi
+
+  if query_output="$(condor_q -factory -af ClusterId UserLog Iwd 2>/dev/null)"; then
+    collect_matching_clusters <<< "${query_output}"
+  else
+    echo "Warning: condor_q factory query failed while looking for current jobs" >&2
+  fi
+
+  if (( ${#clusters[@]} == 0 )); then
+    echo "No active HTCondor jobs found for ${SCRIPT_REAL_DIR}"
+    return
+  fi
+
+  echo "Removing active HTCondor cluster(s) for ${SCRIPT_REAL_DIR}: ${clusters[*]}"
+  condor_rm "${clusters[@]}"
+}
+
+run_condor_resubmit() {
+  local base_jdl=$1
+  shift
+
+  write_resubmit_indices
+  remove_current_condor_jobs
+
+  if (( RESUBMIT_UNDONE_COUNT == 0 )); then
+    echo "No undone jobs remain; nothing to submit."
+    return
+  fi
+
+  write_resubmit_jdl "${base_jdl}"
+  echo "Submitting ${RESUBMIT_UNDONE_COUNT} undone jobs with HTCondor"
+  condor_submit "$@" "${RESUBMIT_JDL_FILE}"
+}
+
 if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.cn ]]; then
+  if [[ "${RESUBMIT_UNDONE}" == true ]]; then
+    echo "Error: --resubmit-undone is implemented for HTCondor submissions, not IHEP hep_sub" >&2
+    exit 1
+  fi
   if ! command -v hep_sub >/dev/null 2>&1; then
     echo "Error: lxlogin host detected, but hep_sub is not available in PATH" >&2
     exit 1
@@ -131,10 +409,18 @@ else
       exit 1
     fi
     echo "Detected lxplus host ${HOSTNAME_FULL}; submitting with CERN HTCondor settings"
-    condor_submit "$@" submit_lxplus.jdl
+    if [[ "${RESUBMIT_UNDONE}" == true ]]; then
+      run_condor_resubmit submit_lxplus.jdl "$@"
+    else
+      condor_submit "$@" submit_lxplus.jdl
+    fi
   else
     require_staged_x509_proxy
     echo "Submitting with native HTCondor"
-    condor_submit "$@" submit.jdl
+    if [[ "${RESUBMIT_UNDONE}" == true ]]; then
+      run_condor_resubmit submit.jdl "$@"
+    else
+      condor_submit "$@" submit.jdl
+    fi
   fi
 fi
