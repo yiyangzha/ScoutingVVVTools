@@ -155,6 +155,7 @@ build/nano_make_condor \
 ```
 
 This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, packages a minimal `worker_runtime.tar.gz` from the local build and pixi/conda runtime library closure, writes `submit.jdl`, `submit_lxplus.jdl`, and `submit.sh`. For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
+The runtime bundle requires `nano_run` and shared libraries that are loaded at runtime; `libnanoaodtools_cpp.so` is included only when a shared build produced it, because the default `nanoaodtools_cpp` target is linked into `nano_run` as a static library.
 
 Submit manually:
 

@@ -151,8 +151,10 @@ def main() -> int:
 
     required_build = [
         build_dir / "nano_run",
-        build_dir / "libnanoaodtools_cpp.so",
         build_dir / "external" / "CMSJMECalculators" / "libCMSJMECalculators.so",
+    ]
+    optional_build = [
+        build_dir / "libnanoaodtools_cpp.so",
     ]
     required_tools = [prefix / "bin" / name for name in ("hadd", "xrdcp", "xrdfs")]
     missing = [str(path) for path in [*required_build, *required_tools] if not path.exists()]
@@ -160,7 +162,7 @@ def main() -> int:
         raise RuntimeError("Missing runtime bundle inputs:\n  " + "\n  ".join(missing))
 
     files: dict[Path, Path] = {}
-    seeds = [*required_build, *required_tools]
+    seeds = [*required_build, *[path for path in optional_build if path.exists()], *required_tools]
     add_dependency_closure(files, seeds, prefix, build_dir)
     add_root_runtime_metadata(files, prefix, build_dir)
 
