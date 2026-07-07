@@ -94,6 +94,19 @@ read_branches:
   - GenJet_partonFlavour
 
 optional_read_branches:
+  # Current Scouting data productions can omit NanoAOD-style event filter
+  # flags. Keep the branches strict when present, but allow data files without
+  # them; passmetfilters treats missing flags as not vetoing the event.
+  - Flag_goodVertices
+  - Flag_globalSuperTightHalo2016Filter
+  - Flag_EcalDeadCellTriggerPrimitiveFilter
+  - Flag_BadPFMuonFilter
+  - Flag_BadPFMuonDzFilter
+  - Flag_eeBadScFilter
+  - Flag_ecalBadCalibFilter
+  - Flag_hfNoisyHitsFilter
+  - Flag_HBHENoiseFilter
+  - Flag_HBHENoiseIsoFilter
   - GenPart_pt
   - GenPart_eta
   - GenPart_phi

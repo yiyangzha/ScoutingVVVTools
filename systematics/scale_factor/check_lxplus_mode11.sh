@@ -116,6 +116,28 @@ with cfg_path.open(encoding="utf-8") as handle:
     cfg = json.load(handle)
 
 ntuple = cfg["ntuple"]
+scouting_read_path = scale_dir / "nano.cpp" / "configs" / "common" / "read_branches_scouting_v15.yaml"
+scouting_read_cfg = {}
+current_key = None
+for raw_line in scouting_read_path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.split("#", 1)[0].rstrip()
+    if not line.strip():
+        continue
+    if not raw_line.startswith((" ", "\t")) and line.endswith(":"):
+        current_key = line[:-1].strip()
+        scouting_read_cfg.setdefault(current_key, [])
+        continue
+    if current_key and line.lstrip().startswith("- "):
+        scouting_read_cfg[current_key].append(line.lstrip()[2:].strip())
+scouting_read = set(scouting_read_cfg.get("read_branches", []))
+scouting_optional = set(scouting_read_cfg.get("optional_read_branches", []))
+missing_optional_flags = sorted(branch for branch in scouting_read if branch.startswith("Flag_") and branch not in scouting_optional)
+if missing_optional_flags:
+    raise SystemExit(
+        "Scouting data can omit NanoAOD-style Flag_* branches; list them in optional_read_branches:\n  "
+        + "\n  ".join(missing_optional_flags)
+    )
+
 targets = module.run_targets(cfg)
 sample_sets = []
 if ntuple.get("samples", {}).get("mc_groups"):
@@ -146,11 +168,18 @@ for target in targets:
             text = process.read_text(encoding="utf-8", errors="replace")
             if "source_setup_file" not in text or "LCG_109/x86_64-el9-gcc13-opt" not in text:
                 stale.append(process)
+        for jdl_name in ("submit.jdl", "submit_lxplus.jdl"):
+            jdl = job_dir / jdl_name
+            if not jdl.exists():
+                continue
+            text = jdl.read_text(encoding="utf-8", errors="replace")
+            if "transfer_output_files = dummy.cc" in text or 'transfer_output_files = ""' not in text:
+                stale.append(jdl)
 
 if missing:
     raise SystemExit("generated job directory is incomplete:\n  " + "\n  ".join(str(path) for path in missing))
 if stale:
-    raise SystemExit("generated job directory has stale process.sh; regenerate it with python3 run.py 11:\n  " + "\n  ".join(str(path) for path in stale))
+    raise SystemExit("generated job directory has stale wrappers or JDLs; regenerate it with python3 run.py 11:\n  " + "\n  ".join(str(path) for path in stale))
 
 print("LCG runtime:", exports["SCALE_FACTOR_RUNTIME_PREFIX"] or "fixed CVMFS LCG")
 print("ROOT_DIR:", exports["SCALE_FACTOR_ROOT_DIR"])

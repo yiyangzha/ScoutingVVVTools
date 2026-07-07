@@ -40,6 +40,13 @@ float safe_scalar_float(const Event &event, std::string_view branch_name, float 
   return event.schema().find(branch_name) ? event.scalar<float>(branch_name) : fallback;
 }
 
+bool met_filter_flag(const Event &event, std::string_view branch_name) {
+  if (!event.has_physical_branch(branch_name)) {
+    return true;
+  }
+  return safe_bool(event, branch_name);
+}
+
 std::vector<ObjectView> subjets_for(const ObjectView &fatjet, Event &event, std::string_view subjet_name) {
   const auto subjets = event.collection(subjet_name).objects();
   std::vector<ObjectView> out;
@@ -287,18 +294,18 @@ void HeavyFlavBaseProducer::fill_base_event_info(Event &event, JmeVariation vari
   out_.fill("year", config_.year_value);
   out_.fill("lumiwgt", config_.lumi_weight);
 
-  bool met_filters = safe_bool(event, "Flag_goodVertices") && safe_bool(event, "Flag_globalSuperTightHalo2016Filter") &&
-                     safe_bool(event, "Flag_EcalDeadCellTriggerPrimitiveFilter") && safe_bool(event, "Flag_BadPFMuonFilter") &&
-                     safe_bool(event, "Flag_BadPFMuonDzFilter") && safe_bool(event, "Flag_eeBadScFilter");
+  bool met_filters = met_filter_flag(event, "Flag_goodVertices") && met_filter_flag(event, "Flag_globalSuperTightHalo2016Filter") &&
+                     met_filter_flag(event, "Flag_EcalDeadCellTriggerPrimitiveFilter") && met_filter_flag(event, "Flag_BadPFMuonFilter") &&
+                     met_filter_flag(event, "Flag_BadPFMuonDzFilter") && met_filter_flag(event, "Flag_eeBadScFilter");
   if (config_.era == "2016APV" || config_.era == "2016" || config_.era == "2017" || config_.era == "2018") {
-    met_filters = met_filters && safe_bool(event, "Flag_HBHENoiseFilter") && safe_bool(event, "Flag_HBHENoiseIsoFilter");
+    met_filters = met_filters && met_filter_flag(event, "Flag_HBHENoiseFilter") && met_filter_flag(event, "Flag_HBHENoiseIsoFilter");
   }
   if (config_.era == "2017" || config_.era == "2018" || config_.era == "2022" || config_.era == "2022EE" || config_.era == "2023" ||
       config_.era == "2023BPix" || config_.era == "2024") {
-    met_filters = met_filters && safe_bool(event, "Flag_ecalBadCalibFilter");
+    met_filters = met_filters && met_filter_flag(event, "Flag_ecalBadCalibFilter");
   }
   if (config_.era == "2022" || config_.era == "2022EE" || config_.era == "2023" || config_.era == "2023BPix" || config_.era == "2024") {
-    met_filters = met_filters && safe_bool(event, "Flag_hfNoisyHitsFilter");
+    met_filters = met_filters && met_filter_flag(event, "Flag_hfNoisyHitsFilter");
   }
   out_.fill("passmetfilters", met_filters);
   const bool use_l1_prefiring = event.is_mc() && (config_.era == "2016APV" || config_.era == "2016" || config_.era == "2017");
