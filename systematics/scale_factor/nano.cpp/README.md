@@ -149,11 +149,12 @@ build/nano_make_condor \
   --config configs/run/muon_2018_v9.yaml \
   --channel muon \
   --nfiles-per-job 5 \
+  --request-disk-mb 50000 \
   --num-events -1 \
   --download-remote-inputs
 ```
 
-This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, writes `submit.jdl`, `submit_lxplus.jdl`, and `submit.sh`. For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
+This creates the requested Condor work directory, copies a merged config snapshot, packs the repository, packages a minimal `worker_runtime.tar.gz` from the local build and pixi/conda runtime library closure, writes `submit.jdl`, `submit_lxplus.jdl`, and `submit.sh`. For IHEP CMS jobs, the generated JDL sets `AcctGroup="cms"` and `HepJob_WallTime="mid"` directly.
 
 Submit manually:
 
@@ -162,9 +163,9 @@ cd jobs/condor_muon_2018_v9_MC
 ./submit.sh
 ```
 
-On every submission, `submit.sh` stages the current X509 proxy as `x509up_proxy` in the job directory, and generated jobs use that staged file as `X509_USER_PROXY` instead of relying on Condor's default `/tmp/x509up_*` lookup. On IHEP `lxlogin*` hosts, `submit.sh` uses `hep_sub ./process.sh -g cms -wt mid ...`. On CERN `lxplus*` hosts it submits `submit_lxplus.jdl`, which transfers the staged proxy as a normal input file and uses CERN-style `+JobFlavour = "tomorrow"` and `MY.WantOS = "el9"` instead of IHEP accounting/walltime ClassAds; when the job directory is under `/eos/...`, `submit.sh` first loads `lxbatch/eossubmit` so EOS paths are accepted by the EosSubmit schedds. On other hosts it falls back to `condor_submit submit.jdl`, which also transfers `x509up_proxy` as a normal input file. The Condor JDLs still request `dummy.cc` as a placeholder output; the worker creates it at startup so stdout/stderr can transfer on failures, and `on_exit_hold` holds nonzero worker exits.
+On every submission, `submit.sh` stages the current X509 proxy as `x509up_proxy` in the job directory, and generated jobs use that staged file as `X509_USER_PROXY` instead of relying on Condor's default `/tmp/x509up_*` lookup. On IHEP `lxlogin*` hosts, `submit.sh` uses `hep_sub ./process.sh -g cms -wt mid ...`. On CERN `lxplus*` hosts it submits `submit_lxplus.jdl`, which transfers the staged proxy as a normal input file and uses CERN-style `+JobFlavour = "tomorrow"` and `MY.WantOS = "el9"` instead of IHEP accounting/walltime ClassAds; when the job directory is under `/eos/...`, `submit.sh` first loads `lxbatch/eossubmit` so EOS paths are accepted by the EosSubmit schedds. On other hosts it falls back to `condor_submit submit.jdl`, which also transfers `x509up_proxy` as a normal input file. The Condor JDLs transfer `worker_runtime.tar.gz`, request one CPU plus the configured disk, and still request `dummy.cc` as a placeholder output; the worker creates it at startup so stdout/stderr can transfer on failures, and `on_exit_hold` holds nonzero worker exits.
 
-Each job runs `process.sh`, prints proxy, XRootD, host, and input diagnostics, tries multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. `<output-dir>` may be a local path or a `root://` Tier path. The shared extraction and build steps use `flock` so many submitted jobs do not compile in the same build directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
+Each job runs `process.sh`, prints proxy, XRootD, host, and input diagnostics, tries multiple CMS XRootD redirectors for remote input staging (`SCALE_FACTOR_XRD_REDIRECTORS`), unpacks the repository and runtime bundle into tarball-hash-specific scratch directories, runs the bundled `nano_run`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. `<output-dir>` may be a local path or a `root://` Tier path. Workers do not compile `nano.cpp` and do not read the submitter's `/eos/.../.pixi/envs/default`; shared extraction uses `flock` so many submitted jobs do not unpack into the same directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
 
 Use `--download-remote-inputs` to make Condor jobs stage remote `root://` inputs with `xrdcp` into worker scratch when available before processing; this flag is also passed through `submit.sh` for IHEP `hep_sub` jobs. Use `--no-download-remote-inputs` to make jobs stream remote inputs directly.
 

@@ -833,6 +833,7 @@ def make_ntuple(cfg, args):
                 "--tree-name", ntuple.get("tree_name", "Events"),
                 "--nfiles-per-job", int(ntuple.get("nfiles_per_job", 1)),
                 "--num-events", int(ntuple.get("num_events", -1)),
+                "--request-disk-mb", int(ntuple.get("request_disk_mb", 50000)),
                 "--variations", variations,
                 "--use-sample-key-nickname",
                 "--set", tagger_override,

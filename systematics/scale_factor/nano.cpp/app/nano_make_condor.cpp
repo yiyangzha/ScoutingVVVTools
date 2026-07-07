@@ -30,6 +30,7 @@ struct CliOptions {
   bool use_sample_key_nickname = false;
   bool download_remote_inputs = false;
   long long num_events = -1;
+  long long request_disk_mb = 50000;
   std::size_t nfiles_per_job = 1;
   std::unordered_map<std::string, std::string> overrides;
 };
@@ -70,6 +71,8 @@ CliOptions parse_args(int argc, char **argv) {
       opts.download_remote_inputs = false;
     } else if (arg == "--num-events") {
       opts.num_events = std::stoll(need_value("--num-events"));
+    } else if (arg == "--request-disk-mb") {
+      opts.request_disk_mb = std::stoll(need_value("--request-disk-mb"));
     } else if (arg == "--nfiles-per-job") {
       opts.nfiles_per_job = static_cast<std::size_t>(std::stoul(need_value("--nfiles-per-job")));
     } else if (arg == "--set") {
@@ -84,10 +87,13 @@ CliOptions parse_args(int argc, char **argv) {
     }
   }
   if (opts.input_yaml.empty() || opts.job_dir.empty() || opts.output_dir.empty() || opts.config_file.empty()) {
-    throw std::runtime_error("Usage: nano_make_condor --input-yaml <samples.yaml> --job-dir <condor-dir> --output-dir <dir> [--merge-output-dir <local-dir>] --config <card.yaml> [--nfiles-per-job 1] [--variations nominal,jes_up,...] [--use-sample-key-nickname] [--download-remote-inputs|--no-download-remote-inputs]. If omitted, --variations defaults to nominal.");
+    throw std::runtime_error("Usage: nano_make_condor --input-yaml <samples.yaml> --job-dir <condor-dir> --output-dir <dir> [--merge-output-dir <local-dir>] --config <card.yaml> [--nfiles-per-job 1] [--request-disk-mb 50000] [--variations nominal,jes_up,...] [--use-sample-key-nickname] [--download-remote-inputs|--no-download-remote-inputs]. If omitted, --variations defaults to nominal.");
   }
   if (opts.merge_output_dir.empty()) {
     opts.merge_output_dir = opts.output_dir;
+  }
+  if (opts.request_disk_mb <= 0) {
+    throw std::runtime_error("--request-disk-mb must be positive");
   }
   return opts;
 }
@@ -246,6 +252,23 @@ void write_job_manifest(const fs::path &path, const std::vector<JobSpec> &jobs) 
   out << "}\n";
 }
 
+void write_job_manifest_tsv(const fs::path &path, const std::vector<JobSpec> &jobs) {
+  std::ofstream out(path);
+  if (!out) {
+    throw std::runtime_error("Failed to write job manifest TSV: " + path.string());
+  }
+  for (const auto &job : jobs) {
+    out << job.index << "\t" << job.output_file << "\t";
+    for (std::size_t i = 0; i < job.inputs.size(); ++i) {
+      if (i != 0U) {
+        out << ",";
+      }
+      out << job.inputs[i];
+    }
+    out << "\n";
+  }
+}
+
 std::string require_env(const char *name) {
   const auto *value = std::getenv(name);
   if (!value || std::string(value).empty()) {
@@ -257,6 +280,41 @@ std::string require_env(const char *name) {
 std::string env_or_empty(const char *name) {
   const auto *value = std::getenv(name);
   return value ? std::string(value) : std::string();
+}
+
+std::string shell_quote(const std::string &value) {
+  std::string out = "'";
+  for (const char ch : value) {
+    if (ch == '\'') {
+      out += "'\\''";
+    } else {
+      out += ch;
+    }
+  }
+  out += "'";
+  return out;
+}
+
+void create_worker_runtime_bundle(const fs::path &workdir) {
+  const auto prefix = require_env("SCALE_FACTOR_CONDA_PREFIX");
+  const auto script = fs::path("tools") / "package_worker_runtime.py";
+  const auto build_dir = fs::path("build");
+  if (!fs::exists(script)) {
+    throw std::runtime_error("Missing worker runtime packager: " + script.string());
+  }
+  if (!fs::exists(build_dir / "nano_run")) {
+    throw std::runtime_error("nano_run is missing from build/. Build nano.cpp before generating Condor jobs.");
+  }
+
+  const auto output = workdir / "worker_runtime.tar.gz";
+  const auto cmd = std::string("env -u PYTHONHOME -u PYTHONPATH python3 ") + shell_quote(script.string()) +
+                   " --prefix " + shell_quote(prefix) +
+                   " --build-dir " + shell_quote(build_dir.string()) +
+                   " --output " + shell_quote(output.string());
+  const auto rc = std::system(cmd.c_str());
+  if (rc != 0) {
+    throw std::runtime_error("Failed to create worker runtime bundle");
+  }
 }
 
 void write_executable_template(const fs::path &path, const fs::path &template_path, const std::map<std::string, std::string> &replacements) {
@@ -283,17 +341,6 @@ int main(int argc, char **argv) {
     const auto merged_config = write_merged_config(workdir / "config_snapshot.yaml", settings);
     write_executable_template(workdir / "process.sh", template_dir / "process.sh.in",
                               {
-                                  {"@CONDA_PREFIX@", require_env("SCALE_FACTOR_CONDA_PREFIX")},
-                                  {"@CC_COMPILER@", require_env("SCALE_FACTOR_CC_COMPILER")},
-                                  {"@CXX_COMPILER@", require_env("SCALE_FACTOR_CXX_COMPILER")},
-                                  {"@ROOT_CMAKE_DIR@", require_env("SCALE_FACTOR_ROOT_DIR")},
-                                  {"@CORRECTIONLIB_CMAKE_DIR@", require_env("SCALE_FACTOR_CORRECTIONLIB_DIR")},
-                                  {"@CORRECTIONLIB_LIB_DIR@", env_or_empty("SCALE_FACTOR_CORRECTIONLIB_LIB_DIR")},
-                                  {"@YAML_CPP_CMAKE_DIR@", require_env("SCALE_FACTOR_YAML_CPP_DIR")},
-                                  {"@CMAKE_PREFIX_PATH@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH")},
-                                  {"@CMAKE_PREFIX_PATH_ENV@", require_env("SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV")},
-                                  {"@CMAKE_LINK_FLAGS@", require_env("SCALE_FACTOR_CMAKE_LINK_FLAGS")},
-                                  {"@CMAKE_RPATH@", require_env("SCALE_FACTOR_CMAKE_RPATH")},
                                   {"@DAS_HOME@", env_or_empty("SCALE_FACTOR_DAS_HOME")},
                               });
 
@@ -312,6 +359,7 @@ int main(int argc, char **argv) {
     if (rc != 0) {
       throw std::runtime_error("Failed to create repository tarball");
     }
+    create_worker_runtime_bundle(workdir);
 
     const bool remote_output = is_remote_output(cli.output_dir);
     const auto output_base = remote_output ? cli.output_dir : fs::absolute(cli.output_dir).string();
@@ -351,6 +399,7 @@ int main(int argc, char **argv) {
     }
 
     write_job_manifest(workdir / "job_manifest.json", jobs);
+    write_job_manifest_tsv(workdir / "job_manifest.tsv", jobs);
     std::ofstream index_list(workdir / "job_indices.txt");
     for (const auto &job : jobs) {
       index_list << job.index << "\n";
@@ -367,6 +416,7 @@ int main(int argc, char **argv) {
         {"@RUN_DATA@", run_data_arg},
         {"@DOWNLOAD_REMOTE_INPUTS@", download_remote_inputs_arg},
         {"@NUM_JOBS@", std::to_string(jobs.size())},
+        {"@REQUEST_DISK_KB@", std::to_string(cli.request_disk_mb * 1024LL)},
     };
     const auto submit_jdl = render_template(
         template_dir / "submit.jdl.in",
@@ -387,6 +437,7 @@ int main(int argc, char **argv) {
     std::cout << "  stderr: logs/<Cluster>.<Process>.err\n";
     std::cout << "  scheduler: logs/<Cluster>.log\n";
     std::cout << "Job manifest: " << (workdir / "job_manifest.json") << "\n";
+    std::cout << "Job manifest TSV: " << (workdir / "job_manifest.tsv") << "\n";
     std::cout << "Job index list: " << (workdir / "job_indices.txt") << "\n";
     std::cout << "Jobs: " << jobs.size() << "\n";
     std::cout << "Next step:\n";
