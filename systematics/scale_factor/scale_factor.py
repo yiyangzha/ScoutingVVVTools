@@ -660,6 +660,11 @@ def validate_cached_compiler(build_dir, cache_key, expected, label):
         )
 
 
+def python3_executable(prefix):
+    candidate = prefix / "bin" / "python3"
+    return candidate if candidate.exists() else Path(sys.executable)
+
+
 def pixi_env_exports():
     global _PIXI_ENV_EXPORTS
     if _PIXI_ENV_EXPORTS is not None:
@@ -699,6 +704,7 @@ def pixi_env_exports():
         "SCALE_FACTOR_CONDA_LIB_DIR": str(conda_lib_dir),
         "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
         "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),
+        "SCALE_FACTOR_PYTHON3_EXECUTABLE": str(python3_executable(prefix)),
         "SCALE_FACTOR_ROOT_DIR": str(root_dir),
         "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
         "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": str(correction_lib_dir) if correction_lib_dir.exists() else "",
@@ -715,6 +721,7 @@ def pixi_cmake_args(build_dir):
     exports = cpp_env_exports()
     validate_cached_compiler(build_dir, "CMAKE_C_COMPILER", exports["SCALE_FACTOR_CC_COMPILER"], "CMAKE_C_COMPILER")
     validate_cached_compiler(build_dir, "CMAKE_CXX_COMPILER", exports["SCALE_FACTOR_CXX_COMPILER"], "CMAKE_CXX_COMPILER")
+    validate_cached_compiler(build_dir, "Python3_EXECUTABLE", exports["SCALE_FACTOR_PYTHON3_EXECUTABLE"], "Python3_EXECUTABLE")
     validate_cached_cmake_path(build_dir, "ROOT_DIR", exports["SCALE_FACTOR_ROOT_DIR"], "ROOT_DIR", ["ROOTConfig.cmake"])
     validate_cached_cmake_path(
         build_dir,
@@ -728,10 +735,11 @@ def pixi_cmake_args(build_dir):
         "yaml-cpp_DIR",
         exports["SCALE_FACTOR_YAML_CPP_DIR"],
         "yaml-cpp_DIR",
-        any_required_files=["yaml-cpp-config.cmake", "yaml-cppConfig.cmake"],
+        any_required_files=["yaml-cpp-config.cmake", "yaml-cppConfig.cmake", "yamlcpp-config.cmake", "yamlcppConfig.cmake"],
     )
     return [
         f"-DCMAKE_CXX_COMPILER={exports['SCALE_FACTOR_CXX_COMPILER']}",
+        f"-DPython3_EXECUTABLE={exports['SCALE_FACTOR_PYTHON3_EXECUTABLE']}",
         f"-DCMAKE_PREFIX_PATH={exports['SCALE_FACTOR_CMAKE_PREFIX_PATH']}",
         f"-DROOT_DIR={exports['SCALE_FACTOR_ROOT_DIR']}",
         f"-Dcorrectionlib_DIR={exports['SCALE_FACTOR_CORRECTIONLIB_DIR']}",
@@ -869,6 +877,10 @@ def which_in_env(name, env):
     return Path(found) if found else None
 
 
+def env_path_entries(env, key):
+    return [Path(item) for item in env.get(key, "").split(os.pathsep) if item]
+
+
 def lcg_root_config_value(root_config, option, env):
     result = subprocess.run([str(root_config), option], capture_output=True, text=True, env=env)
     if result.returncode != 0:
@@ -914,9 +926,7 @@ def lcg_root_cmake_dir(env, view_root):
         Path(env["ROOTSYS"]) if env.get("ROOTSYS") else None,
         view_root,
     ]
-    for item in env.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
-        if item:
-            search_roots.append(Path(item))
+    search_roots.extend(env_path_entries(env, "CMAKE_PREFIX_PATH"))
     candidates = []
     for base in search_roots:
         if base:
@@ -929,24 +939,69 @@ def lcg_root_cmake_dir(env, view_root):
     raise SystemExit(f"Could not resolve ROOTConfig.cmake from fixed LCG root-config: {root_config}. Checked: {tried}")
 
 
-def find_cmake_package_dir(base, names):
-    candidates = []
-    for pkg_name in names:
+def cmake_package_candidate_dirs(base, package_names):
+    candidates = [base, base / "cmake"]
+    for pkg_name in package_names:
         candidates.extend([
+            base / pkg_name,
+            base / pkg_name / "cmake",
             base / "lib" / "cmake" / pkg_name,
             base / "lib64" / "cmake" / pkg_name,
             base / "share" / pkg_name / "cmake",
             base / "share" / "cmake" / pkg_name,
+            base / "share" / pkg_name,
         ])
-    for path in candidates:
-        if any(child.exists() for child in path.glob("*Config.cmake")) or any(child.exists() for child in path.glob("*-config.cmake")):
-            return path
-    for pattern in ("lib/**/correctionlib*Config.cmake", "lib/**/correctionlib*-config.cmake", "lib/**/yaml-cpp*Config.cmake", "lib/**/yaml-cpp*-config.cmake"):
-        for config_path in sorted(base.glob(pattern)):
-            parent = config_path.parent
-            if any(name.lower() in str(parent).lower() for name in names):
-                return parent
+    for site_parent in [base, base / "lib", base / "lib64"]:
+        for site_packages in site_parent.glob("python*/site-packages"):
+            for pkg_name in package_names:
+                candidates.extend([
+                    site_packages / pkg_name,
+                    site_packages / pkg_name / "cmake",
+                    site_packages / pkg_name / "lib" / "cmake" / pkg_name,
+                ])
+    if base.name == "site-packages":
+        for pkg_name in package_names:
+            candidates.extend([base / pkg_name, base / pkg_name / "cmake"])
+    return candidates
+
+
+def cmake_config_dir(candidates, config_names):
+    names = {name.lower() for name in config_names}
+    for path in unique_paths(path for path in candidates if path):
+        if not path.exists():
+            continue
+        for name in config_names:
+            if (path / name).exists():
+                return path
+        for pattern in ("*Config.cmake", "*-config.cmake"):
+            for child in path.glob(pattern):
+                if child.name.lower() in names:
+                    return path
     return None
+
+
+def lcg_search_roots(env, view_root):
+    roots = [view_root]
+    roots.extend(env_path_entries(env, "CMAKE_PREFIX_PATH"))
+    roots.extend(env_path_entries(env, "PYTHONPATH"))
+    for base in [view_root, *env_path_entries(env, "CMAKE_PREFIX_PATH")]:
+        roots.extend([base / "lib", base / "lib64", base / "python"])
+        roots.extend(base.glob("lib/python*/site-packages"))
+        roots.extend(base.glob("lib64/python*/site-packages"))
+        roots.extend(base.glob("python/lib/python*/site-packages"))
+        roots.extend(base.glob("python/python*/site-packages"))
+    return unique_paths(path for path in roots if path)
+
+
+def find_lcg_cmake_package_dir(env, view_root, package_names, config_names, label):
+    candidates = []
+    for base in lcg_search_roots(env, view_root):
+        candidates.extend(cmake_package_candidate_dirs(base, package_names))
+    package_dir = cmake_config_dir(candidates, config_names)
+    if package_dir:
+        return package_dir
+    tried = ", ".join(str(path) for path in unique_paths(path for path in candidates if path)[:80])
+    raise SystemExit(f"Could not find {label} CMake config in fixed LCG setup. Checked: {tried}")
 
 
 def lcg_env_exports():
@@ -962,16 +1017,27 @@ def lcg_env_exports():
     view_root = setup.parent
     cc_compiler = which_in_env("gcc", env) or which_in_env("cc", env)
     cxx_compiler = which_in_env("g++", env) or which_in_env("c++", env)
+    python3 = which_in_env("python3", env) or which_in_env("python", env)
     if not cc_compiler or not cxx_compiler:
         raise SystemExit(f"LCG setup does not provide gcc/g++ compilers: {setup}")
+    if not python3:
+        raise SystemExit(f"LCG setup does not provide python3: {setup}")
 
     root_dir = lcg_root_cmake_dir(env, view_root)
-    correction_dir = find_cmake_package_dir(view_root, ("correctionlib", "correctionlib-cpp"))
-    if not correction_dir:
-        raise SystemExit(f"Could not find correctionlib CMake config in LCG view: {view_root}")
-    yaml_dir = find_cmake_package_dir(view_root, ("yaml-cpp",))
-    if not yaml_dir:
-        raise SystemExit(f"Could not find yaml-cpp CMake config in LCG view: {view_root}")
+    correction_dir = find_lcg_cmake_package_dir(
+        env,
+        view_root,
+        ("correctionlib", "correctionlib-cpp"),
+        ("correctionlibConfig.cmake", "correctionlib-config.cmake"),
+        "correctionlib",
+    )
+    yaml_dir = find_lcg_cmake_package_dir(
+        env,
+        view_root,
+        ("yaml-cpp", "yamlcpp", "yaml_cpp"),
+        ("yaml-cpp-config.cmake", "yaml-cppConfig.cmake", "yamlcpp-config.cmake", "yamlcppConfig.cmake"),
+        "yaml-cpp",
+    )
 
     cmake_prefixes = []
     for item in env.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
@@ -986,6 +1052,7 @@ def lcg_env_exports():
         "SCALE_FACTOR_RUNTIME_PREFIX": "",
         "SCALE_FACTOR_CC_COMPILER": str(cc_compiler),
         "SCALE_FACTOR_CXX_COMPILER": str(cxx_compiler),
+        "SCALE_FACTOR_PYTHON3_EXECUTABLE": str(python3),
         "SCALE_FACTOR_ROOT_DIR": str(root_dir),
         "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
         "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": "",
