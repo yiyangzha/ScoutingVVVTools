@@ -510,13 +510,35 @@ def command_env():
     return env
 
 
-def run_command(cmd, cwd=None, dry_run=False):
+def run_command(cmd, cwd=None, dry_run=False, env=None):
     print(" ".join(str(part) for part in cmd), flush=True)
     if dry_run:
         return
-    result = subprocess.run([str(part) for part in cmd], cwd=cwd, env=command_env())
+    result = subprocess.run([str(part) for part in cmd], cwd=cwd, env=env or command_env())
     if result.returncode != 0:
         raise SystemExit(result.returncode)
+
+
+def topwsf_command_env():
+    env = os.environ.copy()
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    for name in (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        env.setdefault(name, "1")
+    if conda_prefix:
+        prefix = Path(conda_prefix)
+        prepend_env_path(env, "PATH", [prefix / "bin"])
+        prepend_env_path(env, "LD_LIBRARY_PATH", [prefix / "lib"])
+        prepend_env_path(env, "LIBRARY_PATH", [prefix / "lib"])
+    return env
 
 
 def correctionlib_cmake_dir():
@@ -1371,9 +1393,10 @@ def compute_sf(cfg, args):
     if not cards:
         raise SystemExit("No scale-factor cards were generated")
 
+    launcher_env = topwsf_command_env()
     for card in cards:
         cmd = [
-            "python3", "launcher.py", str(card),
+            sys.executable, "launcher.py", str(card),
             "--routine", cal.get("routine", "topwsf"),
             "--run-step", str(cal.get("run_step", "11")),
             "--workers", *[str(x) for x in cal.get("workers", [20, 20])],
@@ -1381,7 +1404,7 @@ def compute_sf(cfg, args):
         if args.generate_only or not cal.get("run_launcher", True):
             print(" ".join(cmd), flush=True)
             continue
-        run_command(cmd, cwd=boohft_repo, dry_run=args.dry_run)
+        run_command(cmd, cwd=boohft_repo, dry_run=args.dry_run, env=launcher_env)
     print("Generated topwsf cards:")
     for card in cards:
         print(f"  {card}")
