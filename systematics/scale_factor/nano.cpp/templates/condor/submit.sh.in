@@ -13,6 +13,7 @@ CONFIG="config_snapshot.yaml"
 CHANNEL="@CHANNEL@"
 VARIATIONS="@VARIATIONS@"
 RUN_DATA="@RUN_DATA@"
+DOWNLOAD_REMOTE_INPUTS="@DOWNLOAD_REMOTE_INPUTS@"
 
 HOSTNAME_FULL="$(hostname -f 2>/dev/null || hostname)"
 
@@ -50,7 +51,7 @@ if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.c
     -dir "${SCRIPT_DIR}" \
     -o "logs/%{ClusterId}.%{ProcId}.out" \
     -e "logs/%{ClusterId}.%{ProcId}.err" \
-    -argu "%{ProcId}" "${TREE_NAME}" "${NUM_EVENTS}" "${CONFIG}" "${CHANNEL}" "${VARIATIONS}" "${RUN_DATA}"
+    -argu "%{ProcId}" "${TREE_NAME}" "${NUM_EVENTS}" "${CONFIG}" "${CHANNEL}" "${VARIATIONS}" "${RUN_DATA}" "${DOWNLOAD_REMOTE_INPUTS}"
 else
   if ! command -v condor_submit >/dev/null 2>&1; then
     echo "Error: condor_submit is not available in PATH" >&2

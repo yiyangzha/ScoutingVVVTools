@@ -24,7 +24,7 @@
     "build_before_make_condor": true,
     "run_make_condor": true,
     "submit_condor": false,
-    "download_remote_inputs": false,
+    "download_remote_inputs": true,
     "variations": {
       "nominal": true,
       "jes": false,

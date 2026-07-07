@@ -164,9 +164,9 @@ cd jobs/condor_muon_2018_v9_MC
 
 On IHEP `lxlogin*` hosts, `submit.sh` stages the current X509 proxy as `x509up_proxy` and uses `hep_sub ./process.sh -g cms -wt mid ...`; on other hosts it falls back to `condor_submit submit.jdl` with `use_x509userproxy = true`.
 
-Each job runs `process.sh`, unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. The shared extraction and build steps use `flock` so many submitted jobs do not compile in the same build directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
+Each job runs `process.sh`, prints proxy, XRootD, host, and input diagnostics, unpacks the repository into a tarball-hash-specific work directory, builds it if needed with the pixi/conda compiler and CMake package paths injected by `nano_make_condor`, prints the full `nano_run` command, and writes variation-suffixed ROOT pieces under `<output-dir>/pieces/`. The shared extraction and build steps use `flock` so many submitted jobs do not compile in the same build directory at the same time. Without `--variations`, Condor jobs also default to nominal and write `*_nominal.root` pieces.
 
-Use `--no-download-remote-inputs` to make Condor jobs stream remote `root://` inputs directly instead of staging them with `xrdcp`.
+Use `--download-remote-inputs` to make Condor jobs stage remote `root://` inputs with `xrdcp` into worker scratch when available before processing; this flag is also passed through `submit.sh` for IHEP `hep_sub` jobs. Use `--no-download-remote-inputs` to make jobs stream remote inputs directly.
 
 After jobs finish, return to the repository root and merge Condor pieces with:
 

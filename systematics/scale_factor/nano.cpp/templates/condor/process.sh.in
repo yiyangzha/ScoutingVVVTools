@@ -4,6 +4,10 @@ sleep $(( ( RANDOM % 200 ) + 1 ))
 
 set -euo pipefail
 
+log_step() {
+  printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
@@ -11,8 +15,12 @@ STAGED_X509_PROXY="${SCRIPT_DIR}/x509up_proxy"
 if [[ -f "${STAGED_X509_PROXY}" ]]; then
   chmod 600 "${STAGED_X509_PROXY}" 2>/dev/null || true
   export X509_USER_PROXY="${STAGED_X509_PROXY}"
-  echo "Using staged X509 proxy: ${X509_USER_PROXY}"
+  log_step "Using staged X509 proxy: ${X509_USER_PROXY}"
 fi
+
+export XRD_NETWORKSTACK="${XRD_NETWORKSTACK:-IPv4}"
+export XRD_CONNECTIONWINDOW="${XRD_CONNECTIONWINDOW:-30}"
+export XRD_REQUESTTIMEOUT="${XRD_REQUESTTIMEOUT:-300}"
 
 DAS_HOME="@DAS_HOME@"
 if [[ -n "${DAS_HOME}" ]]; then
@@ -171,7 +179,10 @@ VARIATIONS=$6
 RUN_DATA=$7
 DOWNLOAD_FILE="${DOWNLOAD_FILE:-${8:-false}}"
 
-LOCAL_OUTPUT="${WORKDIR}/local_output_${JOB_INDEX}.root"
+STAGE_DIR="${_CONDOR_SCRATCH_DIR:-${TMPDIR:-${WORKDIR}}}"
+mkdir -p "${STAGE_DIR}"
+
+LOCAL_OUTPUT="${STAGE_DIR}/local_output_${JOB_INDEX}.root"
 
 if [[ "${CONFIG}" != /* ]]; then
   CONFIG="${WORKDIR}/${CONFIG}"
@@ -273,6 +284,74 @@ WORK_INPUTS=()
 TO_CLEAN=()
 WORK_INPUTS=("${RAW_INPUTS[@]}")
 
+run_limited() {
+  local seconds=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}" "$@"
+  else
+    "$@"
+  fi
+}
+
+remote_host() {
+  local remote=$1
+  local without_scheme="${remote#root://}"
+  echo "${without_scheme%%/*}"
+}
+
+remote_path() {
+  local remote=$1
+  local without_scheme="${remote#root://}"
+  local host="${without_scheme%%/*}"
+  local path="${without_scheme#${host}}"
+  while [[ "${path}" == //* ]]; do
+    path="${path#/}"
+  done
+  if [[ "${path}" != /* ]]; then
+    path="/${path}"
+  fi
+  echo "${path}"
+}
+
+diagnose_remote_input() {
+  local remote=$1
+  local host
+  local path
+  host="$(remote_host "${remote}")"
+  path="$(remote_path "${remote}")"
+
+  log_step "Remote input diagnostic: host=${host} path=${path}"
+  if command -v xrdfs >/dev/null 2>&1; then
+    log_step "Running xrdfs stat with 60s limit"
+    if run_limited 60 xrdfs "root://${host}" stat "${path}" >&2; then
+      log_step "xrdfs stat succeeded for ${remote}"
+    else
+      log_step "Warning: xrdfs stat failed or timed out for ${remote}"
+    fi
+  else
+    log_step "Warning: xrdfs is not available in PATH"
+  fi
+}
+
+log_step "Job context: job_index=${JOB_INDEX} host=$(hostname -f 2>/dev/null || hostname) workdir=${WORKDIR} stage_dir=${STAGE_DIR}"
+log_step "Input staging: DOWNLOAD_FILE=${DOWNLOAD_FILE} XRD_NETWORKSTACK=${XRD_NETWORKSTACK} XRD_CONNECTIONWINDOW=${XRD_CONNECTIONWINDOW} XRD_REQUESTTIMEOUT=${XRD_REQUESTTIMEOUT}"
+log_step "Tools: xrdcp=$(command -v xrdcp 2>/dev/null || echo missing) xrdfs=$(command -v xrdfs 2>/dev/null || echo missing) voms-proxy-info=$(command -v voms-proxy-info 2>/dev/null || echo missing)"
+if [[ -n "${X509_USER_PROXY:-}" ]]; then
+  log_step "X509_USER_PROXY=${X509_USER_PROXY}"
+  ls -l "${X509_USER_PROXY}" >&2 2>/dev/null || true
+  if command -v voms-proxy-info >/dev/null 2>&1; then
+    log_step "Proxy time left:"
+    voms-proxy-info -timeleft >&2 || true
+  fi
+else
+  log_step "Warning: X509_USER_PROXY is not set"
+fi
+log_step "Resolved manifest inputs (${#RAW_INPUTS[@]} files):"
+for input_file in "${RAW_INPUTS[@]}"; do
+  log_step "  ${input_file}"
+done
+
 prepare_input() {
   local index=$1
   local source_file=$2
@@ -281,17 +360,20 @@ prepare_input() {
   local wait_seconds=5
 
   if [[ "${DOWNLOAD_REMOTE}" == "true" && "${source_file}" == root://* ]]; then
-    local local_name="${WORKDIR}/download_${JOB_INDEX}_${index}_$(basename "${source_file}")"
-    echo "Copying remote input ${source_file} to ${local_name}" >&2
+    local local_name="${STAGE_DIR}/download_${JOB_INDEX}_${index}_$(basename "${source_file}")"
+    diagnose_remote_input "${source_file}"
+    log_step "Copying remote input ${source_file} to ${local_name}" >&2
     while true; do
-      if xrdcp -f "${source_file}" "${local_name}"; then
+      if xrdcp -f --nopbar "${source_file}" "${local_name}"; then
+        ls -lh "${local_name}" >&2 || true
+        log_step "Copied remote input to ${local_name}"
         break
       fi
       if (( attempt >= max_retries )); then
-        echo "Error: failed to copy ${source_file} to ${local_name} after ${max_retries} attempts" >&2
+        log_step "Error: failed to copy ${source_file} to ${local_name} after ${max_retries} attempts" >&2
         return 1
       fi
-      echo "Warning: xrdcp failed for ${source_file} (attempt ${attempt}/${max_retries}), retrying in ${wait_seconds}s" >&2
+      log_step "Warning: xrdcp failed for ${source_file} (attempt ${attempt}/${max_retries}), retrying in ${wait_seconds}s" >&2
       sleep "${wait_seconds}"
       attempt=$((attempt + 1))
     done
@@ -309,7 +391,7 @@ else
   mapfile -t VARIATION_NAMES < <(parse_variations "${VARIATIONS}")
   for i in "${!WORK_INPUTS[@]}"; do
     input_file="$(prepare_input "${i}" "${WORK_INPUTS[$i]}")"
-    piece_base="${WORKDIR}/piece_${JOB_INDEX}_${i}"
+    piece_base="${STAGE_DIR}/piece_${JOB_INDEX}_${i}"
     run_one_input "${input_file}" "${piece_base}"
     TO_CLEAN+=("${piece_base}" "${piece_base}.root")
   done
@@ -317,7 +399,7 @@ else
   for var in "${VARIATION_NAMES[@]}"; do
     VARIANT_FILES=()
     for i in "${!WORK_INPUTS[@]}"; do
-      piece_base="${WORKDIR}/piece_${JOB_INDEX}_${i}"
+      piece_base="${STAGE_DIR}/piece_${JOB_INDEX}_${i}"
       piece_var="$(variation_file "${piece_base}" "${var}")"
       VARIANT_FILES+=("${piece_var}")
       TO_CLEAN+=("${piece_var}")
