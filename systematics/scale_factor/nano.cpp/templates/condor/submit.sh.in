@@ -68,6 +68,15 @@ stage_x509_proxy() {
   echo "Staged X509 proxy for workers: ${target_proxy}"
 }
 
+require_staged_x509_proxy() {
+  stage_x509_proxy
+  if [[ ! -f "${SCRIPT_DIR}/x509up_proxy" ]]; then
+    echo "Error: no X509 proxy was staged to ${SCRIPT_DIR}/x509up_proxy" >&2
+    echo "Create a valid proxy first, for example: voms-proxy-init -voms cms -valid 168:00" >&2
+    exit 1
+  fi
+}
+
 if [[ "${HOSTNAME_FULL}" == lxlogin* || "${HOSTNAME_FULL}" == lxlogin*.ihep.ac.cn ]]; then
   if ! command -v hep_sub >/dev/null 2>&1; then
     echo "Error: lxlogin host detected, but hep_sub is not available in PATH" >&2
@@ -90,6 +99,7 @@ else
     exit 1
   fi
   if is_lxplus_host; then
+    require_staged_x509_proxy
     load_cern_eossubmit
     if [[ ! -f submit_lxplus.jdl ]]; then
       echo "Error: lxplus host detected, but submit_lxplus.jdl was not generated" >&2
