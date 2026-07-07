@@ -372,6 +372,10 @@ int main(int argc, char **argv) {
         template_dir / "submit.jdl.in",
         submit_replacements);
     write_text_file(workdir / "submit.jdl", submit_jdl);
+    const auto submit_lxplus_jdl = render_template(
+        template_dir / "submit_lxplus.jdl.in",
+        submit_replacements);
+    write_text_file(workdir / "submit_lxplus.jdl", submit_lxplus_jdl);
     write_executable_template(workdir / "submit.sh", template_dir / "submit.sh.in", submit_replacements);
 
     fs::create_directories(workdir / "logs");
