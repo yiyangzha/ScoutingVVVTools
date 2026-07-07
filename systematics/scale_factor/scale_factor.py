@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 _PIXI_ENV_EXPORTS = None
 _LCG_ENV_EXPORTS = None
 FIXED_LCG_VIEW = Path("/cvmfs/sft.cern.ch/lcg/views/LCG_109/x86_64-el9-gcc13-opt")
+LCG_CVMFS_ROOT = Path("/cvmfs/sft.cern.ch/lcg")
 
 
 def load_json(path):
@@ -572,6 +573,29 @@ def yaml_cpp_cmake_dir():
     raise SystemExit("Could not find yaml-cpp CMake config under the active pixi/conda environment.")
 
 
+def yaml_cpp_include_dir(prefix):
+    candidates = [prefix / "include"]
+    for path in candidates:
+        if (path / "yaml-cpp" / "yaml.h").exists():
+            return path
+    raise SystemExit("Could not find yaml-cpp headers under the active pixi/conda environment.")
+
+
+def yaml_cpp_library(prefix):
+    candidates = []
+    for lib_dir in (prefix / "lib", prefix / "lib64"):
+        candidates.extend([
+            lib_dir / "libyaml-cpp.so",
+            lib_dir / "libyaml-cpp.dylib",
+            lib_dir / "libyaml-cpp.a",
+        ])
+        candidates.extend(sorted(lib_dir.glob("libyaml-cpp.so*")))
+    path = first_existing_path(candidates, prefix)
+    if path:
+        return path
+    raise SystemExit("Could not find libyaml-cpp under the active pixi/conda environment.")
+
+
 def root_config_value(option):
     try:
         result = subprocess.run(["root-config", option], capture_output=True, text=True, env=base_command_env())
@@ -689,6 +713,8 @@ def pixi_env_exports():
         raise SystemExit("Could not import correctionlib from the active pixi/conda environment.")
     correction_lib_dir = correction_package_dir / "lib"
     yaml_dir = yaml_cpp_cmake_dir()
+    yaml_include_dir = yaml_cpp_include_dir(prefix)
+    yaml_library = yaml_cpp_library(prefix)
     conda_lib_dir = prefix / "lib"
     lib_dirs = [conda_lib_dir]
     if correction_lib_dir.exists():
@@ -709,6 +735,8 @@ def pixi_env_exports():
         "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
         "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": str(correction_lib_dir) if correction_lib_dir.exists() else "",
         "SCALE_FACTOR_YAML_CPP_DIR": str(yaml_dir),
+        "SCALE_FACTOR_YAML_CPP_INCLUDE_DIR": str(yaml_include_dir),
+        "SCALE_FACTOR_YAML_CPP_LIBRARY": str(yaml_library),
         "SCALE_FACTOR_CMAKE_PREFIX_PATH": ";".join(cmake_prefixes),
         "SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV": os.pathsep.join(cmake_prefixes),
         "SCALE_FACTOR_CMAKE_LINK_FLAGS": " ".join(link_flags),
@@ -737,6 +765,14 @@ def pixi_cmake_args(build_dir):
         "yaml-cpp_DIR",
         any_required_files=["yaml-cpp-config.cmake", "yaml-cppConfig.cmake", "yamlcpp-config.cmake", "yamlcppConfig.cmake"],
     )
+    validate_cached_cmake_path(
+        build_dir,
+        "NANO_YAML_CPP_INCLUDE_DIR",
+        exports["SCALE_FACTOR_YAML_CPP_INCLUDE_DIR"],
+        "NANO_YAML_CPP_INCLUDE_DIR",
+        required_files=["yaml-cpp/yaml.h"],
+    )
+    validate_cached_compiler(build_dir, "NANO_YAML_CPP_LIBRARY", exports["SCALE_FACTOR_YAML_CPP_LIBRARY"], "NANO_YAML_CPP_LIBRARY")
     return [
         f"-DCMAKE_CXX_COMPILER={exports['SCALE_FACTOR_CXX_COMPILER']}",
         f"-DPython3_EXECUTABLE={exports['SCALE_FACTOR_PYTHON3_EXECUTABLE']}",
@@ -744,6 +780,8 @@ def pixi_cmake_args(build_dir):
         f"-DROOT_DIR={exports['SCALE_FACTOR_ROOT_DIR']}",
         f"-Dcorrectionlib_DIR={exports['SCALE_FACTOR_CORRECTIONLIB_DIR']}",
         f"-Dyaml-cpp_DIR={exports['SCALE_FACTOR_YAML_CPP_DIR']}",
+        f"-DNANO_YAML_CPP_INCLUDE_DIR={exports['SCALE_FACTOR_YAML_CPP_INCLUDE_DIR']}",
+        f"-DNANO_YAML_CPP_LIBRARY={exports['SCALE_FACTOR_YAML_CPP_LIBRARY']}",
         f"-DCMAKE_EXE_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
         f"-DCMAKE_SHARED_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
         f"-DCMAKE_MODULE_LINKER_FLAGS={exports['SCALE_FACTOR_CMAKE_LINK_FLAGS']}",
@@ -881,6 +919,10 @@ def env_path_entries(env, key):
     return [Path(item) for item in env.get(key, "").split(os.pathsep) if item]
 
 
+def is_lcg_path(path):
+    return is_under(Path(path).resolve(), LCG_CVMFS_ROOT)
+
+
 def lcg_root_config_value(root_config, option, env):
     result = subprocess.run([str(root_config), option], capture_output=True, text=True, env=env)
     if result.returncode != 0:
@@ -970,6 +1012,8 @@ def cmake_config_dir(candidates, config_names):
     for path in unique_paths(path for path in candidates if path):
         if not path.exists():
             continue
+        if not is_lcg_path(path):
+            continue
         for name in config_names:
             if (path / name).exists():
                 return path
@@ -1002,6 +1046,44 @@ def find_lcg_cmake_package_dir(env, view_root, package_names, config_names, labe
         return package_dir
     tried = ", ".join(str(path) for path in unique_paths(path for path in candidates if path)[:80])
     raise SystemExit(f"Could not find {label} CMake config in fixed LCG setup. Checked: {tried}")
+
+
+def find_lcg_include_dir(env, view_root, header, label):
+    candidates = []
+    for base in lcg_search_roots(env, view_root):
+        candidates.extend([base, base / "include"])
+    candidates.extend(env_path_entries(env, "CPATH"))
+    candidates.extend(env_path_entries(env, "CPLUS_INCLUDE_PATH"))
+    for path in unique_paths(path for path in candidates if path):
+        if (path / header).exists() and is_lcg_path(path / header):
+            return path
+    tried = ", ".join(str(path) for path in unique_paths(path for path in candidates if path)[:80])
+    raise SystemExit(f"Could not find {label} include directory in fixed LCG setup. Checked: {tried}")
+
+
+def find_lcg_library(env, view_root, names, label):
+    candidates = []
+    library_roots = [view_root]
+    library_roots.extend(env_path_entries(env, "CMAKE_PREFIX_PATH"))
+    library_roots.extend(env_path_entries(env, "LD_LIBRARY_PATH"))
+    library_roots.extend(env_path_entries(env, "LIBRARY_PATH"))
+    for base in unique_paths(path for path in library_roots if path):
+        dirs = [base]
+        if base.name not in ("lib", "lib64"):
+            dirs.extend([base / "lib", base / "lib64"])
+        for lib_dir in dirs:
+            for name in names:
+                candidates.extend([
+                    lib_dir / f"lib{name}.so",
+                    lib_dir / f"lib{name}.dylib",
+                    lib_dir / f"lib{name}.a",
+                ])
+                candidates.extend(sorted(lib_dir.glob(f"lib{name}.so*")))
+    for path in unique_paths(candidates):
+        if path.exists() and is_lcg_path(path):
+            return path
+    tried = ", ".join(str(path) for path in unique_paths(candidates)[:80])
+    raise SystemExit(f"Could not find {label} library in fixed LCG setup. Checked: {tried}")
 
 
 def lcg_env_exports():
@@ -1038,6 +1120,8 @@ def lcg_env_exports():
         ("yaml-cpp-config.cmake", "yaml-cppConfig.cmake", "yamlcpp-config.cmake", "yamlcppConfig.cmake"),
         "yaml-cpp",
     )
+    yaml_include_dir = find_lcg_include_dir(env, view_root, Path("yaml-cpp") / "yaml.h", "yaml-cpp")
+    yaml_library = find_lcg_library(env, view_root, ("yaml-cpp", "yamlcpp"), "yaml-cpp")
 
     cmake_prefixes = []
     for item in env.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
@@ -1057,6 +1141,8 @@ def lcg_env_exports():
         "SCALE_FACTOR_CORRECTIONLIB_DIR": str(correction_dir),
         "SCALE_FACTOR_CORRECTIONLIB_LIB_DIR": "",
         "SCALE_FACTOR_YAML_CPP_DIR": str(yaml_dir),
+        "SCALE_FACTOR_YAML_CPP_INCLUDE_DIR": str(yaml_include_dir),
+        "SCALE_FACTOR_YAML_CPP_LIBRARY": str(yaml_library),
         "SCALE_FACTOR_CMAKE_PREFIX_PATH": ";".join(cmake_prefixes),
         "SCALE_FACTOR_CMAKE_PREFIX_PATH_ENV": os.pathsep.join(cmake_prefixes),
         "SCALE_FACTOR_CMAKE_LINK_FLAGS": "",
