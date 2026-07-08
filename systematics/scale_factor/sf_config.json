@@ -23,7 +23,7 @@
     "run_step": "11",
     "workers": [4, 2],
     "category": "w",
-    "selection": "(passmetfilters) & (passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 200.) & (leptonicW_pt > 150.)",
+    "selection": "(passmetfilters) & (passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 170.) & (leptonicW_pt > 150.)",
     "systematics": {
       "enabled": ["pu", "jms", "jmr"],
       "available_but_disabled": ["jes", "jer", "met", "lhescalemuf", "lhescalemur"]
@@ -61,8 +61,8 @@
           "WvsQCD": {
             "label": "Scouting GloParT WvsQCD",
             "expr": "fj_1_WvsQCD",
-            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
-            "score_bins": [[0.0, 0.50], [0.50, 0.80], [0.80, 0.90], [0.90, 0.95], [0.95, 0.98], [0.98, 1.0]]
+            "pt_bins": [[170, 1500]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "ZvsQCD": {
             "label": "Scouting GloParT ZvsQCD",
