@@ -25,8 +25,8 @@
     "category": "w",
     "selection": "(passmetfilters) & (passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 170.) & (leptonicW_pt > 150.)",
     "systematics": {
-      "enabled": ["pu", "jms", "jmr"],
-      "available_but_disabled": ["jes", "jer", "met", "lhescalemuf", "lhescalemur"]
+      "enabled": [],
+      "available_but_disabled": ["pu", "jms", "jmr", "jes", "jer", "met", "lhescalemuf", "lhescalemur"]
     },
     "fit": {
       "skip_fit": false,
@@ -61,7 +61,7 @@
           "WvsQCD": {
             "label": "Scouting GloParT WvsQCD",
             "expr": "fj_1_WvsQCD",
-            "pt_bins": [[170, 1500]],
+            "pt_bins": [[170, 400], [400, 1200]],
             "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "ZvsQCD": {
