@@ -5,6 +5,8 @@ import shutil
 import uproot
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend: never connect to an X server (batch-safe)
 import matplotlib.pyplot as plt
 import mplhep as hep
 import xgboost as xgb
@@ -1283,6 +1285,58 @@ def check_weights(w, name="w"):
 
 
 # -------------------- Decorrelation helpers --------------------
+def _loss_history_from_log(logpath):
+    """Reconstruct the combined (stage1+stage2) loss history from a training log,
+    for BDT_PLOT_ONLY regeneration. Forward-fills the every-Nth logged values to
+    full per-round length. Returns (history, stage_boundary); ({...}, None) if
+    the log is missing/unparseable (loss plots are then simply skipped)."""
+    empty = ({"train": {}, "test": {}}, None)
+    if not logpath or not os.path.exists(logpath):
+        return empty
+    import re
+    key = {"mlogloss": "mlogloss", "classification_loss": "classification",
+           "decorrelation_loss": "decorrelation", "total_loss": "total"}
+    raw = {"1": {"train": {}, "test": {}}, "2": {"train": {}, "test": {}}}
+    nmax = {"1": -1, "2": -1}
+    pat = re.compile(r"\[stage([12])\]\[(\d+)\]\t(.*)")
+    with open(logpath) as fh:
+        for line in fh:
+            m = pat.search(line)
+            if not m:
+                continue
+            stg, rnd = m.group(1), int(m.group(2))
+            nmax[stg] = max(nmax[stg], rnd)
+            for tok in m.group(3).split("\t"):
+                if "-" not in tok or ":" not in tok:
+                    continue
+                name, val = tok.split(":", 1)
+                split, _, met = name.partition("-")
+                if split not in ("train", "test") or met not in key:
+                    continue
+                try:
+                    raw[stg][split].setdefault(key[met], {})[rnd] = float(val)
+                except ValueError:
+                    pass
+    if nmax["1"] < 0 and nmax["2"] < 0:
+        return empty
+    n1, n2 = max(nmax["1"] + 1, 0), max(nmax["2"] + 1, 0)
+
+    def _fill(sparse, n):
+        out, last = [], float("nan")
+        for i in range(n):
+            if i in sparse:
+                last = sparse[i]
+            out.append(last)
+        return out
+
+    hist = {"train": {}, "test": {}}
+    for split in ("train", "test"):
+        for mk in ("mlogloss", "classification", "decorrelation", "total"):
+            hist[split][mk] = _fill(raw["1"][split].get(mk, {}), n1) + \
+                              _fill(raw["2"][split].get(mk, {}), n2)
+    return hist, n1
+
+
 def _resolve_decor_indices(X, decorrelate_feature_names):
     if not decorrelate_feature_names:
         return []
@@ -1860,6 +1914,26 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
+
+    # Plot-only regeneration: load the already-trained models and skip the fit,
+    # so performance plots can be rebuilt (e.g. after a plotting-stage crash)
+    # without a full retrain. Enable with env BDT_PLOT_ONLY=1; optionally point
+    # BDT_PLOT_LOG at the original training log to also rebuild the loss curves.
+    if os.environ.get("BDT_PLOT_ONLY"):
+        base_path = model_name[:-5] if model_name.endswith(".json") else model_name
+        s1p, s2p = f"{base_path}_stage1.json", f"{base_path}.json"
+        if not (os.path.exists(s1p) and os.path.exists(s2p)):
+            raise FileNotFoundError(
+                f"BDT_PLOT_ONLY set but saved models missing: {s1p} / {s2p}")
+        m1 = xgb.Booster(); m1.load_model(s1p)
+        m2 = xgb.Booster(); m2.load_model(s2p)
+        hist, stage_boundary = _loss_history_from_log(os.environ.get("BDT_PLOT_LOG"))
+        if stage_boundary is None:
+            stage_boundary = int(hp.get("n_estimators", 200))
+        log_message(
+            f"BDT_PLOT_ONLY: loaded {s1p} and {s2p}; skipping fit "
+            f"(stage_boundary={stage_boundary})")
+        return m1, m2, splits, hist, stage_boundary
 
     dtrain = _make_dmatrix(X_train, y_train, w_train)
     dtest = _make_dmatrix(X_test, y_test, w_test)

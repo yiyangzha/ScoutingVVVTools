@@ -2,7 +2,7 @@
   "submit_trees": ["fat2", "fat3"],
   "sample_config": "../src/sample.json",
   "convert_branch_config": "../selections/convert/branch.json",
-  "bdt_root": "../selections/BDT/{tree_name}_UParTv2_v2_wloose/",
+  "bdt_root": "../selections/BDT/{tree_name}_vjets_full/",
   "output_root": "./pre-selection/{tree_name}",
   "output_root_nosel": "./no-selection_btagged/{tree_name}",
   "output_shapes": "./class-shapes/{tree_name}",

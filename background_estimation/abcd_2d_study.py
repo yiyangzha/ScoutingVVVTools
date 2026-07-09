@@ -181,8 +181,8 @@ def analyze(tree, dump_path, outdir):
 if __name__ == "__main__":
     base = "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/background_estimation/output"
     results = []
-    for tree in ("fat2", "fat3"):
-        outdir = os.path.join(base, f"{tree}_vjets_full_minbkg50")
+    for tree in ("fat2",):
+        outdir = os.path.join(base, f"{tree}_vjets_tailaware_decorr3_minbkg20")
         dump = os.path.join(outdir, "abcd_2d_dump.npz")
         if not os.path.exists(dump):
             print(f"MISSING dump: {dump}")

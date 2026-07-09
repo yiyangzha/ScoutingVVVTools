@@ -2,16 +2,16 @@
   "channels": [
     {
       "name": "fat2",
-      "root_file": "../background_estimation/output/fat2_vjets_full/qcd_abcd_yields.root",
-      "bdt_root": "../selections/BDT/fat2_vjets_full"
+      "root_file": "../background_estimation/output/fat2_vjets_tailaware_minbkg20/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/fat2_vjets_tailaware"
     },
     {
       "name": "fat3",
-      "root_file": "../background_estimation/output/fat3_vjets_full/qcd_abcd_yields.root",
+      "root_file": "../background_estimation/output/fat3_vjets_full_minbkg50/qcd_abcd_yields.root",
       "bdt_root": "../selections/BDT/fat3_vjets_full"
     }
   ],
-  "output_dir": "./vjets_full",
+  "output_dir": "./vjets_full_minbkg20",
   "combine_cmd": "combine",
   "combine_cards_cmd": "combineCards.py",
   "lumi_unc": 0.016,

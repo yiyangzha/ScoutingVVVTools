@@ -1,12 +1,16 @@
 {
   "lumi": 255.8,
-  "bdt_root": "../selections/BDT/fat3_vjets_full/",
-  "signal_region_csv": "../selections/signal_region/output/fa32_vjets_full/signal_region.csv",
-  "output_dir": "./output/fat3_vjets_full",
+  "bdt_root": "../selections/BDT/fat2_vjets_tailaware_decorr3",
+  "signal_region_csv": "../selections/signal_region/output/fat2_vjets_tailaware_decorr3_minbkg50/signal_region.csv",
+  "output_dir": "./output/fat2_vjets_tailaware_decorr3_minbkg50_sideband",
   "root_file_name": "qcd_abcd_yields.root",
   "abcd_branches": {
-    "fat2": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "fat3": ["ScoutingFatPFJetRecluster_msoftdrop_1"]
+    "fat2": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1"
+    ],
+    "fat3": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1"
+    ]
   },
   "a_region_shape_branches": {
     "fat2": [
@@ -25,5 +29,7 @@
       "ScoutingFatPFJetRecluster_WvsQCD_2",
       "ScoutingFatPFJetRecluster_WvsQCD_3"
     ]
-  }
+  },
+  "abcd_sideband_mode": "annulus",
+  "abcd_sideband_width": 0.05
 }

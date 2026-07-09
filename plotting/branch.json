@@ -116,7 +116,12 @@
       "ScoutingFatPFJetRecluster_msoftdrop_2" : {
 	      "x_range" : [0,300],
 	      "bins" : 60
+      },
+       "ScoutingMET_pt" : {
+	      "x_range" : [0,600],
+	      "bins" : 60
       }
+     
     }
   },
   "fat3": {
