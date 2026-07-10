@@ -401,6 +401,10 @@ inline std::string das_command_prefix() {
   return dasgoclient_executable();
 }
 
+inline bool is_user_dataset(const std::string &entry) { return ends_with(entry, "/USER"); }
+
+inline bool is_official_nanoaod_dataset(const std::string &entry) { return ends_with(entry, "/NANOAOD"); }
+
 inline std::vector<std::string> list_remote_dir(const std::string &path) {
   const auto pos = path.find('/', std::string("root://").size());
   if (pos == std::string::npos) {
@@ -433,7 +437,7 @@ inline std::vector<std::string> resolve_dataset_entry(const std::string &entry) 
     std::vector<std::string> commands = {
         das + " -query=" + shell_quote(query),
     };
-    if (ends_with(entry, "/USER")) {
+    if (is_user_dataset(entry) && !is_official_nanoaod_dataset(entry)) {
       commands = {
           das + " -query=" + shell_quote(query + " instance=prod/phys03"),
           das + " -query=" + shell_quote(query + " system=rucio"),

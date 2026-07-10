@@ -423,10 +423,6 @@
       "lumi": -1,
       "raw_entries": 1775774
     },
-
-
-
-
     {
       "name": "dy_h1500to2500_m120",
       "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_v4-00000000000000000000000000000000/USER",
@@ -789,6 +785,106 @@
       "xsection": 7832,
       "lumi": -1,
       "raw_entries": 2920063
+    },
+    {
+      "name": "2024C_official",
+      "path": "/ScoutingPFRun3/Run2024C-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 7.26,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024D_official",
+      "path": "/ScoutingPFRun3/Run2024D-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 7.98,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024E_official",
+      "path": "/ScoutingPFRun3/Run2024E-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 11.42,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024F_official",
+      "path": "/ScoutingPFRun3/Run2024F-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 28.04,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024G_official",
+      "path": "/ScoutingPFRun3/Run2024G-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 38.07,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024H_official",
+      "path": "/ScoutingPFRun3/Run2024H-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 5.49,
+      "raw_entries": -1
+    },
+    {
+      "name": "2024I_official",
+      "path": "/ScoutingPFRun3/Run2024I-ScoutNano-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 11.56,
+      "raw_entries": -1
+    },
+    {
+      "name": "2025B_official",
+      "path": "/ScoutingPFRun3/Run2025B-PromptReco-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 0.26,
+      "raw_entries": -1
+    },
+    {
+      "name": "2025C_official",
+      "path": "/ScoutingPFRun3/Run2025C-PromptReco-v2/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 21.63,
+      "raw_entries": -1
+    },
+    {
+      "name": "2025D_official",
+      "path": "/ScoutingPFRun3/Run2025D-PromptReco-v1/NANOAOD",
+      "sample_ID": 99,
+      "is_MC": false,
+      "is_signal": false,
+      "xsection": -1,
+      "lumi": 25.52,
+      "raw_entries": -1
     },
     {
       "name": "data_2024",

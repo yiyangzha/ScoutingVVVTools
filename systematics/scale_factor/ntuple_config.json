@@ -5,8 +5,7 @@
   "run_targets": [
     {
       "jet_type": "ak8",
-      "jet_category": "W",
-      "taggers": ["WvsQCD"]
+      "jet_category": "W"
     }
   ],
   "ntuple": {
@@ -15,11 +14,17 @@
     "channel": "scouting_muon",
     "tree_name": "Events",
     "config": "nano.cpp/configs/run/scouting_muon_2024_v15.yaml",
+    "configs": {
+      "2024": "nano.cpp/configs/run/scouting_muon_2024_v15.yaml",
+      "2025": "nano.cpp/configs/run/scouting_muon_2025_v15.yaml",
+      "2026": "nano.cpp/configs/run/scouting_muon_2026_v15.yaml"
+    },
     "sample_base": "output/ntuples/topwsf_scouting_muon",
+    "split_by_era": true,
     "use_tier_storage": true,
     "tier_storage_base": "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
     "generated_sample_dir": "generated/samples",
-    "job_dir": "jobs/ntuples/{jet_type}_{jet_category}_{year}_{sample_set}",
+    "job_dir": "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}",
     "nfiles_per_job": 5,
     "num_events": -1,
     "build_jobs": "auto",
@@ -34,7 +39,18 @@
       "met": false
     },
     "samples": {
-      "data": ["data_2024"],
+      "data": [
+        "2024C_official",
+        "2024D_official",
+        "2024E_official",
+        "2024F_official",
+        "2024G_official",
+        "2024H_official",
+        "2024I_official",
+        "2025B_official",
+        "2025C_official",
+        "2025D_official"
+      ],
       "mc_groups": {
         "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
         "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],

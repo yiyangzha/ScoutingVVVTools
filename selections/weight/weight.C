@@ -259,6 +259,10 @@ bool isUserDataset(const string& path) {
     return endsWith(path, "/USER");
 }
 
+bool isOfficialNanoAODDataset(const string& path) {
+    return endsWith(path, "/NANOAOD");
+}
+
 string runCommand(const string& command) {
     unique_ptr<FILE, int(*)(FILE*)> pipe(popen(command.c_str(), "r"), pclose);
     if (!pipe) {
@@ -292,7 +296,7 @@ vector<string> splitLines(const string& text) {
 
 vector<string> listRemoteRootFiles(const string& datasetPath) {
     string query = "file dataset=" + datasetPath;
-    if (isUserDataset(datasetPath)) {
+    if (isUserDataset(datasetPath) && !isOfficialNanoAODDataset(datasetPath)) {
         query += " instance=prod/phys03";
     }
 

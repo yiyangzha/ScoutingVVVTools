@@ -92,7 +92,7 @@ float HeavyFlavScoutingMuonSampleProducer::tagger_score(const ObjectView &fj, co
     return safe_div(sig, sig + qcd);
   }
   if (name == "ZvsQCD") {
-    const auto sig = xbb + xcc + xss;
+    const auto sig = xbb + xcc + xss + xqq;
     return safe_div(sig, sig + qcd);
   }
   if (name == "VvsQCD") {
@@ -110,6 +110,12 @@ float HeavyFlavScoutingMuonSampleProducer::tagger_score(const ObjectView &fj, co
   }
   if (name == "XccVsQCD") {
     return safe_div(xcc, xcc + qcd);
+  }
+  if (name == "XssVsQCD") {
+    return safe_div(xss, xss + qcd);
+  }
+  if (name == "XqqVsQCD") {
+    return safe_div(xqq, xqq + qcd);
   }
   return safe_object_float(fj, name, -99.0f);
 }

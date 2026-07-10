@@ -1,5 +1,11 @@
 stored_tagger_auto_add_branches: false
 stored_tagger_names:
+  - XcsVsQCD
+  - XudVsQCD
   - WvsQCD
+  - XbbVsQCD
+  - XccVsQCD
+  - XssVsQCD
+  - XqqVsQCD
   - ZvsQCD
   - VvsQCD

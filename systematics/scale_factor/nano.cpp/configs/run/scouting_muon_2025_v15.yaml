@@ -1,0 +1,30 @@
+# ScoutingNano muon tag-and-probe card for AK8 W/top SF ntuples.
+# It reads Scouting collections only; offline PF/Muon/FatJet branches are not used.
+
+extends:
+  - ../base.yaml
+  - ../common/scouting_branches_v15.yaml
+  - ../common/stored_tagger_names_scouting_v15.yaml
+  - ../common/read_branches_scouting_v15.yaml
+
+era: "2025"
+nano_version: "v15"
+
+preselection: nScoutingFatPFJetRecluster>0 && nScoutingPFJetRecluster2>0 && nScoutingMuonVtx>0 && DST_PFScouting_SingleMuon
+
+required_triggers:
+  - DST_PFScouting_SingleMuon
+
+input:
+  strict_read_branches: true
+
+output:
+  include_lhe_weights: false
+
+btag:
+  v15:
+    2025:
+      branch: scoutUParT_probb
+      loose: 0.20
+      medium: 0.50
+      tight: 0.80

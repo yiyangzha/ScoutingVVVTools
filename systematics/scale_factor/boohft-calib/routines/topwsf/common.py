@@ -89,7 +89,7 @@ def topwsf_year_components(year):
     return TOPWSF_YEAR_COMPONENTS.get(str(year), [str(year)])
 
 
-def resolve_sample_base(cfg, attr="sample_base", append_year_version=True, year=None):
+def resolve_sample_base(cfg, attr="sample_base", append_year_version=None, year=None):
     year = str(cfg.year if year is None else year)
     sample_base = getattr(cfg, attr)
     if sample_base is None:
@@ -97,6 +97,8 @@ def resolve_sample_base(cfg, attr="sample_base", append_year_version=True, year=
     sample_base = sample_base.replace("$YEAR", year).replace("<year>", year)
     nano_version = str(cfg.nano_version)
     sample_base = sample_base.replace("$NANO_VERSION", nano_version).replace("<nano_version>", nano_version)
+    if append_year_version is None:
+        append_year_version = bool(getattr(cfg, f"{attr}_append_year_version", getattr(cfg, "append_year_version", True)))
     if append_year_version:
         suffix = f"_{year}_{nano_version}"
         if not os.path.basename(sample_base).endswith(suffix):
