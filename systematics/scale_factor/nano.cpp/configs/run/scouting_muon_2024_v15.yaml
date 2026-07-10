@@ -10,7 +10,7 @@ extends:
 era: "2024"
 nano_version: "v15"
 
-preselection: nScoutingFatPFJetRecluster>0 && nScoutingPFJetRecluster2>0 && nScoutingMuonVtx>0 && DST_PFScouting_SingleMuon
+preselection: Sum$(ScoutingMuonVtx_pt>50 && abs(ScoutingMuonVtx_eta)<2.4)>0 && nScoutingFatPFJetRecluster>0
 
 required_triggers:
   - DST_PFScouting_SingleMuon
@@ -20,11 +20,3 @@ input:
 
 output:
   include_lhe_weights: false
-
-btag:
-  v15:
-    2024:
-      branch: scoutUParT_probb
-      loose: 0.20
-      medium: 0.50
-      tight: 0.80

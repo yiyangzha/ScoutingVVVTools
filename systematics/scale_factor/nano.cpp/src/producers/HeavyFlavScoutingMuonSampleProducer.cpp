@@ -79,44 +79,6 @@ void HeavyFlavScoutingMuonSampleProducer::begin_file() {
 }
 
 float HeavyFlavScoutingMuonSampleProducer::tagger_score(const ObjectView &fj, const std::string &name) const {
-  const auto qcd = safe_object_float(fj, "scoutGlobalParT_prob_QCD", 0.0f);
-  const auto xud = safe_object_float(fj, "scoutGlobalParT_prob_Xud", 0.0f);
-  const auto xcs = safe_object_float(fj, "scoutGlobalParT_prob_Xcs", 0.0f);
-  const auto xqq = safe_object_float(fj, "scoutGlobalParT_prob_Xqq", 0.0f);
-  const auto xbb = safe_object_float(fj, "scoutGlobalParT_prob_Xbb", 0.0f);
-  const auto xcc = safe_object_float(fj, "scoutGlobalParT_prob_Xcc", 0.0f);
-  const auto xss = safe_object_float(fj, "scoutGlobalParT_prob_Xss", 0.0f);
-
-  if (name == "WvsQCD") {
-    const auto sig = xud + xcs;
-    return safe_div(sig, sig + qcd);
-  }
-  if (name == "ZvsQCD") {
-    const auto sig = xbb + xcc + xss + xqq;
-    return safe_div(sig, sig + qcd);
-  }
-  if (name == "VvsQCD") {
-    const auto sig = xud + xcs + xqq + xbb + xcc + xss;
-    return safe_div(sig, sig + qcd);
-  }
-  if (name == "XcsVsQCD") {
-    return safe_div(xcs, xcs + qcd);
-  }
-  if (name == "XudVsQCD") {
-    return safe_div(xud, xud + qcd);
-  }
-  if (name == "XbbVsQCD") {
-    return safe_div(xbb, xbb + qcd);
-  }
-  if (name == "XccVsQCD") {
-    return safe_div(xcc, xcc + qcd);
-  }
-  if (name == "XssVsQCD") {
-    return safe_div(xss, xss + qcd);
-  }
-  if (name == "XqqVsQCD") {
-    return safe_div(xqq, xqq + qcd);
-  }
   return safe_object_float(fj, name, -99.0f);
 }
 
@@ -200,17 +162,7 @@ bool HeavyFlavScoutingMuonSampleProducer::analyze_variation(Event &event, const 
   event.set("ak4jets", clean_ak4jets);
   event.set("ht", ht);
 
-  std::vector<ObjectView> bjets;
-  for (auto &jet : clean_ak4jets) {
-    const auto btag_value = jet.get<float>(config_.btag_config.branch);
-    if (btag_value > config_.btag_config.medium && std::abs(delta_phi(jet, mu)) < 2.0f) {
-      bjets.push_back(jet);
-    }
-  }
-  if (bjets.empty()) {
-    return false;
-  }
-  event.set("bjets", bjets);
+  event.set("bjets", std::vector<ObjectView>{});
 
   auto fatjets = event.get<std::vector<ObjectView>>("scoutingFatjetsCommon");
   fatjets = sort_by_pt(std::move(fatjets));

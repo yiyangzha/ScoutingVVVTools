@@ -1,11 +1,9 @@
 stored_tagger_auto_add_branches: false
 stored_tagger_names:
-  - XcsVsQCD
-  - XudVsQCD
-  - WvsQCD
-  - XbbVsQCD
-  - XccVsQCD
-  - XssVsQCD
-  - XqqVsQCD
-  - ZvsQCD
-  - VvsQCD
+  - scoutGlobalParT_prob_QCD
+  - scoutGlobalParT_prob_Xbb
+  - scoutGlobalParT_prob_Xcc
+  - scoutGlobalParT_prob_Xcs
+  - scoutGlobalParT_prob_Xqq
+  - scoutGlobalParT_prob_Xss
+  - scoutGlobalParT_prob_Xud

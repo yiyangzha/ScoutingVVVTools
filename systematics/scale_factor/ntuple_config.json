@@ -1,6 +1,6 @@
 {
   "sample_config": "../../src/sample.json",
-  "year": "2024",
+  "year": ["2024"],
   "nano_version": "v15",
   "run_targets": [
     {
@@ -13,7 +13,6 @@
     "repo": "nano.cpp",
     "channel": "scouting_muon",
     "tree_name": "Events",
-    "config": "nano.cpp/configs/run/scouting_muon_2024_v15.yaml",
     "configs": {
       "2024": "nano.cpp/configs/run/scouting_muon_2024_v15.yaml",
       "2025": "nano.cpp/configs/run/scouting_muon_2025_v15.yaml",
@@ -39,35 +38,54 @@
       "met": false
     },
     "samples": {
-      "data": [
-        "2024C_official",
-        "2024D_official",
-        "2024E_official",
-        "2024F_official",
-        "2024G_official",
-        "2024H_official",
-        "2024I_official",
-        "2025B_official",
-        "2025C_official",
-        "2025D_official"
-      ],
-      "mc_groups": {
-        "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
-        "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],
-        "diboson": ["WWToLNu2Q", "WZtoLNu2Q", "WZto2L2Q", "ZZto2L2Q"],
-        "w": [
-          "wlnu_h40to100_m0to120",
-          "wlnu_h100to400_m0to120",
-          "wlnu_h100to400_m120",
-          "wlnu_h400to800_m0to120",
-          "wlnu_h400to800_m120",
-          "wlnu_h800to1500_m0to120",
-          "wlnu_h800to1500_m120",
-          "wlnu_h1500to2500_m0to120",
-          "wlnu_h1500to2500_m120",
-          "wlnu_h2500_m0to120",
-          "wlnu_h2500_m120"
-        ]
+      "by_year": {
+        "2024": {
+          "data": [
+            "2024C_official",
+            "2024D_official",
+            "2024E_official",
+            "2024F_official",
+            "2024G_official",
+            "2024H_official",
+            "2024I_official"
+          ],
+          "mc_groups": {
+            "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
+            "singletop": ["twminus_lnu2q", "tbarwplus_lnu2q"],
+            "diboson": ["WWToLNu2Q", "WZtoLNu2Q", "WZto2L2Q", "ZZto2L2Q"],
+            "w": [
+              "wlnu_h40to100_m0to120",
+              "wlnu_h100to400_m0to120",
+              "wlnu_h100to400_m120",
+              "wlnu_h400to800_m0to120",
+              "wlnu_h400to800_m120",
+              "wlnu_h800to1500_m0to120",
+              "wlnu_h800to1500_m120",
+              "wlnu_h1500to2500_m0to120",
+              "wlnu_h1500to2500_m120",
+              "wlnu_h2500_m0to120",
+              "wlnu_h2500_m120"
+            ],
+            "qcd-mg": [
+              "qcd_ht200to400",
+              "qcd_ht400to600",
+              "qcd_ht600to800",
+              "qcd_ht800to1000",
+              "qcd_ht1000to1200",
+              "qcd_ht1200to1500",
+              "qcd_ht1500to2000",
+              "qcd_ht2000"
+            ]
+          }
+        },
+        "2025": {
+          "data": [
+            "2025B_official",
+            "2025C_official",
+            "2025D_official"
+          ],
+          "mc_groups": {}
+        }
       }
     }
   }

@@ -1,99 +1,282 @@
 nano_branches:
   v15:
+    source: "ScoutingNano v15"
     trees:
       Events:
         branches:
-          run: {type: uint32}
-          luminosityBlock: {type: uint32}
-          event: {type: uint64}
-          genWeight: {type: float}
-          Pileup_nTrueInt: {type: float}
-          LHEScaleWeight: {type: vec_float}
-          Flag_goodVertices: {type: bool}
-          Flag_globalSuperTightHalo2016Filter: {type: bool}
-          Flag_EcalDeadCellTriggerPrimitiveFilter: {type: bool}
-          Flag_BadPFMuonFilter: {type: bool}
-          Flag_BadPFMuonDzFilter: {type: bool}
-          Flag_eeBadScFilter: {type: bool}
-          Flag_ecalBadCalibFilter: {type: bool}
-          Flag_hfNoisyHitsFilter: {type: bool}
-          Flag_HBHENoiseFilter: {type: bool}
-          Flag_HBHENoiseIsoFilter: {type: bool}
-          DST_PFScouting_SingleMuon: {type: bool}
-          nScoutingFatPFJetRecluster: {type: int32}
-          nScoutingPFJetRecluster2: {type: int32}
-          nScoutingMuonVtx: {type: int32}
-          ScoutingMET_pt: {type: float}
-          ScoutingMET_phi: {type: float}
-          ScoutingMuonVtx_pt: {type: vec_float}
-          ScoutingMuonVtx_eta: {type: vec_float}
-          ScoutingMuonVtx_phi: {type: vec_float}
-          ScoutingMuonVtx_m: {type: vec_float}
-          ScoutingMuonVtx_trackIso: {type: vec_float}
-          ScoutingMuonVtx_normchi2: {type: vec_float}
-          ScoutingMuonVtx_nValidStandAloneMuonHits: {type: vec_int32}
-          ScoutingMuonVtx_nTrackerLayersWithMeasurement: {type: vec_int32}
-          ScoutingMuonVtx_nValidPixelHits: {type: vec_int32}
-          ScoutingMuonVtx_nRecoMuonMatchedStations: {type: vec_int32}
-          ScoutingFatPFJetRecluster_pt: {type: vec_float}
-          ScoutingFatPFJetRecluster_eta: {type: vec_float}
-          ScoutingFatPFJetRecluster_phi: {type: vec_float}
-          ScoutingFatPFJetRecluster_mass: {type: vec_float}
-          ScoutingFatPFJetRecluster_msoftdrop: {type: vec_float}
-          ScoutingFatPFJetRecluster_area: {type: vec_float}
-          ScoutingFatPFJetRecluster_neHEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_neEmEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_chHEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_chEmEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_muEF: {type: vec_float}
-          ScoutingFatPFJetRecluster_nConstituents: {type: vec_uint8}
-          ScoutingFatPFJetRecluster_nCh: {type: vec_int32}
-          ScoutingFatPFJetRecluster_nNh: {type: vec_int32}
-          ScoutingFatPFJetRecluster_tau1: {type: vec_float}
-          ScoutingFatPFJetRecluster_tau2: {type: vec_float}
-          ScoutingFatPFJetRecluster_tau3: {type: vec_float}
-          ScoutingFatPFJetRecluster_tau4: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss: {type: vec_float}
-          ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud: {type: vec_float}
-          ScoutingFatPFJetRecluster_genJetAK8Idx: {type: vec_int32}
-          ScoutingPFJetRecluster2_pt: {type: vec_float}
-          ScoutingPFJetRecluster2_eta: {type: vec_float}
-          ScoutingPFJetRecluster2_phi: {type: vec_float}
-          ScoutingPFJetRecluster2_mass: {type: vec_float}
-          ScoutingPFJetRecluster2_rawFactor: {type: vec_float}
-          ScoutingPFJetRecluster2_neHEF: {type: vec_float}
-          ScoutingPFJetRecluster2_neEmEF: {type: vec_float}
-          ScoutingPFJetRecluster2_chHEF: {type: vec_float}
-          ScoutingPFJetRecluster2_chEmEF: {type: vec_float}
-          ScoutingPFJetRecluster2_muEF: {type: vec_float}
-          ScoutingPFJetRecluster2_nConstituents: {type: vec_int32}
-          ScoutingPFJetRecluster2_chHadMultiplicity: {type: vec_int16}
-          ScoutingPFJetRecluster2_neHadMultiplicity: {type: vec_int32}
-          ScoutingPFJetRecluster2_scoutUParT_probb: {type: vec_float}
-          ScoutingPFJetRecluster2_hadronFlavour: {type: vec_uint8}
-          ScoutingPFJetRecluster2_partonFlavour: {type: vec_int16}
-          ScoutingPFJetRecluster2_genJetIdx: {type: vec_int16}
+          "run":
+            type: "uint32"
+            root_type: "UInt_t"
+          "luminosityBlock":
+            type: "uint32"
+            root_type: "UInt_t"
+          "event":
+            type: "uint64"
+            root_type: "ULong64_t"
+          "genWeight":
+            type: "float"
+            root_type: "Float_t"
+          "Pileup_nTrueInt":
+            type: "float"
+            root_type: "Float_t"
+          "LHEScaleWeight":
+            type: "vec_float"
+            root_type: "Float_t"
+          "Flag_goodVertices":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_globalSuperTightHalo2016Filter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_EcalDeadCellTriggerPrimitiveFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_BadPFMuonFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_BadPFMuonDzFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_eeBadScFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_ecalBadCalibFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_hfNoisyHitsFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_HBHENoiseFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "Flag_HBHENoiseIsoFilter":
+            type: "bool"
+            root_type: "Bool_t"
+          "DST_PFScouting_SingleMuon":
+            type: "bool"
+            root_type: "Bool_t"
+          "nScoutingFatPFJetRecluster":
+            type: "int32"
+            root_type: "Int_t"
+          "nScoutingPFJetRecluster2":
+            type: "int32"
+            root_type: "Int_t"
+          "nScoutingMuonVtx":
+            type: "int32"
+            root_type: "Int_t"
+          "ScoutingMET_pt":
+            type: "float"
+            root_type: "Float_t"
+          "ScoutingMET_phi":
+            type: "float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_eta":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_phi":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_m":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_trackIso":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_normchi2":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingMuonVtx_nValidStandAloneMuonHits":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingMuonVtx_nTrackerLayersWithMeasurement":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingMuonVtx_nValidPixelHits":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingMuonVtx_nRecoMuonMatchedStations":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingFatPFJetRecluster_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_eta":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_phi":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_mass":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_msoftdrop":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_area":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_neHEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_neEmEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_chHEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_chEmEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_muEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_nConstituents":
+            type: "vec_uint8"
+            root_type: "UChar_t"
+          "ScoutingFatPFJetRecluster_nCh":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingFatPFJetRecluster_nNh":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingFatPFJetRecluster_tau1":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_tau2":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_tau3":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_tau4":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingFatPFJetRecluster_genJetAK8Idx":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingPFJetRecluster2_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_eta":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_phi":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_mass":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_rawFactor":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_neHEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_neEmEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_chHEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_chEmEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_muEF":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_nConstituents":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingPFJetRecluster2_chHadMultiplicity":
+            type: "vec_int16"
+            root_type: "Short_t"
+          "ScoutingPFJetRecluster2_neHadMultiplicity":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "ScoutingPFJetRecluster2_scoutUParT_probb":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster2_hadronFlavour":
+            type: "vec_uint8"
+            root_type: "UChar_t"
+          "ScoutingPFJetRecluster2_partonFlavour":
+            type: "vec_int16"
+            root_type: "Short_t"
+          "ScoutingPFJetRecluster2_genJetIdx":
+            type: "vec_int16"
+            root_type: "Short_t"
           # Optional MC truth. The Scouting analysis objects above must remain
           # Scouting branches; GenPart is only used when available for topwsf
           # W/top process splitting.
-          GenPart_pt: {type: vec_float}
-          GenPart_eta: {type: vec_float}
-          GenPart_phi: {type: vec_float}
-          GenPart_mass: {type: vec_float}
-          GenPart_pdgId: {type: vec_int32}
-          GenPart_status: {type: vec_int32}
-          GenPart_statusFlags: {type: vec_int32}
-          GenPart_genPartIdxMother: {type: vec_int32}
-          GenJet_pt: {type: vec_float}
-          GenJet_eta: {type: vec_float}
-          GenJet_phi: {type: vec_float}
-          GenJet_mass: {type: vec_float}
-          GenJet_hadronFlavour: {type: vec_uint8}
-          GenJet_nBHadrons: {type: vec_uint8}
-          GenJet_nCHadrons: {type: vec_uint8}
-          GenJet_partonFlavour: {type: vec_int16}
+          "GenPart_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenPart_eta":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenPart_phi":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenPart_mass":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenPart_pdgId":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "GenPart_status":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "GenPart_statusFlags":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "GenPart_genPartIdxMother":
+            type: "vec_int32"
+            root_type: "Int_t"
+          "GenJet_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenJet_eta":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenJet_phi":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenJet_mass":
+            type: "vec_float"
+            root_type: "Float_t"
+          "GenJet_hadronFlavour":
+            type: "vec_uint8"
+            root_type: "UChar_t"
+          "GenJet_nBHadrons":
+            type: "vec_uint8"
+            root_type: "UChar_t"
+          "GenJet_nCHadrons":
+            type: "vec_uint8"
+            root_type: "UChar_t"
+          "GenJet_partonFlavour":
+            type: "vec_int16"
+            root_type: "Short_t"

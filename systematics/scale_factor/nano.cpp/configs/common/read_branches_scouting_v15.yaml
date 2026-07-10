@@ -70,7 +70,6 @@ read_branches:
   - ScoutingPFJetRecluster2_nConstituents
   - ScoutingPFJetRecluster2_chHadMultiplicity
   - ScoutingPFJetRecluster2_neHadMultiplicity
-  - ScoutingPFJetRecluster2_scoutUParT_probb
   - ScoutingPFJetRecluster2_hadronFlavour
   - ScoutingPFJetRecluster2_partonFlavour
   - ScoutingPFJetRecluster2_genJetIdx

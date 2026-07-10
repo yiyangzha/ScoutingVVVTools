@@ -139,45 +139,47 @@ if missing_optional_flags:
     )
 
 targets = module.run_targets(cfg, require_taggers=False)
-sample_sets = []
-if ntuple.get("samples", {}).get("mc_groups"):
-    sample_sets.append("mc")
-if ntuple.get("samples", {}).get("data"):
-    sample_sets.append("data")
-
-eras = module.data_era_groups(ntuple.get("samples", {}).get("data", []), cfg["year"])
+samples = module.sample_map(cfg)
+year_sample_groups = module.selected_sample_groups_by_year(cfg, samples, "ntuple")
 job_pattern = ntuple.get("job_dir", "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}")
 generated = []
 stale = []
 missing = []
-for target in targets:
-    for era_info in eras:
-        tokens = {
-            "jet_type": target["jet_type"],
-            "jet_category": target["jet_category"],
-            "year": era_info["year"],
-            "era": era_info["era"],
-        }
-        for sample_set in sample_sets:
-            job_dir = module.resolve_path(job_pattern.format(**tokens, sample_set=sample_set))
-            if not job_dir.exists():
-                continue
-            generated.append(job_dir)
-            for name in ("process.sh", "submit.sh", "submit_lxplus.jdl", "repo.tar.gz", "worker_runtime.tar.gz", "job_manifest.tsv", "config_snapshot.yaml"):
-                if not (job_dir / name).exists():
-                    missing.append(job_dir / name)
-            process = job_dir / "process.sh"
-            if process.exists():
-                text = process.read_text(encoding="utf-8", errors="replace")
-                if "source_setup_file" not in text or "LCG_109/x86_64-el9-gcc13-opt" not in text:
-                    stale.append(process)
-            for jdl_name in ("submit.jdl", "submit_lxplus.jdl"):
-                jdl = job_dir / jdl_name
-                if not jdl.exists():
+for year_samples in year_sample_groups:
+    sample_sets = []
+    if year_samples["mc_groups"]:
+        sample_sets.append("mc")
+    if year_samples["data"]:
+        sample_sets.append("data")
+    eras = module.data_era_groups(year_samples["data"], year_samples["year"])
+    for target in targets:
+        for era_info in eras:
+            tokens = {
+                "jet_type": target["jet_type"],
+                "jet_category": target["jet_category"],
+                "year": era_info["year"],
+                "era": era_info["era"],
+            }
+            for sample_set in sample_sets:
+                job_dir = module.resolve_path(job_pattern.format(**tokens, sample_set=sample_set))
+                if not job_dir.exists():
                     continue
-                text = jdl.read_text(encoding="utf-8", errors="replace")
-                if "transfer_output_files = dummy.cc" in text or 'transfer_output_files = ""' not in text:
-                    stale.append(jdl)
+                generated.append(job_dir)
+                for name in ("process.sh", "submit.sh", "submit_lxplus.jdl", "repo.tar.gz", "worker_runtime.tar.gz", "job_manifest.tsv", "config_snapshot.yaml"):
+                    if not (job_dir / name).exists():
+                        missing.append(job_dir / name)
+                process = job_dir / "process.sh"
+                if process.exists():
+                    text = process.read_text(encoding="utf-8", errors="replace")
+                    if "source_setup_file" not in text or "LCG_109/x86_64-el9-gcc13-opt" not in text:
+                        stale.append(process)
+                for jdl_name in ("submit.jdl", "submit_lxplus.jdl"):
+                    jdl = job_dir / jdl_name
+                    if not jdl.exists():
+                        continue
+                    text = jdl.read_text(encoding="utf-8", errors="replace")
+                    if "transfer_output_files = dummy.cc" in text or 'transfer_output_files = ""' not in text:
+                        stale.append(jdl)
 
 if missing:
     raise SystemExit("generated job directory is incomplete:\n  " + "\n  ".join(str(path) for path in missing))

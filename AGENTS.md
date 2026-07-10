@@ -129,10 +129,11 @@ For sample-parallel C++ modes (`0`, `1`, `6`), `run.py --slurm` submits SLURM jo
 Current configured target:
 
 - AK8 W jets only.
-- Ntuple production is tagger-independent; the Scouting card stores all configured Scouting GloParT W-jet tagger scores so changing the calibrated tagger does not require remaking ntuples.
-- Taggers: `XcsVsQCD`, `XudVsQCD`, `WvsQCD`, `XbbVsQCD`, `XccVsQCD`, `XssVsQCD`, `XqqVsQCD`, `ZvsQCD`, `VvsQCD`.
+- Ntuple production is tagger-independent; the Scouting card stores raw `scoutGlobalParT_prob_*` scores, and the topwsf card computes `XcsVsQCD`, `XudVsQCD`, `WvsQCD`, `XbbVsQCD`, `XccVsQCD`, `XssVsQCD`, `XqqVsQCD`, `ZvsQCD`, and `VvsQCD` expressions at SF time.
+- Default `ntuple_config.json` and `sf_config.json` use `year: ["2024"]`; samples are grouped under `samples.by_year`, with 2024 MC populated and 2025 MC intentionally empty for now.
 - Data samples: official ScoutingNano 2024C-I and 2025B-D samples, one sample per era named like `2024C_official`, requiring `DST_PFScouting_SingleMuon`.
-- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, and `ScoutingMET`.
+- MC samples: 2024 defaults include `ttbar-powheg`, `singletop`, `diboson`, `w`, and QCD HT 200+ bins as `qcd-mg`.
+- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, and `ScoutingMET`; the Scouting muon card does not apply an AK4 b-tag requirement.
 
 Remote ScoutingNano inputs may be DAS datasets, `/store/...` files, `root://...` files, local directories, local ROOT files, or text/list/YAML file lists. The scale-factor default config stages remote ROOT files with `xrdcp` into worker scratch when available before processing on batch workers because direct ROOT streaming from IHEP workers to the CMS global redirector can time out; do not otherwise change remote staging behavior unless requested. POSIX-mounted `/eos/...` paths, such as lxplus `/eos/home-*` workspaces, are allowed as local paths; Tier output paths must use `root://...`. When `ntuple.use_tier_storage` is true, step-1 Condor/HepJob workers copy each per-job merged piece to the configured Tier path, and `nano_merge` can later read those Tier pieces with `--pieces-dir` while writing merged ntuples locally. With `split_by_era` enabled, ntuple job directories, Tier pieces, local merged outputs, and topwsf cards are generated separately per data era under year subdirectories; each era output contains that era's data sample and the corresponding-year MC samples. Step-2 topwsf input remains local through `calibration.input_sample_base`.
 
