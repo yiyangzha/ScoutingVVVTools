@@ -287,19 +287,22 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
 
     def _lhe_weight(self, events, meta, index, nominal_index):
         """Return normalized LHEScaleWeight ratios for a requested weight index."""
-        # Some samples do not carry LHEScaleWeight; keep the template nominal
-        # rather than dropping those events.
         # Formula: LHEScaleWeight[index] / LHEScaleWeight[nominal] * (LHEScaleSumw[nominal] / LHEScaleSumw[index])
         if "LHEScaleWeight" not in events.fields:
-            return ak.ones_like(events["genWeight"])
+            raise KeyError(f"Missing LHEScaleWeight for MC sample {meta['sample']}")
         try:
             den = events["LHEScaleWeight"][:, nominal_index]
             num = events["LHEScaleWeight"][:, index]
             event_ratio = num / ak.where(abs(den) > 1e-20, den, 1.0)
-        except Exception:
-            return ak.ones_like(events["genWeight"])
+        except Exception as exc:
+            raise ValueError(
+                f"Invalid LHEScaleWeight indices nominal={nominal_index}, variation={index} for MC sample {meta['sample']}"
+            ) from exc
         weight_key = meta.get("weight_key", meta["sample"])
-        sample_norm = self.xsec_weights.get(weight_key, {}).get("lheScaleNorm", {}).get(str(index), 1.0)
+        norms = self.xsec_weights.get(weight_key, {}).get("lheScaleNorm", {})
+        if str(index) not in norms:
+            raise KeyError(f"Missing LHEScaleSumw normalization for index {index}, MC sample {meta['sample']}")
+        sample_norm = norms[str(index)]
         return event_ratio * sample_norm
 
     def _process_selections(self, events, group):

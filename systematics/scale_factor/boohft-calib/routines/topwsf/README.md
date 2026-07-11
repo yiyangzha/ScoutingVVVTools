@@ -77,3 +77,15 @@ genWeight * xsecWeight * puWeight * lumi
 ```
 
 and also applies `topptWeight` when `apply_toppt_weight` is true and the branch is present.
+
+## Template systematics
+
+The original topwsf systematic set is `pu`, `jes`, `jer`, `met`, `jms`, `jmr`, `lhescalemuf`, and `lhescalemur`.
+
+- `pu` replaces the nominal `puWeight` with `puWeightUp` or `puWeightDown`.
+- `jes`, `jer`, and `met` read dedicated shifted ntuple directories produced by the ntuple maker.
+- `jms` scales the nominal soft-drop mass by `template_jms_up/down`.
+- `jmr` applies the configured deterministic mass smearing; the default down template is nominal unless reflection is enabled.
+- `lhescalemuf` and `lhescalemur` use the configured `LHEScaleWeight` indices and normalize them with the inclusive weighted sums reconstructed from `Runs/LHEScaleSumw` and `Runs/genEventSumw`.
+
+The nominal sample normalization remains `xsec_pb * 1000 / sum(genEventSumw)`, multiplied by the configured luminosity in fb^-1. Every processed input file must therefore retain its complete `Runs` entries, even when it has no selected Events entries.

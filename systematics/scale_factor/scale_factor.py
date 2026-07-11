@@ -1450,6 +1450,7 @@ def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name
         "apply_toppt_weight": True,
         "systematics": systematics,
         "selection": cal["selection"],
+        "template_pt_bins": list(cal.get("template_pt_bins", [100, 200.0, 1200.0])),
         "skip_fit": bool(fit_cfg.get("skip_fit", False)),
         "fit_run_impact": bool(fit_cfg.get("fit_run_impact", True)),
         "fit_impact_parallel": int(fit_cfg.get("fit_impact_parallel", 8)),

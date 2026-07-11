@@ -65,7 +65,7 @@ You do not need to write this code or worry about C++ syntax; agents will fill i
 The implemented channels are:
 
 - `muon`: a heavy-flavour muon control region targeting semileptonic ttbar-like phase space, enriched in boosted top/W jets.
-- `scouting_muon`: a ScoutingNano semileptonic ttbar muon tag-and-probe stream for AK8 W/top scale-factor ntuples. It uses `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, `ScoutingMET`, and Scouting trigger branches such as `DST_PFScouting_SingleMuon`; it does not use offline reco `Muon`, `FatJet`, `Jet`, or offline MET branches for analysis objects. The checked-in Scouting card uses strict branch binding with ROOT physical branch types, including compact `vec_uint8`/`vec_int16` flavour, multiplicity, constituent, and index branches; data jobs drop MC-only branches, MC jobs require `GenJet_*`, and missing `GenPart_*` warns in the affected job log before falling back to default W/Z matches with `GenJet` flavour hints.
+- `scouting_muon`: a ScoutingNano semileptonic ttbar muon tag-and-probe stream for AK8 W/top scale-factor ntuples. It uses `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, `ScoutingMET`, and Scouting trigger branches such as `DST_PFScouting_SingleMuon`; it does not use offline reco `Muon`, `FatJet`, `Jet`, or offline MET branches for analysis objects. The checked-in Scouting card uses strict branch binding with ROOT physical branch types, including compact `vec_uint8`/`vec_uint16`/`vec_int16` truth, flavour, multiplicity, constituent, and index branches. Data jobs drop MC-only branches, while MC jobs require complete `GenPart_*` ancestry and reproduce the original offline W/top matching. The generic ScoutingNano `GenJet` collection is not treated as `GenJetAK8`; direct `topWCategory` and `gloParTCategory` fields are catalogued but are not used by the topwsf process split.
 - `minimal`: a lightweight boosted-AK8 stream that runs the shared lepton cleaning, JME, and fatjet preparation, then keeps the leading cleaned AK8 jet above the configured `channels.minimal.leading_fatjet_pt_min` threshold.
 
 Main files:
@@ -133,7 +133,7 @@ build/nano_run \
   --num-events 5000
 ```
 
-The `scouting_muon` channel currently supports nominal output only. Keep JES/JER/MET shape variations disabled in the top-level scale-factor config until the Scouting-specific JME path is implemented.
+The `scouting_muon` channel produces nominal ntuples. PU and LHE-scale weight variations plus template-level JMS/JMR variations are derived from that nominal output. Keep JES/JER/MET shifted-ntuple variations disabled until the Scouting-specific JME path and required input branches are available.
 
 ## Run Validation
 
@@ -168,7 +168,7 @@ bash systematics/scale_factor/check_lxplus_mode11.sh
 
 It does not submit jobs or process samples. It checks the fixed LCG setup, required site tools, exact `scale_factor.py` CMake package resolution for ROOT/correctionlib/yaml-cpp, Condor shell template syntax, and any already generated mode-11 job directories for stale `process.sh` wrappers.
 
-The Scouting card keeps physics-object and trigger branches strict. NanoAOD-style `Flag_*` MET filter branches are optional because current Scouting data productions can omit them; when absent, `passmetfilters` does not veto the event.
+The Scouting card keeps physics-object and trigger branches strict, does not read NanoAOD-style `Flag_*` MET filter branches, and does not apply `passmetfilters` in the generated SF selection. This keeps the data and MC event-filter treatment identical.
 
 Submit manually:
 

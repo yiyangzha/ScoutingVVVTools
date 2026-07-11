@@ -34,10 +34,11 @@
     "run_step": "11",
     "workers": [4, 2],
     "category": "w",
-    "selection": "(passmetfilters) & (passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 170.) & (leptonicW_pt > 150.)",
+    "selection": "(passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 170.) & (leptonicW_pt > 150.)",
+    "template_pt_bins": [103, 170.0, 1200.0],
     "systematics": {
-      "enabled": [],
-      "available_but_disabled": ["pu", "jms", "jmr", "jes", "jer", "met", "lhescalemuf", "lhescalemur"]
+      "enabled": ["pu", "jms", "jmr", "lhescalemuf", "lhescalemur"],
+      "available_but_disabled": ["jes", "jer", "met"]
     },
     "fit": {
       "skip_fit": false,

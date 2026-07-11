@@ -66,7 +66,9 @@ HeavyFlavScoutingMuonSampleProducer::HeavyFlavScoutingMuonSampleProducer(Produce
         return config;
       }()) {
   fatjet_name_ = "ScoutingFatPFJetRecluster";
-  genfatjet_name_ = "GenJet";
+  // The new ScoutingNano schema does not expose a separately identified
+  // GenJetAK8 collection, so do not reinterpret its generic GenJet collection
+  // as the AK8 collection used by the offline producer.
 }
 
 void HeavyFlavScoutingMuonSampleProducer::begin_file() {
@@ -168,7 +170,7 @@ bool HeavyFlavScoutingMuonSampleProducer::analyze_variation(Event &event, const 
   fatjets = sort_by_pt(std::move(fatjets));
   std::vector<ObjectView> probe_jets;
   for (auto &fj : fatjets) {
-    if (fj.pt() > 200.0f && std::abs(fj.eta()) < 2.4f && pass_scouting_ak8_id(fj) &&
+    if (fj.pt() >= 170.0f && std::abs(fj.eta()) < 2.4f && pass_scouting_ak8_id(fj) &&
         std::abs(delta_phi(fj, mu)) > 2.0f) {
       probe_jets.push_back(fj);
     }

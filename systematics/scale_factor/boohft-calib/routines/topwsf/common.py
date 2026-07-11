@@ -178,12 +178,18 @@ def resolve_topwsf_fileset(cfg):
 
 
 def _sum_lhe_scale_sumw(runs):
-    if "LHEScaleSumw" not in runs.keys():
+    if "LHEScaleSumw" not in runs.keys() or "genEventSumw" not in runs.keys():
         return None
-    arr = runs["LHEScaleSumw"].array(library="ak")
-    if len(arr) == 0:
+    ratios = runs["LHEScaleSumw"].array(library="ak")
+    gen_sumw = runs["genEventSumw"].array(library="np")
+    if len(ratios) == 0 or len(ratios) != len(gen_sumw):
         return None
-    return np.asarray(ak.sum(arr, axis=0), dtype=float)
+    # NanoAOD stores each Runs/LHEScaleSumw entry as
+    # sum(genWeight * LHEScaleWeight[i]) / genEventSumw for that entry. Recover
+    # the additive weighted sums before combining files/runs; summing the stored
+    # ratios directly would give every input file equal weight.
+    weighted_sums = ratios * ak.Array(np.asarray(gen_sumw, dtype=float))[:, np.newaxis]
+    return np.asarray(ak.sum(weighted_sums, axis=0), dtype=float)
 
 
 def _lhe_scale_norms(lhe_scale_sumw, nominal_index):
@@ -203,6 +209,12 @@ def _lhe_scale_norms(lhe_scale_sumw, nominal_index):
 def compute_xsec_weights(cfg, file_metadata):
     out = {}
     nominal_lhe_index = int(cfg.lhe_scale_weights["nominal"])
+    require_lhe_scale = "lhescalemuf" in cfg.systematics or "lhescalemur" in cfg.systematics
+    required_lhe_indices = {nominal_lhe_index}
+    if "lhescalemuf" in cfg.systematics:
+        required_lhe_indices.update({int(cfg.lhe_scale_weights["muf_up"]), int(cfg.lhe_scale_weights["muf_down"])})
+    if "lhescalemur" in cfg.systematics:
+        required_lhe_indices.update({int(cfg.lhe_scale_weights["mur_up"]), int(cfg.lhe_scale_weights["mur_down"])})
     for key, meta in sorted(file_metadata.items()):
         if meta["variation"] != "nominal" or meta["group"] == "data":
             continue
@@ -224,6 +236,14 @@ def compute_xsec_weights(cfg, file_metadata):
         if abs(sumw) <= 1e-20:
             raise ValueError(f"Zero Runs/genEventSumw for MC sample {sample}: {meta['path']}")
         lhe_scale_norm, lhe_scale_norm_available = _lhe_scale_norms(lhe_scale_sumw, nominal_lhe_index)
+        if require_lhe_scale:
+            if not lhe_scale_norm_available:
+                raise KeyError(f"Missing usable Runs/LHEScaleSumw normalization for MC sample {sample}: {meta['path']}")
+            missing_indices = sorted(index for index in required_lhe_indices if str(index) not in lhe_scale_norm)
+            if missing_indices:
+                raise ValueError(
+                    f"Missing or zero LHEScaleSumw indices {missing_indices} for MC sample {sample}: {meta['path']}"
+                )
         xsec = float(meta["xsec_pb"])
         out[weight_key] = {
             "group": meta["group"],

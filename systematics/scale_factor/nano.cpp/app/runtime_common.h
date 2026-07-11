@@ -609,29 +609,11 @@ inline void copy_filtered_luminosity_blocks_tree(TFile &input_file, TFile &outpu
 }
 
 inline void copy_filtered_runs_tree(TFile &input_file, TFile &output_file, const std::set<RunLumi> &selected_lumis) {
-  auto *input_tree = dynamic_cast<TTree *>(input_file.Get("Runs"));
-  if (!input_tree) {
-    return;
-  }
-
-  std::set<std::uint32_t> selected_runs;
-  for (const auto &run_lumi : selected_lumis) {
-    selected_runs.insert(run_lumi.run);
-  }
-
-  UInt_t run = 0;
-  input_tree->SetBranchAddress("run", &run);
-
-  output_file.cd();
-  auto *output_tree = input_tree->CloneTree(0);
-  for (Long64_t entry = 0; entry < input_tree->GetEntries(); ++entry) {
-    input_tree->GetEntry(entry);
-    if (selected_runs.count(static_cast<std::uint32_t>(run)) != 0U) {
-      output_tree->Fill();
-    }
-  }
-  output_tree->Write();
-  input_tree->ResetBranchAddresses();
+  (void)selected_lumis;
+  // Runs normalization belongs to every processed input file, including files
+  // with zero selected events. Filtering by accepted lumisections would drop
+  // genEventSumw/LHEScaleSumw contributions and bias MC normalization.
+  copy_selected_tree(input_file, output_file, "Runs");
 }
 
 inline void merge_root_files(const std::vector<std::string> &inputs, const std::string &output) {

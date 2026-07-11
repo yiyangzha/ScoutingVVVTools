@@ -19,4 +19,4 @@ input:
   strict_read_branches: true
 
 output:
-  include_lhe_weights: false
+  include_lhe_weights: true
