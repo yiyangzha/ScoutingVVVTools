@@ -19,6 +19,10 @@
 channels:
   minimal:
     leading_fatjet_pt_min: 400.0
+  scouting_muon:
+    # The standard ScoutingNano card uses the private AK4 Recluster2 schema.
+    # Official data cards override this collection name for their AK4 schema.
+    ak4_collection: ScoutingPFJetRecluster2
 
 # Output-level optional branches. Keep large vector branches disabled by
 # default and enable them in a channel card or with `--set` when needed.

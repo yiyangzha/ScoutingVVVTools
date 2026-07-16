@@ -18,6 +18,10 @@
       "2025": "nano.cpp/configs/run/scouting_muon_2025_v15.yaml",
       "2026": "nano.cpp/configs/run/scouting_muon_2026_v15.yaml"
     },
+    "official_configs": {
+      "2024": "nano.cpp/configs/run/scouting_muon_official_2024_v15.yaml",
+      "2025": "nano.cpp/configs/run/scouting_muon_official_2025_v15.yaml"
+    },
     "sample_base": "output/ntuples/topwsf_scouting_muon",
     "split_by_era": true,
     "use_tier_storage": true,

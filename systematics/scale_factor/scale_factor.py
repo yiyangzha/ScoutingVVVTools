@@ -348,10 +348,17 @@ def year_output_dir(cfg):
     return ntuple_output_dir(cfg, config_years(cfg)[0])
 
 
-def ntuple_config_card(ntuple, year):
-    configs = ntuple.get("configs", {})
+def is_official_sample(sample_name):
+    return str(sample_name).endswith("_official")
+
+
+def ntuple_config_card(ntuple, year, official=False):
+    config_key = "official_configs" if official else "configs"
+    configs = ntuple.get(config_key, {})
     if isinstance(configs, dict) and str(year) in configs:
         return resolve_path(configs[str(year)])
+    if official:
+        raise SystemExit(f"ntuple.official_configs does not define a card for official data in year {year}")
     if "config" not in ntuple:
         raise SystemExit(f"ntuple.configs does not define a card for year {year}")
     config = str(ntuple["config"]).replace("{year}", str(year)).replace("$YEAR", str(year))
@@ -1347,7 +1354,6 @@ def make_ntuple(cfg, args):
         eras = data_era_groups(year_samples["data"], year)
 
         for target in targets:
-            config_card = ntuple_config_card(ntuple, year)
             planned_jobs = []
 
             if mc_names:
@@ -1367,12 +1373,19 @@ def make_ntuple(cfg, args):
                     tokens,
                     out_dir,
                     tier_ntuple_output_dir(cfg, target, year, "mc") if use_tier_storage else str(out_dir),
+                    ntuple_config_card(ntuple, year),
                 ))
                 expected_outputs.append(("MC", year, out_dir))
 
             for era_info in eras:
                 if not era_info["data"]:
                     continue
+                official_flags = [is_official_sample(name) for name in era_info["data"]]
+                if any(official_flags) and not all(official_flags):
+                    raise SystemExit(
+                        f"Data era {era_info['era']} mixes official and non-official samples; "
+                        "generate them as separate data-era jobs because they require different branch cards"
+                    )
                 era = era_info["era"]
                 tokens = {
                     "jet_type": target["jet_type"],
@@ -1390,10 +1403,11 @@ def make_ntuple(cfg, args):
                     tokens,
                     out_dir,
                     tier_ntuple_output_dir(cfg, target, era, "data") if use_tier_storage else str(out_dir),
+                    ntuple_config_card(ntuple, year, official=all(official_flags)),
                 ))
                 expected_outputs.append(("data", era, out_dir))
 
-            for sample_set, sample_yaml, is_data, tokens, out_dir, ntuple_remote_dir in planned_jobs:
+            for sample_set, sample_yaml, is_data, tokens, out_dir, ntuple_remote_dir, config_card in planned_jobs:
                 job_dir_pattern = ntuple.get("job_dir", "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}")
                 job_dir = resolve_path(job_dir_pattern.format(**tokens, sample_set=sample_set))
                 require_local_path(job_dir, "ntuple.job_dir")

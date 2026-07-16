@@ -293,7 +293,7 @@ nano::ProducerConfig make_config(const YAML::Node &settings, const std::string &
       }
     }
   }
-  if (config.include_lhe_weights && seen.insert("LHEScaleWeight").second) {
+  if (!run_data && config.include_lhe_weights && seen.insert("LHEScaleWeight").second) {
     std::cerr << "Warning: adding missing branch LHEScaleWeight to read_branches because output.include_lhe_weights is true. "
                  "Please list it explicitly in read_branches.\n";
     config.read_branches.push_back("LHEScaleWeight");

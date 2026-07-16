@@ -129,13 +129,14 @@ For sample-parallel C++ modes (`0`, `1`, `6`), `run.py --slurm` submits SLURM jo
 Current configured target:
 
 - AK8 W jets only.
+- Official data samples (names ending in `_official`) use the separate `ntuple.official_configs` cards. Those cards bind the official `ScoutingPFJetRecluster` AK4 schema; ordinary data and MC retain `ScoutingPFJetRecluster2`. AK4 jets are used only to fill `ht` with the existing pT/eta requirement, not for tagging or jet ID; official cards intentionally omit AK4 tagger/ID and MC-only branches, while their Condor job generation, output paths, staging, and fit inputs remain unchanged.
 - Ntuple production is tagger-independent; the Scouting card stores raw `scoutGlobalParT_prob_*` scores, and the topwsf card computes `XcsVsQCD`, `XudVsQCD`, `WvsQCD`, `XbbVsQCD`, `XccVsQCD`, `XssVsQCD`, `XqqVsQCD`, `ZvsQCD`, and `VvsQCD` expressions at SF time.
 - Default `ntuple_config.json` and `sf_config.json` use `year: ["2024"]`; samples are grouped under `samples.by_year`, with 2024 MC populated and 2025 MC intentionally empty for now.
 - Data samples: official ScoutingNano 2024C-I and 2025B-D samples, one sample per era named like `2024C_official`, requiring `DST_PFScouting_SingleMuon`.
 - MC samples: 2024 defaults include `ttbar-powheg`, `singletop`, all ten currently catalogued `diboson` samples, `w`, and QCD HT 200+ bins as `qcd-mg`.
 - Ntuple production keeps `qcd-mg` for the standalone QCD mistag-WP scan. Generated topwsf cards retain that group for the scan, while `calibration.fit_enabled_mc_groups` excludes it from the formal template/fit inputs.
 - The `src/sample.json` signal catalog includes hadronic W±H samples `wplush_w2q_h4q` and `wminush_w2q_h4q` with cross sections 58.5 pb and 37.4 pb, respectively.
-- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, and `ScoutingMET`; the Scouting muon card does not apply an AK4 b-tag requirement.
+- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2` (or `ScoutingPFJetRecluster` for official data), and `ScoutingMET`; the Scouting muon card does not apply AK4 tagging or jet ID.
 - Scouting SF probe jets and generated topwsf cards start at 170 GeV. The template pT axis uses 103 bins over 170--1200 GeV so the original 10 GeV granularity and configured fit-bin boundaries are preserved.
 - Enabled Scouting topwsf systematics are `pu`, `jms`, `jmr`, `lhescalemuf`, and `lhescalemur`. JES/JER/MET remain disabled until Scouting-specific shifted reconstruction is available.
 

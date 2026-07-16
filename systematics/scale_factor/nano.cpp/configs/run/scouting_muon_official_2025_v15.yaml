@@ -1,0 +1,27 @@
+# Official ScoutingNano data card for the AK8 W/top SF ntuple workflow.
+# Its AK4 input schema differs from the private ScoutingNano production.
+
+extends:
+  - ../base.yaml
+  - ../common/scouting_branches_v15.yaml
+  - ../common/scouting_official_branches_v15.yaml
+  - ../common/stored_tagger_names_scouting_v15.yaml
+  - ../common/read_branches_scouting_official_v15.yaml
+
+era: "2025"
+nano_version: "v15"
+
+preselection: Sum$(ScoutingMuonVtx_pt>50 && abs(ScoutingMuonVtx_eta)<2.4)>0 && nScoutingFatPFJetRecluster>0
+
+required_triggers:
+  - DST_PFScouting_SingleMuon
+
+channels:
+  scouting_muon:
+    ak4_collection: ScoutingPFJetRecluster
+
+input:
+  strict_read_branches: true
+
+output:
+  include_lhe_weights: true

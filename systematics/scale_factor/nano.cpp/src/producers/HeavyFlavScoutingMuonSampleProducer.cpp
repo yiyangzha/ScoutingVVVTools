@@ -28,19 +28,9 @@ bool pass_scouting_muon_id(const ObjectView &mu) {
          safe_object_int(mu, "nRecoMuonMatchedStations", 0) >= 2;
 }
 
-bool pass_scouting_ak4_id(const ObjectView &jet) {
-  const auto abs_eta = std::abs(jet.eta());
-  if (safe_object_int(jet, "nConstituents", 0) <= 1) {
-    return false;
-  }
-  if (safe_object_float(jet, "neHEF", 1.0f) >= 0.99f || safe_object_float(jet, "neEmEF", 1.0f) >= 0.90f) {
-    return false;
-  }
-  if (abs_eta <= 2.4f) {
-    return safe_object_float(jet, "chHEF", 0.0f) > 0.01f &&
-           safe_object_int(jet, "chHadMultiplicity", 0) > 0;
-  }
-  return true;
+std::string scouting_string_option(const ProducerConfig &config, std::string_view name, std::string_view fallback) {
+  const auto it = config.channel_options.strings.find(std::string(name));
+  return it == config.channel_options.strings.end() || it->second.empty() ? std::string(fallback) : it->second;
 }
 
 bool pass_scouting_ak8_id(const ObjectView &jet) {
@@ -147,12 +137,12 @@ bool HeavyFlavScoutingMuonSampleProducer::analyze_variation(Event &event, const 
     return false;
   }
 
-  auto ak4jets = sort_by_pt(event.collection("ScoutingPFJetRecluster2").objects());
+  const auto ak4_collection = scouting_string_option(config_, "ak4_collection", "ScoutingPFJetRecluster2");
+  auto ak4jets = sort_by_pt(event.collection(ak4_collection).objects());
   std::vector<ObjectView> clean_ak4jets;
   clean_ak4jets.reserve(ak4jets.size());
   for (auto &jet : ak4jets) {
-    jet.set("rawPt", jet.pt() * (1.0f - safe_object_float(jet, "rawFactor", 0.0f)));
-    if (jet.pt() > 25.0f && std::abs(jet.eta()) < 2.4f && pass_scouting_ak4_id(jet)) {
+    if (jet.pt() > 25.0f && std::abs(jet.eta()) < 2.4f) {
       clean_ak4jets.push_back(jet);
     }
   }

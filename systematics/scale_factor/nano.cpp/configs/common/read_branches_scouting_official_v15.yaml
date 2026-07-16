@@ -1,10 +1,9 @@
+# Branches for official Scouting data only. AK4 tagger/ID and MC truth branches
+# are deliberately absent: this workflow only uses AK4 jets to fill `ht`.
 read_branches:
   - run
   - luminosityBlock
   - event
-  - genWeight
-  - Pileup_nTrueInt
-  - LHEScaleWeight
   - DST_PFScouting_SingleMuon
   - nScoutingFatPFJetRecluster
   - nScoutingMuonVtx
@@ -25,15 +24,11 @@ read_branches:
   - ScoutingFatPFJetRecluster_phi
   - ScoutingFatPFJetRecluster_mass
   - ScoutingFatPFJetRecluster_msoftdrop
-  - ScoutingFatPFJetRecluster_area
   - ScoutingFatPFJetRecluster_neHEF
   - ScoutingFatPFJetRecluster_neEmEF
   - ScoutingFatPFJetRecluster_chHEF
-  - ScoutingFatPFJetRecluster_chEmEF
-  - ScoutingFatPFJetRecluster_muEF
   - ScoutingFatPFJetRecluster_nConstituents
   - ScoutingFatPFJetRecluster_nCh
-  - ScoutingFatPFJetRecluster_nNh
   - ScoutingFatPFJetRecluster_tau1
   - ScoutingFatPFJetRecluster_tau2
   - ScoutingFatPFJetRecluster_tau3
@@ -45,28 +40,7 @@ read_branches:
   - ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq
   - ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss
   - ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud
-  - ScoutingPFJetRecluster2_pt
-  - ScoutingPFJetRecluster2_eta
-  # Complete GenPart ancestry is required for Scouting MC so the ntuple maker
-  # reproduces the original offline W/top matching used by topwsf.
-  - GenPart_pt
-  - GenPart_eta
-  - GenPart_phi
-  - GenPart_mass
-  - GenPart_pdgId
-  - GenPart_status
-  - GenPart_statusFlags
-  - GenPart_genPartIdxMother
+  - ScoutingPFJetRecluster_pt
+  - ScoutingPFJetRecluster_eta
 
-mc_only_branches:
-  - genWeight
-  - Pileup_nTrueInt
-  - LHEScaleWeight
-  - GenPart_pt
-  - GenPart_eta
-  - GenPart_phi
-  - GenPart_mass
-  - GenPart_pdgId
-  - GenPart_status
-  - GenPart_statusFlags
-  - GenPart_genPartIdxMother
+mc_only_branches: []

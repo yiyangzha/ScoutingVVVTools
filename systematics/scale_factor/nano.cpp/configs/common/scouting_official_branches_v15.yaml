@@ -1,0 +1,15 @@
+# Official Scouting data use the original AK4 reclustering collection rather
+# than the private Recluster2 collection. These definitions supplement the
+# common Scouting v15 catalogue with only the AK4 branches this channel reads.
+nano_branches:
+  v15:
+    source: "ScoutingNano v15 official data"
+    trees:
+      Events:
+        branches:
+          "ScoutingPFJetRecluster_pt":
+            type: "vec_float"
+            root_type: "Float_t"
+          "ScoutingPFJetRecluster_eta":
+            type: "vec_float"
+            root_type: "Float_t"
