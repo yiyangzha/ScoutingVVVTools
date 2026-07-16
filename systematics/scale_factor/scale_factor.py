@@ -1418,6 +1418,13 @@ def data_lumi(samples, data_names):
 
 def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name, tagger_cfg):
     cal = cfg["calibration"]
+    enabled_mc_groups = list(cal.get("fit_enabled_mc_groups", mc_groups.keys()))
+    unknown_enabled_groups = sorted(set(enabled_mc_groups) - set(mc_groups))
+    if unknown_enabled_groups:
+        raise SystemExit(
+            "calibration.fit_enabled_mc_groups contains unknown MC group(s): "
+            + ", ".join(unknown_enabled_groups)
+        )
     card_dir = resolve_path(cal.get("generated_card_dir", "generated/topwsf")) / era_year(era)
     require_local_path(card_dir, "calibration.generated_card_dir")
     boohft_base = resolve_path(cal.get("repo", "boohft-calib")) / "cards" / "topwsf" / "base.yml"
@@ -1458,7 +1465,7 @@ def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name
         "lumi_dict": {year: lumi},
         "lumi_uncertainty": {year: 1.025},
         "data_samples": list(data_names),
-        "enabled_sample_groups": list(mc_groups.keys()),
+        "enabled_sample_groups": enabled_mc_groups,
         "mc_sample_groups_and_xsecs": topwsf_groups_and_xsecs(cfg, samples, mc_groups),
         "tagger": {
             "label": tagger_cfg.get("label", tagger_name),
