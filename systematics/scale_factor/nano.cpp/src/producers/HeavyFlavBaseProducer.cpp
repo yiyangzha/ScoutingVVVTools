@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <set>
@@ -81,7 +82,17 @@ void prepare_raw_kinematics(Event &event, std::string_view object_name) {
 }  // namespace
 
 HeavyFlavBaseProducer::HeavyFlavBaseProducer(ProducerConfig config) : config_(std::move(config)) {
-  jme_corrector_ = std::make_unique<JetMETCorrector>(config_);
+  // The Scouting muon workflow supplies its own Scouting MET and raw
+  // Scouting jet kinematics.  It never calls the generic JME/jet-veto path,
+  // so do not initialize its payloads (or their correctionlib keys) here.
+  if (config_.channel == "scouting_muon") {
+    std::cerr << "nano_run debug: channel=scouting_muon; skipping unused generic JME and jet-veto initialization\n";
+  } else {
+    std::cerr << "nano_run debug: initializing generic JME and jet-veto payloads for channel=" << config_.channel
+              << " era=" << config_.era << "\n";
+    jme_corrector_ = std::make_unique<JetMETCorrector>(config_);
+    std::cerr << "nano_run debug: generic JME and jet-veto payloads initialized\n";
+  }
   pu_weight_producer_ = std::make_unique<PuWeightProducer>(config_);
   top_pt_weight_producer_ = std::make_unique<TopPtWeightProducer>(config_.era);
   fatjet_gen_matching_ = std::make_unique<FatjetGenMatching>();
@@ -90,6 +101,9 @@ HeavyFlavBaseProducer::HeavyFlavBaseProducer(ProducerConfig config) : config_(st
 HeavyFlavBaseProducer::~HeavyFlavBaseProducer() = default;
 
 JmeEventResult HeavyFlavBaseProducer::compute_jme_result(Event &event) const {
+  if (!jme_corrector_) {
+    throw std::runtime_error("Generic JME was requested for a channel that disables it: " + config_.channel);
+  }
   return jme_corrector_->compute_event(event);
 }
 

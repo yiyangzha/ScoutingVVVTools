@@ -77,6 +77,34 @@ std::vector<std::string> yaml_string_list_node(const YAML::Node &node) {
   return out;
 }
 
+const char *branch_type_name(nano::BranchType type) {
+  switch (type) {
+    case nano::BranchType::kBool:
+      return "bool";
+    case nano::BranchType::kInt32:
+      return "int32";
+    case nano::BranchType::kUInt32:
+      return "uint32";
+    case nano::BranchType::kUInt64:
+      return "uint64";
+    case nano::BranchType::kFloat:
+      return "float";
+    case nano::BranchType::kVecBool:
+      return "vec_bool";
+    case nano::BranchType::kVecUInt8:
+      return "vec_uint8";
+    case nano::BranchType::kVecUInt16:
+      return "vec_uint16";
+    case nano::BranchType::kVecInt16:
+      return "vec_int16";
+    case nano::BranchType::kVecInt32:
+      return "vec_int32";
+    case nano::BranchType::kVecFloat:
+      return "vec_float";
+  }
+  return "unknown";
+}
+
 struct CliOptions {
   std::string input_files;
   std::string output_file;
@@ -476,13 +504,26 @@ std::vector<std::string> process_one_file_variations(const std::string &input_fi
   }
 
   const auto config = make_config(settings, cli.channel, cli.run_data);
+  std::cerr << "nano_run debug: input opened file=" << input_file << " tree=" << cli.tree_name
+            << " entries=" << tree->GetEntries() << " channel=" << cli.channel << " run_data="
+            << (cli.run_data ? "true" : "false") << " era=" << config.era << " nano_version=" << config.nano_version
+            << " strict_read_branches=" << (config.strict_read_branches ? "true" : "false")
+            << " read_branch_count=" << config.read_branches.size() << "\n";
+  for (const auto &branch : config.read_branches) {
+    const auto type_it = config.nano_branch_types.find(branch);
+    std::cerr << "nano_run debug: bind branch=" << branch << " type="
+              << (type_it == config.nano_branch_types.end() ? "missing-from-config" : branch_type_name(type_it->second)) << "\n";
+  }
   const auto lumi_mask = cli.run_data ? std::make_unique<nano::runtime::LumiMask>(nano::runtime::LumiMask::from_file(data_lumi_mask_path(settings, config)))
                                       : nullptr;
   warn_missing_optional_branches(*tree, config, input_file);
   nano::NanoReader reader(*tree, nano::BranchSchema(nano::HeavyFlavBaseProducer::default_schema(config)));
+  std::cerr << "nano_run debug: all declared branches bound successfully\n";
   auto producer_base = make_producer(config);
   auto *producer = producer_base.get();
+  std::cerr << "nano_run debug: producer initialized\n";
   producer->begin_file();
+  std::cerr << "nano_run debug: output model initialized\n";
 
   struct VariationOutput {
     nano::JmeVariation variation;
@@ -504,16 +545,28 @@ std::vector<std::string> process_one_file_variations(const std::string &input_fi
   }
 
   const auto entry_list = nano::runtime::build_entry_list(*tree, config.preselection, cli.num_events, lumi_mask.get());
+  std::cerr << "nano_run debug: preselection='" << config.preselection << "' selected_entries=" << entry_list.size() << "\n";
 
+  bool reported_first_common = false;
+  bool reported_first_accepted = false;
   for (const auto entry : entry_list) {
     nano::Event event(reader, static_cast<std::size_t>(entry));
     if (!producer->analyze_common(event)) {
       continue;
     }
+    if (!reported_first_common) {
+      std::cerr << "nano_run debug: first event passing channel-common selection entry=" << entry << "\n";
+      reported_first_common = true;
+    }
     const auto jme_result = producer->compute_jme_result(event);
     for (auto &item : outputs) {
       if (!producer->analyze_variation(event, jme_result, item.variation)) {
         continue;
+      }
+      if (!reported_first_accepted) {
+        std::cerr << "nano_run debug: first accepted event entry=" << entry
+                  << " variation=" << nano::variation_name(item.variation) << "\n";
+        reported_first_accepted = true;
       }
       item.output->fill_event(producer->output());
       item.selected_lumis.insert({event.scalar<std::uint32_t>("run"), event.scalar<std::uint32_t>("luminosityBlock")});

@@ -136,7 +136,7 @@ Current configured target:
 - MC samples: 2024 defaults include `ttbar-powheg`, `singletop`, all ten currently catalogued `diboson` samples, `w`, and QCD HT 200+ bins as `qcd-mg`.
 - Ntuple production keeps `qcd-mg` for the standalone QCD mistag-WP scan. Generated topwsf cards retain that group for the scan, while `calibration.fit_enabled_mc_groups` excludes it from the formal template/fit inputs.
 - The `src/sample.json` signal catalog includes hadronic W±H samples `wplush_w2q_h4q` and `wminush_w2q_h4q` with cross sections 58.5 pb and 37.4 pb, respectively.
-- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2` (or `ScoutingPFJetRecluster` for official data), and `ScoutingMET`; the Scouting muon card does not apply AK4 tagging or jet ID.
+- Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2` (or `ScoutingPFJetRecluster` for official data), and `ScoutingMET`; the Scouting muon card does not apply AK4 tagging or jet ID. It binds only producer/output-required branches (preselection-only counters remain ROOT-formula inputs) and bypasses unused generic JME/jet-veto initialization.
 - Scouting SF probe jets and generated topwsf cards start at 170 GeV. The template pT axis uses 103 bins over 170--1200 GeV so the original 10 GeV granularity and configured fit-bin boundaries are preserved.
 - Enabled Scouting topwsf systematics are `pu`, `jms`, `jmr`, `lhescalemuf`, and `lhescalemur`. JES/JER/MET remain disabled until Scouting-specific shifted reconstruction is available.
 

@@ -3,6 +3,8 @@
 #include <correction.h>
 
 #include <algorithm>
+#include <exception>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -56,7 +58,16 @@ void PuWeightProducer::fill(Event &event, OutputModel &out) const {
 
   const auto json_file = config_.pu_payload_dir + "/" + era_it->second.payload_subdir;
   auto &cache = cache_for(json_file);
-  const auto corr = cache.correction_set->at(era_it->second.correction_key);
+  std::cerr << "nano_run debug: resolving PU correction era=" << config_.era << " json=" << json_file
+            << " key=" << era_it->second.correction_key << "\n";
+  const auto corr = [&]() {
+    try {
+      return cache.correction_set->at(era_it->second.correction_key);
+    } catch (const std::exception &ex) {
+      throw std::runtime_error("PU correction lookup failed for era=" + config_.era + ", json=" + json_file +
+                               ", key=" + era_it->second.correction_key + ": " + ex.what());
+    }
+  }();
   const auto npu = clip(event.scalar<float>("Pileup_nTrueInt"), 0.0f, 99.0f);
 
   const auto eval = [&](const char *variation) {

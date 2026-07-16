@@ -5,8 +5,6 @@ read_branches:
   - luminosityBlock
   - event
   - DST_PFScouting_SingleMuon
-  - nScoutingFatPFJetRecluster
-  - nScoutingMuonVtx
   - ScoutingMET_pt
   - ScoutingMET_phi
   - ScoutingMuonVtx_pt
