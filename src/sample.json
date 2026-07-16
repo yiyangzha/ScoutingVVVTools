@@ -303,6 +303,28 @@
       "raw_entries": 0
     },
     {
+      "name": "wplush_w2q_h4q",
+      "path": "/WplusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-Wto2Q-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 90,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 58.5,
+      "lumi": -1,
+      "raw_entries": 0
+    },
+    {
+      "name": "wminush_w2q_h4q",
+      "path": "/WminusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminsH-Wto2Q-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 91,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 37.4,
+      "lumi": -1,
+      "raw_entries": 0
+    },
+    {
       "name": "qcd_ht40to70",
       "path": "/QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-40to70_v5-00000000000000000000000000000000/USER",
       "sample_ID": 10,

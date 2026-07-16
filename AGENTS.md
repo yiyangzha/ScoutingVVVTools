@@ -133,6 +133,7 @@ Current configured target:
 - Default `ntuple_config.json` and `sf_config.json` use `year: ["2024"]`; samples are grouped under `samples.by_year`, with 2024 MC populated and 2025 MC intentionally empty for now.
 - Data samples: official ScoutingNano 2024C-I and 2025B-D samples, one sample per era named like `2024C_official`, requiring `DST_PFScouting_SingleMuon`.
 - MC samples: 2024 defaults include `ttbar-powheg`, `singletop`, `diboson`, `w`, and QCD HT 200+ bins as `qcd-mg`.
+- The `src/sample.json` signal catalog includes hadronic W±H samples `wplush_w2q_h4q` and `wminush_w2q_h4q` with cross sections 58.5 pb and 37.4 pb, respectively.
 - Scouting objects: `ScoutingMuonVtx`, `ScoutingFatPFJetRecluster`, `ScoutingPFJetRecluster2`, and `ScoutingMET`; the Scouting muon card does not apply an AK4 b-tag requirement.
 - Scouting SF probe jets and generated topwsf cards start at 170 GeV. The template pT axis uses 103 bins over 170--1200 GeV so the original 10 GeV granularity and configured fit-bin boundaries are preserved.
 - Enabled Scouting topwsf systematics are `pu`, `jms`, `jmr`, `lhescalemuf`, and `lhescalemur`. JES/JER/MET remain disabled until Scouting-specific shifted reconstruction is available.
