@@ -293,16 +293,39 @@ def sample_base_output_dir(base_path, cfg, era, section_cfg, year=None):
     return Path(text)
 
 
+def mc_output_dir(base_path, cfg, year, section_cfg):
+    base = resolve_path(base_path)
+    require_local_path(base, "sample_base")
+    year = str(year)
+    if split_by_era(section_cfg):
+        return base / year / f"{year}_mc_{cfg['nano_version']}"
+    suffix = f"_{year}_mc_{cfg['nano_version']}"
+    text = str(base)
+    if not base.name.endswith(suffix):
+        text += suffix
+    return Path(text)
+
+
 def ntuple_output_dir(cfg, era):
     return sample_base_output_dir(cfg["ntuple"]["sample_base"], cfg, era, cfg["ntuple"])
+
+
+def ntuple_mc_output_dir(cfg, year):
+    return mc_output_dir(cfg["ntuple"]["sample_base"], cfg, year, cfg["ntuple"])
 
 
 def calibration_input_dir(cfg, era):
     return sample_base_output_dir(cfg["calibration"]["input_sample_base"], cfg, era, cfg["calibration"])
 
 
-def tier_ntuple_output_dir(cfg, target, era):
+def calibration_mc_input_dir(cfg, year):
+    return mc_output_dir(cfg["calibration"]["input_sample_base"], cfg, year, cfg["calibration"])
+
+
+def tier_ntuple_output_dir(cfg, target, era, sample_set="data"):
     ntuple = cfg["ntuple"]
+    if sample_set not in ("data", "mc"):
+        raise SystemExit(f"Unknown ntuple sample set: {sample_set}")
     base = ntuple.get(
         "tier_storage_base",
         "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
@@ -310,7 +333,14 @@ def tier_ntuple_output_dir(cfg, target, era):
     if not str(base).startswith("root://"):
         raise SystemExit(f"ntuple.tier_storage_base must be a root:// path, got: {base}")
     if split_by_era(ntuple):
-        return join_remote_path(base, target_storage_name(cfg, target, ntuple), era_year(era), f"{era}_{cfg['nano_version']}")
+        suffix = "_mc" if sample_set == "mc" else ""
+        return join_remote_path(base, target_storage_name(cfg, target, ntuple), era_year(era), f"{era}{suffix}_{cfg['nano_version']}")
+    if sample_set == "mc":
+        return join_remote_path(
+            base,
+            target_storage_name(cfg, target, ntuple, era_year(era)),
+            f"{era}_mc_{cfg['nano_version']}",
+        )
     return join_remote_path(base, target_storage_name(cfg, target, ntuple, era_year(era)))
 
 
@@ -357,6 +387,15 @@ def env_truthy(value):
 
 def sample_yaml_payload(samples, names):
     return {name: sample_paths(samples[name]) for name in names}
+
+
+def mc_sample_names(mc_groups):
+    names = []
+    for group_names in mc_groups.values():
+        for name in group_names:
+            if name not in names:
+                names.append(name)
+    return names
 
 
 def is_under(path, base):
@@ -1301,69 +1340,89 @@ def make_ntuple(cfg, args):
         commands.append(["cmake", "--build", str(build_dir), "-j", build_jobs(ntuple.get("build_jobs", "auto"))])
 
     binary = nano_repo / "build" / "nano_make_condor"
-    expected_eras = []
+    expected_outputs = []
     for year_samples in year_sample_groups:
-        mc_names = []
-        for group_names in year_samples["mc_groups"].values():
-            for name in group_names:
-                if name not in mc_names:
-                    mc_names.append(name)
-        eras = data_era_groups(year_samples["data"], year_samples["year"])
-        expected_eras.extend(eras)
+        year = str(year_samples["year"])
+        mc_names = mc_sample_names(year_samples["mc_groups"])
+        eras = data_era_groups(year_samples["data"], year)
 
         for target in targets:
+            config_card = ntuple_config_card(ntuple, year)
+            planned_jobs = []
+
+            if mc_names:
+                tokens = {
+                    "jet_type": target["jet_type"],
+                    "jet_category": target["jet_category"],
+                    "year": year,
+                    "era": year,
+                }
+                sample_yaml = sample_dir / f"{tokens['jet_type']}_{tokens['jet_category']}_{year}_mc.yaml"
+                write_yaml(sample_yaml, sample_yaml_payload(samples, mc_names))
+                out_dir = ntuple_mc_output_dir(cfg, year)
+                planned_jobs.append((
+                    "mc",
+                    sample_yaml,
+                    False,
+                    tokens,
+                    out_dir,
+                    tier_ntuple_output_dir(cfg, target, year, "mc") if use_tier_storage else str(out_dir),
+                ))
+                expected_outputs.append(("MC", year, out_dir))
+
             for era_info in eras:
+                if not era_info["data"]:
+                    continue
                 era = era_info["era"]
-                year = era_info["year"]
-                out_dir = ntuple_output_dir(cfg, era)
-                config_card = ntuple_config_card(ntuple, year)
                 tokens = {
                     "jet_type": target["jet_type"],
                     "jet_category": target["jet_category"],
                     "year": year,
                     "era": era,
                 }
-                ntuple_remote_dir = tier_ntuple_output_dir(cfg, target, era) if use_tier_storage else str(out_dir)
-                sample_files = []
-                if mc_names:
-                    path = sample_dir / f"{tokens['jet_type']}_{tokens['jet_category']}_{era}_mc.yaml"
-                    write_yaml(path, sample_yaml_payload(samples, mc_names))
-                    sample_files.append(("mc", path, False))
-                if era_info["data"]:
-                    path = sample_dir / f"{tokens['jet_type']}_{tokens['jet_category']}_{era}_data.yaml"
-                    write_yaml(path, sample_yaml_payload(samples, era_info["data"]))
-                    sample_files.append(("data", path, True))
+                sample_yaml = sample_dir / f"{tokens['jet_type']}_{tokens['jet_category']}_{era}_data.yaml"
+                write_yaml(sample_yaml, sample_yaml_payload(samples, era_info["data"]))
+                out_dir = ntuple_output_dir(cfg, era)
+                planned_jobs.append((
+                    "data",
+                    sample_yaml,
+                    True,
+                    tokens,
+                    out_dir,
+                    tier_ntuple_output_dir(cfg, target, era, "data") if use_tier_storage else str(out_dir),
+                ))
+                expected_outputs.append(("data", era, out_dir))
 
-                for sample_set, sample_yaml, is_data in sample_files:
-                    job_dir_pattern = ntuple.get("job_dir", "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}")
-                    job_dir = resolve_path(job_dir_pattern.format(**tokens, sample_set=sample_set))
-                    require_local_path(job_dir, "ntuple.job_dir")
-                    cmd = [
-                        binary,
-                        "--input-yaml", sample_yaml,
-                        "--job-dir", job_dir,
-                        "--output-dir", ntuple_remote_dir,
-                        "--merge-output-dir", out_dir,
-                        "--config", config_card,
-                        "--channel", ntuple.get("channel", "scouting_muon"),
-                        "--tree-name", ntuple.get("tree_name", "Events"),
-                        "--nfiles-per-job", int(ntuple.get("nfiles_per_job", 1)),
-                        "--num-events", int(ntuple.get("num_events", -1)),
-                        "--request-disk-mb", int(ntuple.get("request_disk_mb", 50000)),
-                        "--variations", variations,
-                        "--use-sample-key-nickname",
-                    ]
-                    if target["taggers"]:
-                        cmd.extend(["--set", "stored_tagger_names=" + dump_yaml_value(target["taggers"]).strip()])
-                    if is_data:
-                        cmd.append("--run-data")
-                    if ntuple.get("download_remote_inputs", False):
-                        cmd.append("--download-remote-inputs")
-                    else:
-                        cmd.append("--no-download-remote-inputs")
-                    commands.append(cmd)
-                    if ntuple.get("submit_condor", False):
-                        commands.append(["./submit.sh", {"cwd": job_dir}])
+            for sample_set, sample_yaml, is_data, tokens, out_dir, ntuple_remote_dir in planned_jobs:
+                job_dir_pattern = ntuple.get("job_dir", "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}")
+                job_dir = resolve_path(job_dir_pattern.format(**tokens, sample_set=sample_set))
+                require_local_path(job_dir, "ntuple.job_dir")
+                cmd = [
+                    binary,
+                    "--input-yaml", sample_yaml,
+                    "--job-dir", job_dir,
+                    "--output-dir", ntuple_remote_dir,
+                    "--merge-output-dir", out_dir,
+                    "--config", config_card,
+                    "--channel", ntuple.get("channel", "scouting_muon"),
+                    "--tree-name", ntuple.get("tree_name", "Events"),
+                    "--nfiles-per-job", int(ntuple.get("nfiles_per_job", 1)),
+                    "--num-events", int(ntuple.get("num_events", -1)),
+                    "--request-disk-mb", int(ntuple.get("request_disk_mb", 50000)),
+                    "--variations", variations,
+                    "--use-sample-key-nickname",
+                ]
+                if target["taggers"]:
+                    cmd.extend(["--set", "stored_tagger_names=" + dump_yaml_value(target["taggers"]).strip()])
+                if is_data:
+                    cmd.append("--run-data")
+                if ntuple.get("download_remote_inputs", False):
+                    cmd.append("--download-remote-inputs")
+                else:
+                    cmd.append("--no-download-remote-inputs")
+                commands.append(cmd)
+                if ntuple.get("submit_condor", False):
+                    commands.append(["./submit.sh", {"cwd": job_dir}])
 
     command_log = []
     for cmd in commands:
@@ -1379,8 +1438,8 @@ def make_ntuple(cfg, args):
 
     write_text(resolve_path("generated/ntuple_commands.sh"), "\n".join(command_log) + "\n")
     print(f"Wrote generated sample YAMLs under {sample_dir}")
-    for era_info in expected_eras:
-        print(f"Expected merged ntuples for {era_info['era']} under {ntuple_output_dir(cfg, era_info['era'])}")
+    for sample_set, label, output_dir in expected_outputs:
+        print(f"Expected merged {sample_set} ntuples for {label} under {output_dir}")
 
 
 def score_bin_name(lo, hi):
@@ -1416,7 +1475,83 @@ def data_lumi(samples, data_names):
     return total
 
 
-def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name, tagger_cfg):
+def calibration_input_variations(calibration):
+    variations = ["nominal"]
+    enabled_systematics = calibration.get("systematics", {}).get("enabled", [])
+    for systematic in ("jes", "jer", "met"):
+        if systematic in enabled_systematics:
+            variations.extend([f"{systematic}_up", f"{systematic}_down"])
+    return variations
+
+
+def validate_annual_input_link(source, destination):
+    source = source.resolve()
+    if not source.is_file():
+        raise SystemExit(f"Missing merged ntuple required for the annual fit input: {source}")
+    if destination.is_symlink():
+        if destination.resolve() == source:
+            return source
+        raise SystemExit(
+            f"Annual fit input link already points elsewhere: {destination} -> {destination.resolve()}"
+        )
+    if destination.exists():
+        raise SystemExit(f"Annual fit input would overwrite an existing file: {destination}")
+    return source
+
+
+def link_annual_input_file(source, destination):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink():
+        if destination.resolve() == source:
+            return
+        raise SystemExit(
+            f"Annual fit input link already points elsewhere: {destination} -> {destination.resolve()}"
+        )
+    if destination.exists():
+        raise SystemExit(f"Annual fit input would overwrite an existing file: {destination}")
+    destination.symlink_to(os.path.relpath(source, destination.parent))
+
+
+def prepare_annual_fit_input(cfg, year_samples):
+    year = str(year_samples["year"])
+    calibration = cfg["calibration"]
+    annual_dir = calibration_input_dir(cfg, year)
+    mc_dir = calibration_mc_input_dir(cfg, year)
+    mc_names = mc_sample_names(year_samples["mc_groups"])
+    links = []
+
+    for data_name in year_samples["data"]:
+        era = sample_era_name(data_name, year)
+        source = calibration_input_dir(cfg, era) / "nominal" / f"{data_name}_nominal.root"
+        destination = annual_dir / "nominal" / source.name
+        links.append((source, destination))
+
+    for variation in calibration_input_variations(calibration):
+        for mc_name in mc_names:
+            source = mc_dir / variation / f"{mc_name}_{variation}.root"
+            destination = annual_dir / variation / source.name
+            links.append((source, destination))
+
+    destinations = {}
+    for source, destination in links:
+        existing_source = destinations.get(destination)
+        if existing_source is not None and existing_source != source:
+            raise SystemExit(
+                f"Annual fit input has colliding source files for {destination}: {existing_source}, {source}"
+            )
+        destinations[destination] = source
+
+    validated_links = [
+        (validate_annual_input_link(source, destination), destination)
+        for source, destination in links
+    ]
+    for source, destination in validated_links:
+        link_annual_input_file(source, destination)
+
+    print(f"Prepared annual fit input for {year}: {annual_dir}")
+
+
+def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_name, tagger_cfg):
     cal = cfg["calibration"]
     enabled_mc_groups = list(cal.get("fit_enabled_mc_groups", mc_groups.keys()))
     unknown_enabled_groups = sorted(set(enabled_mc_groups) - set(mc_groups))
@@ -1425,7 +1560,8 @@ def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name
             "calibration.fit_enabled_mc_groups contains unknown MC group(s): "
             + ", ".join(unknown_enabled_groups)
         )
-    card_dir = resolve_path(cal.get("generated_card_dir", "generated/topwsf")) / era_year(era)
+    year = str(year)
+    card_dir = resolve_path(cal.get("generated_card_dir", "generated/topwsf")) / year
     require_local_path(card_dir, "calibration.generated_card_dir")
     boohft_base = resolve_path(cal.get("repo", "boohft-calib")) / "cards" / "topwsf" / "base.yml"
     extends = [os.path.relpath(boohft_base, card_dir)]
@@ -1433,13 +1569,12 @@ def generated_card(cfg, samples, data_names, mc_groups, era, target, tagger_name
         score_bin_name(lo, hi): [float(lo), float(hi)]
         for lo, hi in tagger_cfg["score_bins"]
     }
-    year = str(era)
     lumi = data_lumi(samples, data_names)
     if lumi <= 0.0:
-        raise SystemExit(f"data sample lumi is missing/non-positive in sample.json for {era}")
+        raise SystemExit(f"data sample lumi is missing/non-positive in sample.json for {year}")
     fit_cfg = cal.get("fit", {})
     systematics = list(cal.get("systematics", {}).get("enabled", []))
-    input_sample_base = calibration_input_dir(cfg, era)
+    input_sample_base = calibration_input_dir(cfg, year)
     require_local_path(input_sample_base, "calibration.input_sample_base")
     payload = {
         "extends": extends,
@@ -1490,22 +1625,23 @@ def compute_sf(cfg, args):
 
     cards = []
     for year_samples in year_sample_groups:
-        eras = data_era_groups(year_samples["data"], year_samples["year"])
+        year = str(year_samples["year"])
         mc_groups = year_samples["mc_groups"]
-        for era_info in eras:
-            for target in targets:
-                jet_type = target["jet_type"]
-                jet_category = target["jet_category"]
-                taggers = cal["binning"].get(jet_type, {}).get(jet_category, {})
-                if not taggers:
-                    raise SystemExit(f"No tagger binning configured for {jet_type}/{jet_category}")
-                for tagger_name in target["taggers"]:
-                    if args.tagger and args.tagger != tagger_name:
-                        continue
-                    if tagger_name not in taggers:
-                        raise SystemExit(f"Tagger {tagger_name} is listed in run_targets but missing from calibration.binning.{jet_type}.{jet_category}")
-                    tagger_cfg = taggers[tagger_name]
-                    cards.append(generated_card(cfg, samples, era_info["data"], mc_groups, era_info["era"], target, tagger_name, tagger_cfg))
+        if not args.generate_only and not args.dry_run:
+            prepare_annual_fit_input(cfg, year_samples)
+        for target in targets:
+            jet_type = target["jet_type"]
+            jet_category = target["jet_category"]
+            taggers = cal["binning"].get(jet_type, {}).get(jet_category, {})
+            if not taggers:
+                raise SystemExit(f"No tagger binning configured for {jet_type}/{jet_category}")
+            for tagger_name in target["taggers"]:
+                if args.tagger and args.tagger != tagger_name:
+                    continue
+                if tagger_name not in taggers:
+                    raise SystemExit(f"Tagger {tagger_name} is listed in run_targets but missing from calibration.binning.{jet_type}.{jet_category}")
+                tagger_cfg = taggers[tagger_name]
+                cards.append(generated_card(cfg, samples, year_samples["data"], mc_groups, year, target, tagger_name, tagger_cfg))
 
     if not cards:
         raise SystemExit("No scale-factor cards were generated")
