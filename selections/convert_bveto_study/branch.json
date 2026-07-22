@@ -11,9 +11,9 @@
       { "name": "nScoutingFatPFJetRecluster", "type": "I", "onlyMC": false },
       { "name": "nScoutingPFJetRecluster2", "type": "I", "onlyMC": false },
       { "name": "nScoutingElectron", "type": "I", "onlyMC": false },
-      { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false },
+      { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false, "optional": true },
       { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
-      { "name": "nScoutingPhoton", "type": "I", "onlyMC": false },
+      { "name": "nScoutingPhoton", "type": "I", "onlyMC": false, "optional": true },
       { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false }
     ],
     "collections": [
@@ -57,6 +57,7 @@
         "name": "ScoutingMuonNoVtx",
         "size": "nScoutingMuonNoVtx",
         "max_size": 30,
+        "optional": true,
         "p4": {
           "pt": "ScoutingMuonNoVtx_pt",
           "eta": "ScoutingMuonNoVtx_eta",

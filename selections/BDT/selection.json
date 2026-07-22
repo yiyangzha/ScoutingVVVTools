@@ -45,7 +45,9 @@
       "ScoutingFatPFJetRecluster_pt_2": [175, null],
       "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
       "ScoutingFatPFJetRecluster_eta_2": [-2.4, 2.4],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6]
+      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6],
+      "nVetoMuon": [null, 0.9],
+      "nVetoElectron": [null, 0.9]
     }
   },
   "fat3": {
@@ -90,7 +92,9 @@
       "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
       "ScoutingFatPFJetRecluster_eta_2": [-2.4, 2.4],
       "ScoutingFatPFJetRecluster_eta_3": [-2.4, 2.4],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6]
-    }
+      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6],
+      "nVetoMuon": [null, 0.9],
+      "nVetoElectron": [null, 0.9]
+   }
   }
 }

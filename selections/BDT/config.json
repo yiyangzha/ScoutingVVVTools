@@ -1,11 +1,11 @@
 {
   "submit_trees": [
-    "fat2"
+    "fat3"
   ],
   "sample_config": "../../src/sample.json",
   "input_root": "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/dataset/",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
-  "output_root": "./{tree_name}_vjets_tailaware_decorr3",
+  "output_root": "./{tree_name}_lepton_veto",
   "model_pattern": "{output_root}/{tree_name}_model",
   "model_type": "bdt",
   "entries_per_sample": 750000,
@@ -145,7 +145,9 @@
     "colsample_bynode": 0.9,
     "early_stopping_rounds": 20,
     "decorrelate": [
-      "ScoutingFatPFJetRecluster_msoftdrop_1"
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
     ],
     "decor_efficiencies": [
       1.0,

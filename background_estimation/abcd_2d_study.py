@@ -27,7 +27,16 @@ def wsum(w, m):
     return float(np.sum(w[m]))
 
 
-def analyze(tree, dump_path, outdir):
+def analyze(tree, dump_path, outdir, use_actual_sideband=False):
+    """Closure diagnostic for a qcd_est.py per-event dump.
+
+    By default B/D are taken from the full complement of the SR union (the
+    historical behaviour of this script). Pass ``use_actual_sideband=True`` to
+    instead use the dump's own ``sideband_mask`` field -- i.e. whatever B/D
+    definition qcd_est.py actually used to produce its ABCD prediction
+    (complement, or an annulus of the configured width). The complement-based
+    closure is always additionally reported as a reference point.
+    """
     d = np.load(dump_path, allow_pickle=True)
     axis_names = [str(a) for a in d["axis_names"]]
     qcd = d["qcd_mask"]
@@ -40,11 +49,21 @@ def analyze(tree, dump_path, outdir):
     region_masks = d["region_masks"][:, qcd]  # (nSR, nQCD)
     vvv = proba[:, axis_names.index("VVV")]
 
-    # ---- A/B/C/D (weighted) and closure ----
+    has_sideband_field = "sideband_mask" in d.files
+    if use_actual_sideband and not has_sideband_field:
+        raise KeyError(
+            f"use_actual_sideband=True but {dump_path!r} has no 'sideband_mask' "
+            "field (dump predates that feature -- regenerate it)"
+        )
+    sb_mask = d["sideband_mask"][qcd] if has_sideband_field else (~inbox)
+    sb = sb_mask if use_actual_sideband else (~inbox)
+    sb_label = "actual configured sideband" if use_actual_sideband else "complement"
+
+    # ---- A/B/C/D (weighted) and closure, for the sideband actually used here ----
     A = wsum(w, inbox & passm)
     C = wsum(w, inbox & failm)
-    B = wsum(w, (~inbox) & passm)
-    D = wsum(w, (~inbox) & failm)
+    B = wsum(w, sb & passm)
+    D = wsum(w, sb & failm)
     pred = B * C / D
     closure = pred / A
     pf_in = A / (A + C)
@@ -52,11 +71,18 @@ def analyze(tree, dump_path, outdir):
     # factorization-breaking ratio: (A/C)/(B/D) = A*D/(B*C) = 1/closure
     fac_ratio = (A * D) / (B * C)
 
-    print(f"\n===== {tree} QCD ABCD diagnostic =====")
-    print(f"  A(in,pass)={A:.6g}  C(in,fail)={C:.6g}  B(out,pass)={B:.6g}  D(out,fail)={D:.6g}")
+    print(f"\n===== {tree} QCD ABCD diagnostic (sideband={sb_label}) =====")
+    print(f"  A(in,pass)={A:.6g}  C(in,fail)={C:.6g}  B(sb,pass)={B:.6g}  D(sb,fail)={D:.6g}")
     print(f"  predict A = B*C/D = {pred:.6g}   true A = {A:.6g}   closure = {closure:.4f}")
-    print(f"  msoftdrop PASS-fraction:  in-box A/(A+C) = {pf_in:.4f}   out-box B/(B+D) = {pf_out:.4f}")
+    print(f"  msoftdrop PASS-fraction:  in-box A/(A+C) = {pf_in:.4f}   sideband B/(B+D) = {pf_out:.4f}")
     print(f"  factorization-breaking ratio (A*D)/(B*C) = {fac_ratio:.3f}  (=1 if perfectly factorized; =1/closure)")
+
+    if use_actual_sideband and has_sideband_field:
+        # Cross-check reference: what closure would the plain complement give.
+        Bc = wsum(w, (~inbox) & passm)
+        Dc = wsum(w, (~inbox) & failm)
+        closure_complement = (Bc * C / Dc) / A if Dc > 0 else float("nan")
+        print(f"  (reference) complement-sideband closure = {closure_complement:.4f}")
 
     # mass window inferred from pass mask (finite values)
     finite_pass = passm & np.isfinite(msd) & (msd > -990)
@@ -87,12 +113,12 @@ def analyze(tree, dump_path, outdir):
         pf_err.append(np.sqrt(max(frac * (1 - frac) / max(neff, 1.0), 0.0)))
     centers = np.array(centers); pf = np.array(pf); pf_err = np.array(pf_err)
 
-    # ---- normalized msoftdrop shape: in-box vs out-of-box (the assumption test) ----
+    # ---- normalized msoftdrop shape: in-box vs sideband (the assumption test) ----
     mrange = (0.0, 250.0)
     mm = valid & (msd >= mrange[0]) & (msd <= mrange[1])
     bins = np.linspace(mrange[0], mrange[1], 51)
     h_in, _ = np.histogram(msd[mm & inbox], bins=bins, weights=w[mm & inbox])
-    h_out, _ = np.histogram(msd[mm & (~inbox)], bins=bins, weights=w[mm & (~inbox)])
+    h_out, _ = np.histogram(msd[mm & sb], bins=bins, weights=w[mm & sb])
     bc = 0.5 * (bins[:-1] + bins[1:])
     h_in_n = h_in / max(h_in.sum(), 1e-30)
     h_out_n = h_out / max(h_out.sum(), 1e-30)
@@ -101,9 +127,9 @@ def analyze(tree, dump_path, outdir):
     fig, axes = plt.subplots(2, 2, figsize=(13, 10))
 
     ax = axes[0, 0]
-    sb = mm
+    mm2d = mm
     H, xe, ye = np.histogram2d(
-        vvv[sb], msd[sb], bins=[np.linspace(0, 1, 60), bins], weights=w[sb]
+        vvv[mm2d], msd[mm2d], bins=[np.linspace(0, 1, 60), bins], weights=w[mm2d]
     )
     # column-normalize (per VVV-score slice) to see the conditional msoftdrop shape
     col = H.sum(axis=1, keepdims=True)
@@ -119,7 +145,7 @@ def analyze(tree, dump_path, outdir):
 
     ax = axes[0, 1]
     ax.errorbar(centers, pf, yerr=pf_err, fmt="o-", ms=3, label="QCD pass-fraction")
-    ax.axhline(pf_out, color="g", ls=":", label=f"out-box B/(B+D)={pf_out:.3f}")
+    ax.axhline(pf_out, color="g", ls=":", label=f"sideband B/(B+D)={pf_out:.3f}")
     ax.axhline(pf_in, color="r", ls=":", label=f"in-box A/(A+C)={pf_in:.3f}")
     ax.set_xlabel("VVV BDT score (quantile bins)")
     ax.set_ylabel("msoftdrop PASS-fraction")
@@ -127,45 +153,47 @@ def analyze(tree, dump_path, outdir):
     ax.legend(fontsize=8)
 
     ax = axes[1, 0]
-    ax.step(bc, h_out_n, where="mid", label="out-of-box (B+D)", color="g")
+    ax.step(bc, h_out_n, where="mid", label=f"sideband ({sb_label}) (B+D)", color="g")
     ax.step(bc, h_in_n, where="mid", label="in-box (A+C)", color="r")
     ax.axvline(win_lo, color="k", ls="--", lw=0.8)
     ax.axvline(win_hi, color="k", ls="--", lw=0.8)
     ax.set_xlabel("msoftdrop_1 [GeV]")
     ax.set_ylabel("a.u. (unit norm)")
-    ax.set_title(f"{tree} QCD msoftdrop shape: in-box vs out-of-box")
+    ax.set_title(f"{tree} QCD msoftdrop shape: in-box vs sideband")
     ax.legend(fontsize=8)
 
     ax = axes[1, 1]
     ax.axis("off")
     txt = (
         f"{tree}  QCD ABCD non-closure diagnostic\n"
+        f"sideband = {sb_label}\n"
         f"--------------------------------------\n"
-        f"A (in-box, mass PASS)  = {A:.4g}\n"
-        f"C (in-box, mass FAIL)  = {C:.4g}\n"
-        f"B (out-box, mass PASS) = {B:.4g}\n"
-        f"D (out-box, mass FAIL) = {D:.4g}\n\n"
+        f"A (in-box, mass PASS)   = {A:.4g}\n"
+        f"C (in-box, mass FAIL)   = {C:.4g}\n"
+        f"B (sideband, mass PASS) = {B:.4g}\n"
+        f"D (sideband, mass FAIL) = {D:.4g}\n\n"
         f"predict A = B*C/D = {pred:.4g}\n"
         f"true A            = {A:.4g}\n"
         f"closure           = {closure:.3f}\n\n"
         f"mass PASS-fraction in-box  = {pf_in:.3f}\n"
-        f"mass PASS-fraction out-box = {pf_out:.3f}\n"
+        f"mass PASS-fraction sideband = {pf_out:.3f}\n"
         f"ratio (=1/closure)         = {fac_ratio:.2f}\n\n"
         f"PASS window ~ [{win_lo:.0f}, {win_hi:.0f}] GeV\n\n"
         f"Interpretation: closure fails when the in-box mass\n"
-        f"PASS-fraction differs from out-of-box, i.e. high-score\n"
+        f"PASS-fraction differs from the sideband, i.e. high-score\n"
         f"QCD is mass-sculpted toward the signal window."
     )
     ax.text(0.0, 1.0, txt, va="top", ha="left", family="monospace", fontsize=10)
 
     fig.tight_layout()
-    out = os.path.join(outdir, "abcd_2d_nonclosure.pdf")
+    plot_stem = "abcd_2d_nonclosure" if not use_actual_sideband else "abcd_2d_nonclosure_actual_sideband"
+    out = os.path.join(outdir, f"{plot_stem}.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  wrote {out}")
 
     # ---- per-SR local pass-fraction (which region drives non-closure) ----
-    print("  per-SR  in-box passfrac  vs  out-box passfrac (B/(B+D)):")
+    print("  per-SR  in-box passfrac  vs  sideband passfrac (B/(B+D)):")
     for i in range(region_masks.shape[0]):
         rm = region_masks[i] & valid
         a_i = wsum(w, rm & passm)
@@ -173,9 +201,10 @@ def analyze(tree, dump_path, outdir):
         if a_i + c_i <= 0:
             print(f"    SR{i+1}: (empty)")
             continue
-        print(f"    SR{i+1}: in-box passfrac={a_i/(a_i+c_i):.3f}  (A={a_i:.4g}, C={c_i:.4g})  vs out-box {pf_out:.3f}")
+        print(f"    SR{i+1}: in-box passfrac={a_i/(a_i+c_i):.3f}  (A={a_i:.4g}, C={c_i:.4g})  vs sideband {pf_out:.3f}")
 
-    return dict(tree=tree, A=A, B=B, C=C, D=D, closure=closure, pf_in=pf_in, pf_out=pf_out)
+    return dict(tree=tree, A=A, B=B, C=C, D=D, closure=closure, pf_in=pf_in, pf_out=pf_out,
+                sideband=sb_label)
 
 
 if __name__ == "__main__":

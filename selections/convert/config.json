@@ -3,7 +3,7 @@
   "run_sample": "www",
   "submit_samples": [],
   "max_threads": 18,
-  "max_output_file_size_gb": 0,
+  "max_output_file_size_gb": 5,
   "resume_successful_batches": true,
   "lumi_mask": "Cert_Collisions2024_378981_386951_Golden.json",
   "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
