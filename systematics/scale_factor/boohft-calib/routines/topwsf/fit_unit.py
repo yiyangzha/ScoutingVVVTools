@@ -289,7 +289,7 @@ def _write_one_datacard_task(arg):
         with uproot.recreate(os.path.join(outdir, f"inputs_{region}.root")) as fw:
             data_hist = _project_mass_payload(payload, "data_obs", wp, region, "nominal", pt_range)
             fw["data_obs"] = bh_to_uproot(data_hist)
-            for proc in args.processes:
+            for proc in args.template_processes:
                 nominal = fix_bh(_project_mass_payload(payload, proc, wp, region, "nominal", pt_range))
                 fw[proc] = bh_to_uproot(nominal)
                 for syst in args.systematics:
@@ -309,9 +309,9 @@ def _write_one_datacard_task(arg):
 
     if getattr(args, "make_plots", False):
         plot_args = SimpleNamespace(
-            colors=args.plot_colors,
-            plot_processes=args.plot_processes,
-            process_colors=dict(zip(args.plot_processes, args.plot_colors)),
+            colors=args.template_plot_colors,
+            plot_processes=args.template_plot_processes,
+            process_colors=dict(zip(args.template_plot_processes, args.template_plot_colors)),
             process_labels=args.process_labels,
             xlabel=args.xlabel,
             year=args.year,
@@ -392,6 +392,81 @@ def _legend_errorbar(ax, color, label, linewidth):
         elinewidth=linewidth,
         label=label,
     )
+
+
+def _plot_template_prefit_shapes(inputdir, workdir, args):
+    """Save pre-fit template stacks with and without the QCD process.
+
+    These plots come directly from the projected template ROOT files instead of
+    fitDiagnostics so both variants are available regardless of whether QCD is
+    enabled in the fit model.
+    """
+    made = []
+    for qcd_label, include_qcd in [("with_qcd", True), ("without_qcd", False)]:
+        processes = [
+            proc
+            for proc in args.template_plot_processes
+            if include_qcd or proc != "qcd"
+        ]
+        colors = [
+            color
+            for proc, color in zip(args.template_plot_processes, args.template_plot_colors)
+            if include_qcd or proc != "qcd"
+        ]
+        for region in ["pass", "fail"]:
+            with uproot.open(os.path.join(inputdir, f"inputs_{region}.root")) as source:
+                edges = source["data_obs"].axis().edges()
+                data_hist = source["data_obs"]
+                data = np.asarray(data_hist.values(), dtype=float)
+                data_var = data_hist.variances()
+                data_err = np.sqrt(np.maximum(data if data_var is None else data_var, 0.0))
+                values_mc = [np.asarray(source[proc].values(), dtype=float) for proc in processes]
+                variances_mc = []
+                for proc in processes:
+                    variance = source[proc].variances()
+                    variances_mc.append(np.asarray(source[proc].values() if variance is None else variance, dtype=float))
+
+            total = np.sum(values_mc, axis=0)
+            total_err = np.sqrt(np.maximum(np.sum(variances_mc, axis=0), 0.0))
+            fig = plt.figure(figsize=(10, 10))
+            gs = mpl.gridspec.GridSpec(2, 1, height_ratios=[3, 1], hspace=0.05)
+            ax = fig.add_subplot(gs[0])
+            cms_label(ax, args.year, args.lumi)
+            hep.histplot(
+                values_mc,
+                bins=edges,
+                label=[args.process_labels.get(proc, proc) for proc in processes],
+                histtype="fill",
+                color=colors,
+                edgecolor="k",
+                linewidth=1,
+                stack=True,
+            )
+            ax.fill_between(edges, _post_step_values(total - total_err), _post_step_values(total + total_err), step="post", hatch="\\\\", edgecolor="dimgrey", facecolor="none", linewidth=0, label="Total unc.")
+            hep.histplot(data, yerr=data_err, bins=edges, histtype="errorbar", color="k", label="Data")
+            ax.set_xlim(edges[0], edges[-1])
+            ax.set_ylim(0, max(np.max(data), np.max(total), 1.0) * 1.8)
+            ax.set_ylabel("Events / bin")
+            ax.set_xticklabels([])
+            qcd_text = "with QCD" if include_qcd else "without QCD"
+            _add_fit_point_labels(ax, args.tagger_label, args.wp, f"{args.pt_name}, {region}, pre-fit {qcd_text}")
+            ax.legend(fontsize=19)
+
+            axr = fig.add_subplot(gs[1])
+            total_clip = np.maximum(total, 1e-20)
+            axr.fill_between(edges, _post_step_values((total - total_err) / total_clip), _post_step_values((total + total_err) / total_clip), step="post", hatch="\\\\", edgecolor="dimgrey", facecolor="none", linewidth=0)
+            hep.histplot(data / total_clip, yerr=data_err / total_clip, bins=edges, histtype="errorbar", color="k")
+            axr.plot([edges[0], edges[-1]], [1, 1], color="black")
+            axr.set_xlim(edges[0], edges[-1])
+            axr.set_ylim(0.5, 1.5)
+            axr.set_xlabel(args.xlabel)
+            axr.set_ylabel("Data / MC")
+            fname = f"stack_prefit_{qcd_label}_{region}.png"
+            fig.savefig(os.path.join(workdir, fname))
+            plt_savefig_infinite(os.path.join(workdir, fname.replace(".png", ".pdf")))
+            plt.close(fig)
+            made.append(fname)
+    return made
 
 
 def _plot_fit_shapes(inputdir, workdir, args):
@@ -675,7 +750,10 @@ def _fit_task(arg):
         tagger_label=fit_args.tagger_label,
         wp=task["wp"],
         pt_name=task["pt_name"],
+        template_plot_processes=fit_args.template_plot_processes,
+        template_plot_colors=fit_args.template_plot_colors,
     )
+    _plot_template_prefit_shapes(task["inputdir"], workdir, plot_args)
     _plot_fit_shapes(task["inputdir"], workdir, plot_args)
     _plot_mc_prepost_shapes(task["inputdir"], workdir, plot_args)
     return {**task, "workdir": workdir, "status": status, "sf": parse_sf_lines(os.path.join(workdir, "fit.log"), fit_args.poi_categories)}
@@ -701,8 +779,11 @@ class TopWSFFitUnit(ProcessingUnit):
         self.datacard_args = SimpleNamespace(
             outputdir=self.outputdir,
             processes=list(self.global_cfg.fit_processes),
+            template_processes=list(getattr(self.global_cfg, "template_processes", self.global_cfg.fit_processes)),
             plot_processes=list(self.global_cfg.plot_process_order),
             plot_colors=list(self.global_cfg.plot_colors),
+            template_plot_processes=list(getattr(self.global_cfg, "template_plot_process_order", self.global_cfg.plot_process_order)),
+            template_plot_colors=list(getattr(self.global_cfg, "template_plot_colors", self.global_cfg.plot_colors)),
             process_labels=self.global_cfg.process_labels,
             xlabel="$m_{SD}$ [GeV]",
             year=str(self.global_cfg.year),
@@ -728,6 +809,8 @@ class TopWSFFitUnit(ProcessingUnit):
             systematics=[syst for syst in self.global_cfg.systematics if syst != "nominal"],
             plot_processes=list(self.global_cfg.plot_process_order),
             colors=list(self.global_cfg.plot_colors),
+            template_plot_processes=list(getattr(self.global_cfg, "template_plot_process_order", self.global_cfg.plot_process_order)),
+            template_plot_colors=list(getattr(self.global_cfg, "template_plot_colors", self.global_cfg.plot_colors)),
             process_labels=self.global_cfg.process_labels,
             xlabel="$m_{SD}$ [GeV]",
             tagger_label=getattr(self.global_cfg.tagger, "label", "Tagger"),
@@ -813,6 +896,10 @@ class TopWSFFitUnit(ProcessingUnit):
             for fname in [
                 "stack_prefit_pass.png",
                 "stack_prefit_fail.png",
+                "stack_prefit_with_qcd_pass.png",
+                "stack_prefit_with_qcd_fail.png",
+                "stack_prefit_without_qcd_pass.png",
+                "stack_prefit_without_qcd_fail.png",
                 "stack_postfit_pass.png",
                 "stack_postfit_fail.png",
                 "mc_prepost_pass.png",
@@ -835,6 +922,23 @@ class TopWSFFitUnit(ProcessingUnit):
                 ["mc_prepost_pass.png", "mc_prepost_fail.png"],
             ]
             for group in groups:
+                web.add_text('<td style="vertical-align:top;text-align:center;padding:4px;">')
+                for fname in group:
+                    rel_src = os.path.join(local_rel, fname)
+                    if os.path.isfile(os.path.join(self.webdir, rel_src)):
+                        web.add_text(f'<img src="{rel_src}" title="{result["wp"]} {result["pt_name"]} {fname}" alt="{result["wp"]} {result["pt_name"]} {fname}" style="width:360px;height:360px;"/>')
+                web.add_text("</td>")
+            web.add_text("</tr></table>")
+            web.add_text()
+            web.add_text("<h3>Pre-fit QCD comparisons</h3>")
+            web.add_text('<table style="border-collapse:collapse;width:100%;"><tr>')
+            for title in ["With QCD", "Without QCD"]:
+                web.add_text(f'<th style="text-align:center;padding:4px;">{title}</th>')
+            web.add_text("</tr><tr>")
+            for group in [
+                ["stack_prefit_with_qcd_pass.png", "stack_prefit_with_qcd_fail.png"],
+                ["stack_prefit_without_qcd_pass.png", "stack_prefit_without_qcd_fail.png"],
+            ]:
                 web.add_text('<td style="vertical-align:top;text-align:center;padding:4px;">')
                 for fname in group:
                     rel_src = os.path.join(local_rel, fname)

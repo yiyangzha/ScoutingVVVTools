@@ -46,13 +46,13 @@
       "by_year": {
         "2024": {
           "data": [
-            "2024C_official",
-            "2024D_official",
-            "2024E_official",
-            "2024F_official",
-            "2024G_official",
-            "2024H_official",
-            "2024I_official"
+            "2024C",
+            "2024D",
+            "2024E",
+            "2024F",
+            "2024G",
+            "2024H",
+            "2024I"
           ],
           "mc_groups": {
             "ttbar-powheg": ["ttbar_semilep", "ttbar_2l2nu"],
@@ -93,14 +93,6 @@
               "qcd_ht2000"
             ]
           }
-        },
-        "2025": {
-          "data": [
-            "2025B_official",
-            "2025C_official",
-            "2025D_official"
-          ],
-          "mc_groups": {}
         }
       }
     }

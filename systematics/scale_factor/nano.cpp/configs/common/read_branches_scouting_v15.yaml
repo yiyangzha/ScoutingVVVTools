@@ -41,6 +41,8 @@ read_branches:
   - ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud
   - ScoutingPFJetRecluster2_pt
   - ScoutingPFJetRecluster2_eta
+  - ScoutingPFJetRecluster2_phi
+  - ScoutingPFJetRecluster2_scoutUParT_probb
   # Complete GenPart ancestry is required for Scouting MC so the ntuple maker
   # reproduces the original offline W/top matching used by topwsf.
   - GenPart_pt

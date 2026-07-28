@@ -116,12 +116,12 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
         self.xsec_weights = xsec_weights
         self.wps = global_cfg.tagger.wps
         self.shape_variations = all_shape_variations(global_cfg.systematics)
-        self.mc_processes = list(global_cfg.fit_processes)
+        self.mc_processes = list(getattr(global_cfg, "template_processes", global_cfg.fit_processes))
         self.processes = ["data_obs"] + self.mc_processes
         self.mc_group_processes = dict(getattr(global_cfg, "mc_group_processes", {}))
         unknown_processes = sorted(set(self.mc_group_processes.values()) - set(self.mc_processes))
         if unknown_processes:
-            raise ValueError("MC group mapping refers to unknown fit process(es): " + ", ".join(unknown_processes))
+            raise ValueError("MC group mapping refers to unknown template process(es): " + ", ".join(unknown_processes))
         self.validation_regions = _validation_regions(global_cfg)
         self.tagger_span = getattr(global_cfg.tagger, "span", [0.0, 1.0])
 
@@ -597,7 +597,9 @@ class TopWSFTemplatesUnit(ProcessingUnit):
         if selection_name not in list(h.axes["selection"]):
             return
         edges = _axis_edges(h.axes[axis_name])
-        processes = [proc for proc in self.global_cfg.plot_process_order if proc in list(h.axes["process"])]
+        process_order = list(getattr(self.global_cfg, "template_plot_process_order", self.global_cfg.plot_process_order))
+        plot_colors = list(getattr(self.global_cfg, "template_plot_colors", self.global_cfg.plot_colors))
+        processes = [proc for proc in process_order if proc in list(h.axes["process"])]
         values_mc = []
         variances_mc = []
         for proc in processes:
@@ -619,7 +621,7 @@ class TopWSFTemplatesUnit(ProcessingUnit):
             yerr_data,
             yerr_data,
             [self.global_cfg.process_labels.get(proc, proc) for proc in processes],
-            [self.global_cfg.plot_colors[self.global_cfg.plot_process_order.index(proc)] for proc in processes],
+            [plot_colors[process_order.index(proc)] for proc in processes],
             xlabel,
             "Events / bin",
             str(self.global_cfg.year),
@@ -716,7 +718,7 @@ class TopWSFTemplatesUnit(ProcessingUnit):
         custom_selection = getattr(self.global_cfg, "custom_selection", None)
         custom_selection = "None" if custom_selection in (None, "") else custom_selection
         producer_url = "https://github.com/colizz/nano.cpp/blob/main/src/producers/HeavyFlavMuonSampleProducer.cpp"
-        web.add_text("These inclusive plots use nominal events after the muon-channel ntuple producer selection: one tight isolated muon, corrected MET > 50 GeV, a reconstructed leptonic W, at least one medium-b-tagged AK4 jet separated from the muon, and at least one probe AK8 jet separated from the muon. The producer keeps the leading probe AK8 jet for the ntuple.\n")
+        web.add_text("These inclusive plots use nominal events after the muon-channel selection: one tight isolated muon, corrected MET > 50 GeV, a reconstructed leptonic W, the configured AK4 b-tag requirement separated from the muon, and at least one probe AK8 jet separated from the muon. The producer keeps the leading probe AK8 jet for the ntuple.\n")
         web.add_text(f"Producer reference: [HeavyFlavMuonSampleProducer.cpp]({producer_url}).\n")
         web.add_text("On top of the producer selection, step 1 applies:\n")
         web.add_text(f"1. base selection: `{self.global_cfg.selection}`\n")

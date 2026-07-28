@@ -1510,6 +1510,35 @@ def data_lumi(samples, data_names):
     return total
 
 
+def calibration_custom_selection(calibration, year, data_names):
+    terms = []
+    configured = calibration.get("custom_selection")
+    if configured not in (None, ""):
+        terms.append(f"({configured})")
+
+    btag_cfg = calibration.get("ak4_btag", {})
+    if not btag_cfg.get("enabled", False):
+        return " & ".join(terms) if terms else None
+    official_data = [name for name in data_names if is_official_sample(name)]
+    if official_data:
+        raise SystemExit(
+            "calibration.ak4_btag cannot be used with official data samples because their "
+            "ScoutingPFJetRecluster schema has no UParT b-tag branch: "
+            + ", ".join(official_data)
+        )
+    working_points = btag_cfg.get("working_point_by_year", {})
+    if str(year) not in working_points:
+        raise SystemExit(f"calibration.ak4_btag.working_point_by_year is missing year {year}")
+    branch = str(btag_cfg.get("ntuple_branch", "ak4_btag_max"))
+    if not branch.isidentifier():
+        raise SystemExit(f"calibration.ak4_btag.ntuple_branch is not a valid ntuple branch name: {branch}")
+    working_point = float(working_points[str(year)])
+    if not 0.0 <= working_point <= 1.0:
+        raise SystemExit(f"calibration.ak4_btag working point for {year} must be in [0, 1]")
+    terms.append(f"({branch} > {working_point:g})")
+    return " & ".join(terms)
+
+
 def calibration_input_variations(calibration):
     variations = ["nominal"]
     enabled_systematics = calibration.get("systematics", {}).get("enabled", [])
@@ -1588,8 +1617,8 @@ def prepare_annual_fit_input(cfg, year_samples):
 
 def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_name, tagger_cfg):
     cal = cfg["calibration"]
-    enabled_mc_groups = list(cal.get("fit_enabled_mc_groups", mc_groups.keys()))
-    unknown_enabled_groups = sorted(set(enabled_mc_groups) - set(mc_groups))
+    fit_enabled_mc_groups = list(cal.get("fit_enabled_mc_groups", mc_groups.keys()))
+    unknown_enabled_groups = sorted(set(fit_enabled_mc_groups) - set(mc_groups))
     if unknown_enabled_groups:
         raise SystemExit(
             "calibration.fit_enabled_mc_groups contains unknown MC group(s): "
@@ -1602,7 +1631,13 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
             "calibration.qcd_process_groups contains unknown MC group(s): "
             + ", ".join(unknown_qcd_groups)
         )
-    enabled_qcd_groups = [group for group in qcd_process_groups if group in enabled_mc_groups]
+    template_qcd_groups = list(qcd_process_groups)
+    template_enabled_mc_groups = list(fit_enabled_mc_groups)
+    for group in template_qcd_groups:
+        if group not in template_enabled_mc_groups:
+            template_enabled_mc_groups.append(group)
+    include_qcd_in_fit = bool(cal.get("include_qcd_in_fit", False))
+    enabled_qcd_groups = template_qcd_groups if include_qcd_in_fit else []
     year = str(year)
     card_dir = resolve_path(cal.get("generated_card_dir", "generated/topwsf")) / year
     require_local_path(card_dir, "calibration.generated_card_dir")
@@ -1617,6 +1652,7 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         raise SystemExit(f"data sample lumi is missing/non-positive in sample.json for {year}")
     fit_cfg = cal.get("fit", {})
     systematics = list(cal.get("systematics", {}).get("enabled", []))
+    custom_selection = calibration_custom_selection(cal, year, data_names)
     input_sample_base = calibration_input_dir(cfg, year)
     require_local_path(input_sample_base, "calibration.input_sample_base")
     payload = {
@@ -1636,6 +1672,7 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         "apply_toppt_weight": True,
         "systematics": systematics,
         "selection": cal["selection"],
+        "custom_selection": custom_selection,
         "template_pt_bins": list(cal.get("template_pt_bins", [100, 200.0, 1200.0])),
         "skip_fit": bool(fit_cfg.get("skip_fit", False)),
         "fit_run_impact": bool(fit_cfg.get("fit_run_impact", True)),
@@ -1644,7 +1681,7 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         "lumi_dict": {year: lumi},
         "lumi_uncertainty": {year: 1.025},
         "data_samples": list(data_names),
-        "enabled_sample_groups": enabled_mc_groups,
+        "enabled_sample_groups": template_enabled_mc_groups,
         "mc_sample_groups_and_xsecs": topwsf_groups_and_xsecs(cfg, samples, mc_groups),
         "tagger": {
             "label": tagger_cfg.get("label", tagger_name),
@@ -1655,24 +1692,42 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         },
         "fit_pt_bins": tagger_cfg["pt_bins"],
     }
+    fit_processes = ["tp3", "tp2", "tp1", "other"]
+    template_processes = list(fit_processes)
+    if template_qcd_groups:
+        template_processes.append("qcd")
     if enabled_qcd_groups:
-        payload.update({
-            "mc_group_processes": {group: "qcd" for group in enabled_qcd_groups},
-            "fit_poi_categories": {
-                "top": ["tp3", "tp2", "tp1", "other", "qcd"],
-                "w": ["tp2", "tp3", "tp1", "other", "qcd"],
-            },
-            "fit_processes": ["tp3", "tp2", "tp1", "other", "qcd"],
-            "plot_process_order": ["qcd", "other", "tp1", "tp2", "tp3"],
-            "plot_colors": ["#8c6d31", "lightgrey", "#e42536", "#f89c20", "#5790fc"],
-            "process_labels": {
-                "tp3": "Top-merged",
-                "tp2": "W-merged",
-                "tp1": "Non-merged",
-                "other": "Other",
-                "qcd": "QCD",
-            },
-        })
+        fit_processes.append("qcd")
+    process_labels = {
+        "tp3": "Top-merged",
+        "tp2": "W-merged",
+        "tp1": "Non-merged",
+        "other": "Other",
+        "qcd": "QCD",
+    }
+    process_colors = {
+        "qcd": "#8c6d31",
+        "other": "lightgrey",
+        "tp1": "#e42536",
+        "tp2": "#f89c20",
+        "tp3": "#5790fc",
+    }
+    template_plot_process_order = [proc for proc in ["qcd", "other", "tp1", "tp2", "tp3"] if proc in template_processes]
+    fit_plot_process_order = [proc for proc in template_plot_process_order if proc in fit_processes]
+    payload.update({
+        "mc_group_processes": {group: "qcd" for group in template_qcd_groups},
+        "template_processes": template_processes,
+        "fit_poi_categories": {
+            "top": ["tp3", "tp2", "tp1", "other"] + (["qcd"] if enabled_qcd_groups else []),
+            "w": ["tp2", "tp3", "tp1", "other"] + (["qcd"] if enabled_qcd_groups else []),
+        },
+        "fit_processes": fit_processes,
+        "template_plot_process_order": template_plot_process_order,
+        "template_plot_colors": [process_colors[proc] for proc in template_plot_process_order],
+        "plot_process_order": fit_plot_process_order,
+        "plot_colors": [process_colors[proc] for proc in fit_plot_process_order],
+        "process_labels": process_labels,
+    })
     card_path = card_dir / f"{year}_{target['jet_type']}_{target['jet_category']}_{tagger_name}.yml"
     write_yaml(card_path, payload)
     return card_path

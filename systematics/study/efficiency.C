@@ -255,15 +255,19 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
     // Enable only the branches used below.
     chain.SetBranchStatus("*", 0);
 
+    // The official Run-2024 input uses the original AK4 reclustering
+    // collection. Private Scouting samples use Recluster2.
+    const char* ak4Prefix = isData2024 ? "ScoutingPFJetRecluster" : "ScoutingPFJetRecluster2";
+
     chain.SetBranchStatus("nScoutingFatPFJetRecluster", 1);
     chain.SetBranchStatus("ScoutingFatPFJetRecluster_pt", 1);
     chain.SetBranchStatus("ScoutingFatPFJetRecluster_eta", 1);
     chain.SetBranchStatus("ScoutingFatPFJetRecluster_phi", 1);
 
-    chain.SetBranchStatus("nScoutingPFJetRecluster", 1);
-    chain.SetBranchStatus("ScoutingPFJetRecluster_pt", 1);
-    chain.SetBranchStatus("ScoutingPFJetRecluster_eta", 1);
-    chain.SetBranchStatus("ScoutingPFJetRecluster_phi", 1);
+    chain.SetBranchStatus((string("n") + ak4Prefix).c_str(), 1);
+    chain.SetBranchStatus((string(ak4Prefix) + "_pt").c_str(), 1);
+    chain.SetBranchStatus((string(ak4Prefix) + "_eta").c_str(), 1);
+    chain.SetBranchStatus((string(ak4Prefix) + "_phi").c_str(), 1);
 
     chain.SetBranchStatus("DST_PFScouting_JetHT", 1);
 
@@ -290,10 +294,10 @@ int efficiency(const string& type = TYPE, int nDataFiles = N_DATA_FILES) {
     chain.SetBranchAddress("ScoutingFatPFJetRecluster_eta", fat_eta);
     chain.SetBranchAddress("ScoutingFatPFJetRecluster_phi", fat_phi);
 
-    chain.SetBranchAddress("nScoutingPFJetRecluster", &nAK4);
-    chain.SetBranchAddress("ScoutingPFJetRecluster_pt", ak4_pt);
-    chain.SetBranchAddress("ScoutingPFJetRecluster_eta", ak4_eta);
-    chain.SetBranchAddress("ScoutingPFJetRecluster_phi", ak4_phi);
+    chain.SetBranchAddress((string("n") + ak4Prefix).c_str(), &nAK4);
+    chain.SetBranchAddress((string(ak4Prefix) + "_pt").c_str(), ak4_pt);
+    chain.SetBranchAddress((string(ak4Prefix) + "_eta").c_str(), ak4_eta);
+    chain.SetBranchAddress((string(ak4Prefix) + "_phi").c_str(), ak4_phi);
 
     chain.SetBranchAddress("DST_PFScouting_JetHT", &DST_PFScouting_JetHT);
 

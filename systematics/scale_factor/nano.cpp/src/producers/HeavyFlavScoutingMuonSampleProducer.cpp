@@ -63,6 +63,10 @@ HeavyFlavScoutingMuonSampleProducer::HeavyFlavScoutingMuonSampleProducer(Produce
 
 void HeavyFlavScoutingMuonSampleProducer::begin_file() {
   HeavyFlavBaseProducer::begin_file();
+  // Store the maximum AK4 UParT b score for the original tag-and-probe
+  // topology.  The working point is deliberately applied by topwsf step 2,
+  // so changing it does not change ntuple production.
+  out_.branch("ak4_btag_max", -1.0f);
   out_.branch("passMuTrig", false);
   out_.branch("muon_pt", 0.0f);
   out_.branch("muon_eta", 0.0f);
@@ -147,6 +151,13 @@ bool HeavyFlavScoutingMuonSampleProducer::analyze_variation(Event &event, const 
     }
   }
 
+  float ak4_btag_max = -1.0f;
+  for (const auto &jet : clean_ak4jets) {
+    if (std::abs(delta_phi(jet, mu)) < 2.0f) {
+      ak4_btag_max = std::max(ak4_btag_max, safe_object_float(jet, "scoutUParT_probb", -1.0f));
+    }
+  }
+
   float ht = 0.0f;
   for (const auto &jet : clean_ak4jets) {
     ht += jet.pt();
@@ -176,6 +187,7 @@ bool HeavyFlavScoutingMuonSampleProducer::analyze_variation(Event &event, const 
 
   const auto rel_iso = safe_div(safe_object_float(mu, "trackIso", 99.0f), std::max(mu.pt(), 1.0f));
   out_.fill("passMuTrig", pass_trigger(event, config_.required_triggers));
+  out_.fill("ak4_btag_max", ak4_btag_max);
   out_.fill("muon_pt", mu.pt());
   out_.fill("muon_eta", mu.eta());
   out_.fill("muon_miniIso", rel_iso);
