@@ -234,6 +234,23 @@ def join_remote_path(base, *parts):
     return text
 
 
+def production_version(cfg):
+    value = str(cfg.get("production_version", "")).strip()
+    if not value:
+        raise SystemExit("scale-factor config must define a non-empty production_version")
+    safe_value = safe_path_token(value)
+    if safe_value != value:
+        raise SystemExit(
+            "scale-factor production_version may contain only letters, numbers, '_', '-', and '.': "
+            + value
+        )
+    return value
+
+
+def production_nano_version(cfg):
+    return f"{cfg['nano_version']}_{production_version(cfg)}"
+
+
 def target_storage_name(cfg, target, ntuple, year=None):
     pieces = [
         "scouting_vvv_scale_factor",
@@ -244,6 +261,7 @@ def target_storage_name(cfg, target, ntuple, year=None):
     if not split_by_era(ntuple):
         pieces.append(year or config_years(cfg)[0])
     pieces.append(cfg["nano_version"])
+    pieces.append(production_version(cfg))
     return safe_path_token("_".join(str(piece) for piece in pieces))
 
 
@@ -284,9 +302,10 @@ def split_by_era(section_cfg):
 def sample_base_output_dir(base_path, cfg, era, section_cfg, year=None):
     base = resolve_path(base_path)
     require_local_path(base, "sample_base")
+    version = production_nano_version(cfg)
     if split_by_era(section_cfg):
-        return base / era_year(era) / f"{era}_{cfg['nano_version']}"
-    suffix = f"_{year or era_year(era)}_{cfg['nano_version']}"
+        return base / era_year(era) / f"{era}_{version}"
+    suffix = f"_{year or era_year(era)}_{version}"
     text = str(base)
     if not base.name.endswith(suffix):
         text += suffix
@@ -297,9 +316,10 @@ def mc_output_dir(base_path, cfg, year, section_cfg):
     base = resolve_path(base_path)
     require_local_path(base, "sample_base")
     year = str(year)
+    version = production_nano_version(cfg)
     if split_by_era(section_cfg):
-        return base / year / f"{year}_mc_{cfg['nano_version']}"
-    suffix = f"_{year}_mc_{cfg['nano_version']}"
+        return base / year / f"{year}_mc_{version}"
+    suffix = f"_{year}_mc_{version}"
     text = str(base)
     if not base.name.endswith(suffix):
         text += suffix
@@ -332,14 +352,15 @@ def tier_ntuple_output_dir(cfg, target, era, sample_set="data"):
     )
     if not str(base).startswith("root://"):
         raise SystemExit(f"ntuple.tier_storage_base must be a root:// path, got: {base}")
+    version = production_nano_version(cfg)
     if split_by_era(ntuple):
         suffix = "_mc" if sample_set == "mc" else ""
-        return join_remote_path(base, target_storage_name(cfg, target, ntuple), era_year(era), f"{era}{suffix}_{cfg['nano_version']}")
+        return join_remote_path(base, target_storage_name(cfg, target, ntuple), era_year(era), f"{era}{suffix}_{version}")
     if sample_set == "mc":
         return join_remote_path(
             base,
             target_storage_name(cfg, target, ntuple, era_year(era)),
-            f"{era}_mc_{cfg['nano_version']}",
+            f"{era}_mc_{version}",
         )
     return join_remote_path(base, target_storage_name(cfg, target, ntuple, era_year(era)))
 
@@ -1574,6 +1595,14 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
             "calibration.fit_enabled_mc_groups contains unknown MC group(s): "
             + ", ".join(unknown_enabled_groups)
         )
+    qcd_process_groups = list(cal.get("qcd_process_groups", []))
+    unknown_qcd_groups = sorted(set(qcd_process_groups) - set(mc_groups))
+    if unknown_qcd_groups:
+        raise SystemExit(
+            "calibration.qcd_process_groups contains unknown MC group(s): "
+            + ", ".join(unknown_qcd_groups)
+        )
+    enabled_qcd_groups = [group for group in qcd_process_groups if group in enabled_mc_groups]
     year = str(year)
     card_dir = resolve_path(cal.get("generated_card_dir", "generated/topwsf")) / year
     require_local_path(card_dir, "calibration.generated_card_dir")
@@ -1596,6 +1625,7 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         "category": cal.get("category", "w"),
         "year": year,
         "nano_version": str(cfg["nano_version"]),
+        "production_version": production_version(cfg),
         "sample_base": str(input_sample_base),
         "sample_scan_wp": str(input_sample_base),
         "sample_base_append_year_version": False,
@@ -1625,6 +1655,24 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         },
         "fit_pt_bins": tagger_cfg["pt_bins"],
     }
+    if enabled_qcd_groups:
+        payload.update({
+            "mc_group_processes": {group: "qcd" for group in enabled_qcd_groups},
+            "fit_poi_categories": {
+                "top": ["tp3", "tp2", "tp1", "other", "qcd"],
+                "w": ["tp2", "tp3", "tp1", "other", "qcd"],
+            },
+            "fit_processes": ["tp3", "tp2", "tp1", "other", "qcd"],
+            "plot_process_order": ["qcd", "other", "tp1", "tp2", "tp3"],
+            "plot_colors": ["#8c6d31", "lightgrey", "#e42536", "#f89c20", "#5790fc"],
+            "process_labels": {
+                "tp3": "Top-merged",
+                "tp2": "W-merged",
+                "tp1": "Non-merged",
+                "other": "Other",
+                "qcd": "QCD",
+            },
+        })
     card_path = card_dir / f"{year}_{target['jet_type']}_{target['jet_category']}_{tagger_name}.yml"
     write_yaml(card_path, payload)
     return card_path

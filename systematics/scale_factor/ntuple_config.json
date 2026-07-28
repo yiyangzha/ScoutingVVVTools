@@ -2,6 +2,7 @@
   "sample_config": "../../src/sample.json",
   "year": ["2024"],
   "nano_version": "v15",
+  "production_version": "v1",
   "run_targets": [
     {
       "jet_type": "ak8",

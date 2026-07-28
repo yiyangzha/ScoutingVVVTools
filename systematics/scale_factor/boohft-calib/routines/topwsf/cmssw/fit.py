@@ -69,12 +69,13 @@ for syst in systematics:
         cb.cp().process(processes).AddSyst(cb, syst, "shape", ch.SystMap()(1.0))
 
 cb.cp().AddSyst(cb, "lumi_13TeV", "lnN", ch.SystMap()(args.lumi_uncertainty))
+freely_normalized_processes = [proc for proc in ("other", "qcd") if proc in processes]
 for proc in processes:
-    if proc == "other":
+    if proc in freely_normalized_processes:
         continue
     cb.cp().process([proc]).AddSyst(cb, proc + "_xsec", "lnN", ch.SystMap()(1.05))
-if "other" in processes:
-    cb.cp().process(["other"]).AddSyst(cb, "other_xsec", "lnU", ch.SystMap()(5.0))
+for proc in freely_normalized_processes:
+    cb.cp().process([proc]).AddSyst(cb, proc + "_xsec", "lnU", ch.SystMap()(5.0))
 
 for fit_bin in cb.bin_set():
     cb.cp().bin([fit_bin]).ExtractShapes(

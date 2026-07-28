@@ -2,6 +2,7 @@
   "sample_config": "../../src/sample.json",
   "year": ["2024"],
   "nano_version": "v15",
+  "production_version": "v1",
   "xsection_to_pb": 0.001,
   "run_targets": [
     {
@@ -46,7 +47,8 @@
       "fit_impact_parallel": 2,
       "fit_auto_mc_stats": 0
     },
-    "fit_enabled_mc_groups": ["ttbar-powheg", "singletop", "diboson", "w"],
+    "fit_enabled_mc_groups": ["ttbar-powheg", "singletop", "diboson", "w", "qcd-mg"],
+    "qcd_process_groups": ["qcd-mg"],
     "samples": {
       "by_year": {
         "2024": {

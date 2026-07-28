@@ -122,14 +122,15 @@ def _preview_datacard_content(inputdir, processes, systematics, lumi_unce, auto_
         "------------",
         "lumi_13TeV      lnN      " + " ".join([f"{lumi_unce:.3f}"] * (2 * len(processes))),
     ]
+    freely_normalized_processes = [proc for proc in ("other", "qcd") if proc in processes]
     for proc in processes:
-        if proc == "other":
+        if proc in freely_normalized_processes:
             continue
         mask = ["1.05" if p == proc else "-" for p in proc_line]
         lines.append(f"{proc}_xsec".ljust(16) + "lnN      " + " ".join(mask))
-    if "other" in processes:
-        mask = ["5.00" if p == "other" else "-" for p in proc_line]
-        lines.append("other_xsec".ljust(16) + "lnU      " + " ".join(mask))
+    for proc in freely_normalized_processes:
+        mask = ["5.00" if p == proc else "-" for p in proc_line]
+        lines.append(f"{proc}_xsec".ljust(16) + "lnU      " + " ".join(mask))
     lines.append("")
 
     for syst in systematics:

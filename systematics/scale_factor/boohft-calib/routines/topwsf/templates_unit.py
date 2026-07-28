@@ -118,6 +118,10 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
         self.shape_variations = all_shape_variations(global_cfg.systematics)
         self.mc_processes = list(global_cfg.fit_processes)
         self.processes = ["data_obs"] + self.mc_processes
+        self.mc_group_processes = dict(getattr(global_cfg, "mc_group_processes", {}))
+        unknown_processes = sorted(set(self.mc_group_processes.values()) - set(self.mc_processes))
+        if unknown_processes:
+            raise ValueError("MC group mapping refers to unknown fit process(es): " + ", ".join(unknown_processes))
         self.validation_regions = _validation_regions(global_cfg)
         self.tagger_span = getattr(global_cfg.tagger, "span", [0.0, 1.0])
 
@@ -306,9 +310,11 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
         return event_ratio * sample_norm
 
     def _process_selections(self, events, group):
-        """Split MC into tp3/tp2/tp1/other fit processes."""
+        """Split top MC by matching and map each non-top group to its fit process."""
         # Top-like MC is split by generator matching into the three template
-        # processes used by the tag-and-probe fit.  Non-top MC stays in "other".
+        # processes used by the tag-and-probe fit.  Non-top groups default to
+        # "other", while cards may map a group such as qcd-mg to a dedicated
+        # process so it remains separate in validation, prefit, and postfit.
         if group in self.global_cfg.top_process_groups:
             tp3 = (events["fj_1_dr_T_Wq_max"] < 0.8) & (events["fj_1_dr_T_b"] < 0.8)
             tp2 = (
@@ -317,7 +323,8 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
             )
             tp1 = ~(tp3 | tp2)
             return {"tp3": tp3, "tp2": tp2, "tp1": tp1}
-        return {"other": ak.ones_like(events["genWeight"], dtype=bool)}
+        process_name = self.mc_group_processes.get(group, "other")
+        return {process_name: ak.ones_like(events["genWeight"], dtype=bool)}
 
     def process(self, events):
         """Process one coffea chunk and return filled histograms."""
