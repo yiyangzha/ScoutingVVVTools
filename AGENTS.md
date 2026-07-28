@@ -104,6 +104,8 @@ This repository is a CMS Run 3 Scouting VVV analysis toolkit. It processes Scout
 - Do not run local tests, builds, or sample processing unless the user explicitly reverses that instruction.
 - Prefer static inspection (`rg`, `sed`, `git diff`) for verification in this repository.
 - Treat `src/sample.json` as the single source for sample paths, luminosity, and xsections.
+- The non-official 2024 B--I UParT data samples use the per-era golden luminosities 0.13, 7.26, 7.98, 11.42, 28.04, 38.07, 5.49, and 11.56 fb^-1, respectively.
+- MC `raw_entries` values are intentionally initialized to 0 and must be updated after conversion before MC normalization is used.
 - Do not use offline reco `Muon`, `Jet`, `FatJet`, or offline MET branches for Scouting workflows when Scouting branches exist.
 - Keep edits scoped to the requested workflow; do not refactor unrelated analysis code.
 
