@@ -41,6 +41,11 @@
       "enabled": ["pu", "jms", "jmr", "lhescalemuf", "lhescalemur"],
       "available_but_disabled": ["jes", "jer", "met"]
     },
+    "remote_normalization": {
+      "enabled": true,
+      "workers": 4,
+      "redirector": "root://cms-xrd-global.cern.ch/"
+    },
     "fit": {
       "skip_fit": false,
       "fit_run_impact": true,

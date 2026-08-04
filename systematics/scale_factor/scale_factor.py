@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import sysconfig
+import time
 from pathlib import Path
 
 
@@ -91,6 +93,13 @@ def write_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
+
+
+def write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 def as_list(value):
@@ -608,6 +617,228 @@ def das_env_prefix():
     cms_setup = "[ -r /cvmfs/cms.cern.ch/cmsset_default.sh ] && source /cvmfs/cms.cern.ch/cmsset_default.sh >/dev/null 2>&1; exec \"$@\""
     parts.extend([shlex.quote("/bin/bash"), "-lc", shlex.quote(cms_setup), "scale-factor-das"])
     return " ".join(parts)
+
+
+def remote_normalization_settings(calibration):
+    settings = calibration.get("remote_normalization", {})
+    if settings is None:
+        settings = {}
+    if not isinstance(settings, dict):
+        raise SystemExit("calibration.remote_normalization must be an object")
+    workers = int(settings.get("workers", 4))
+    if workers < 1:
+        raise SystemExit("calibration.remote_normalization.workers must be positive")
+    redirectors = as_list(settings.get("redirectors", settings.get("redirector", "root://cms-xrd-global.cern.ch/")))
+    redirectors.extend(value for value in os.environ.get("SCALE_FACTOR_XRD_REDIRECTORS", "").replace(",", " ").split() if value)
+    redirectors = list(dict.fromkeys(str(value).rstrip("/") for value in redirectors if str(value).strip()))
+    if not redirectors:
+        raise SystemExit("calibration.remote_normalization must define at least one XRootD redirector")
+    return {
+        "enabled": bool(settings.get("enabled", True)),
+        "workers": workers,
+        "redirectors": redirectors,
+    }
+
+
+def ensure_grid_proxy():
+    proxy = os.environ.get("X509_USER_PROXY")
+    if not proxy:
+        default_proxy = Path(f"/tmp/x509up_u{os.getuid()}")
+        if default_proxy.exists():
+            proxy = str(default_proxy)
+            os.environ["X509_USER_PROXY"] = proxy
+    if not proxy or not Path(proxy).is_file():
+        raise SystemExit(
+            "Remote MC normalization requires a valid CMS grid proxy. "
+            "Create one with voms-proxy-init and set X509_USER_PROXY if it is not in /tmp."
+        )
+
+
+def das_files(dataset):
+    executable = resolve_dasgoclient()
+    if not executable:
+        raise SystemExit("Could not find dasgoclient required for remote MC normalization")
+    base_query = f"file dataset={dataset}"
+    queries = [base_query]
+    if str(dataset).endswith("/USER"):
+        queries = [
+            base_query + " instance=prod/phys03",
+            base_query + " system=rucio",
+            base_query + " system=dbs3",
+            base_query,
+        ]
+    errors = []
+    for query in queries:
+        command = f"{das_env_prefix()} {shlex.quote(executable)} -query {shlex.quote(query)}"
+        result = subprocess.run(["/bin/bash", "-lc", command], capture_output=True, text=True)
+        files = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+        if result.returncode == 0 and files:
+            return files
+        detail = result.stderr.strip() or "no files returned"
+        errors.append(f"{query}: {detail}")
+    raise RuntimeError("All DAS queries failed for " + str(dataset) + "\n  " + "\n  ".join(errors))
+
+
+def remote_file_urls(path, redirectors):
+    path = str(path)
+    if path.startswith("root://"):
+        if not path.endswith(".root"):
+            raise RuntimeError(f"Remote normalization input is not a ROOT file: {path}")
+        return [path]
+    if path.startswith("/store/"):
+        return [redirector + "/" + path for redirector in redirectors]
+    if path.endswith(".root"):
+        return [path]
+    raise RuntimeError(f"Unsupported remote normalization input: {path}")
+
+
+def remote_sample_files(sample):
+    files = []
+    for entry in sample_paths(sample):
+        if entry.startswith("root://") or entry.startswith("/store/") or entry.endswith(".root"):
+            files.append(entry)
+            continue
+        if entry.startswith("/") and entry.count("/") >= 3:
+            files.extend(das_files(entry))
+            continue
+        raise RuntimeError(f"Unsupported MC sample path for remote normalization: {entry}")
+    return sorted(set(files))
+
+
+def inspect_remote_normalization_file(task):
+    sample_name, source_path, candidates = task
+    failures = []
+    for path in candidates:
+        for attempt in range(3):
+            try:
+                import awkward as ak
+                import numpy as np
+                import uproot
+
+                with uproot.open(path) as root_file:
+                    if "Events" not in root_file:
+                        raise KeyError("missing Events tree")
+                    if "Runs" not in root_file:
+                        raise KeyError("missing Runs tree")
+                    runs = root_file["Runs"]
+                    if "genEventSumw" not in runs.keys():
+                        raise KeyError("missing Runs/genEventSumw")
+                    gen_sumw = np.asarray(runs["genEventSumw"].array(library="np"), dtype=float)
+                    gen_count = None
+                    if "genEventCount" in runs.keys():
+                        gen_count = int(np.sum(runs["genEventCount"].array(library="np")))
+                    lhe_scale_sumw = None
+                    if "LHEScaleSumw" in runs.keys():
+                        ratios = runs["LHEScaleSumw"].array(library="ak")
+                        if len(ratios) != len(gen_sumw):
+                            raise ValueError("Runs/LHEScaleSumw length does not match Runs/genEventSumw")
+                        weighted = ratios * ak.Array(gen_sumw)[:, np.newaxis]
+                        lhe_scale_sumw = np.asarray(ak.to_numpy(ak.sum(weighted, axis=0)), dtype=float).tolist()
+                    return {
+                        "sample": sample_name,
+                        "source_path": source_path,
+                        "read_path": path,
+                        "status": "ok",
+                        "events_entries": int(root_file["Events"].num_entries),
+                        "runs_entries": int(runs.num_entries),
+                        "gen_event_sumw": float(np.sum(gen_sumw)),
+                        "gen_event_count": gen_count,
+                        "lhe_scale_sumw": lhe_scale_sumw,
+                    }
+            except Exception as error:
+                failures.append(f"{path} (attempt {attempt + 1}): {error}")
+                if attempt < 2:
+                    time.sleep(2)
+    return {
+        "sample": sample_name,
+        "source_path": source_path,
+        "status": "error",
+        "error": "; ".join(failures),
+    }
+
+
+def summarize_remote_normalization(sample_name, records, require_lhe_scale):
+    failed = [record for record in records if record["status"] != "ok"]
+    if failed:
+        preview = "\n  ".join(f"{item['source_path']}: {item['error']}" for item in failed[:10])
+        suffix = "" if len(failed) <= 10 else f"\n  ... and {len(failed) - 10} more"
+        raise SystemExit(f"Could not read all remote NanoAOD inputs for {sample_name}:\n  {preview}{suffix}")
+    if not records:
+        raise SystemExit(f"No remote NanoAOD files resolved for MC sample {sample_name}")
+    lhe_values = [record["lhe_scale_sumw"] for record in records]
+    if any(value is None for value in lhe_values):
+        if require_lhe_scale:
+            missing = next(record["source_path"] for record in records if record["lhe_scale_sumw"] is None)
+            raise SystemExit(f"Missing Runs/LHEScaleSumw in remote NanoAOD input required for LHE systematics: {missing}")
+        total_lhe_scale_sumw = None
+    else:
+        lengths = {len(value) for value in lhe_values}
+        if len(lengths) != 1:
+            raise SystemExit(f"Inconsistent Runs/LHEScaleSumw vector sizes in remote NanoAOD inputs for {sample_name}")
+        total_lhe_scale_sumw = [
+            float(sum(value[index] for value in lhe_values))
+            for index in range(next(iter(lengths), 0))
+        ]
+    total_sumw = float(sum(record["gen_event_sumw"] for record in records))
+    if abs(total_sumw) <= 1e-20:
+        raise SystemExit(f"Zero remote Runs/genEventSumw for MC sample {sample_name}")
+    has_counts = all(record["gen_event_count"] is not None for record in records)
+    empty_records = [record for record in records if record["events_entries"] == 0]
+    return {
+        "filesTotal": len(records),
+        "filesEmptyEvents": len(empty_records),
+        "eventsEntries": int(sum(record["events_entries"] for record in records)),
+        "genEventCount": int(sum(record["gen_event_count"] for record in records)) if has_counts else None,
+        "genEventSumw": total_sumw,
+        "genEventSumwEmptyEventsFiles": float(sum(record["gen_event_sumw"] for record in empty_records)),
+        "genEventSumwNonemptyEventsFiles": float(sum(record["gen_event_sumw"] for record in records if record["events_entries"] > 0)),
+        "lheScaleSumw": total_lhe_scale_sumw,
+    }
+
+
+def remote_mc_normalization(cfg, samples, year_samples):
+    calibration = cfg["calibration"]
+    settings = remote_normalization_settings(calibration)
+    if not settings["enabled"]:
+        return None
+    ensure_grid_proxy()
+    year = str(year_samples["year"])
+    names = mc_sample_names(year_samples["mc_groups"])
+    require_lhe_scale = any(
+        systematic in ("lhescalemuf", "lhescalemur")
+        for systematic in calibration.get("systematics", {}).get("enabled", [])
+    )
+    tasks = []
+    for name in names:
+        print(f"Resolving remote NanoAOD files for MC sample {name} ...", flush=True)
+        files = remote_sample_files(samples[name])
+        print(f"  {len(files)} files", flush=True)
+        for source_path in files:
+            tasks.append((name, source_path, remote_file_urls(source_path, settings["redirectors"])))
+    print(f"Reading Runs metadata from {len(tasks)} remote NanoAOD files with {settings['workers']} worker(s) ...", flush=True)
+    records_by_sample = {name: [] for name in names}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=settings["workers"]) as executor:
+        for record in executor.map(inspect_remote_normalization_file, tasks):
+            records_by_sample[record["sample"]].append(record)
+    summaries = {
+        name: summarize_remote_normalization(name, records_by_sample[name], require_lhe_scale)
+        for name in names
+    }
+    report_path = resolve_path("generated/normalization") / production_version(cfg) / f"{year}_remote_mc_normalization.json"
+    report = {
+        "source": "original ScoutingNanoAOD via DAS and XRootD",
+        "year": year,
+        "redirectors": settings["redirectors"],
+        "samples": summaries,
+        "files": records_by_sample,
+    }
+    write_json(report_path, report)
+    print(f"Wrote remote MC normalization report: {report_path}", flush=True)
+    return {
+        "source": report["source"],
+        "report": str(report_path),
+        "samples": summaries,
+    }
 
 
 def base_command_env():
@@ -1615,7 +1846,7 @@ def prepare_annual_fit_input(cfg, year_samples):
     print(f"Prepared annual fit input for {year}: {annual_dir}")
 
 
-def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_name, tagger_cfg):
+def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_name, tagger_cfg, remote_mc_normalization=None):
     cal = cfg["calibration"]
     fit_enabled_mc_groups = list(cal.get("fit_enabled_mc_groups", mc_groups.keys()))
     unknown_enabled_groups = sorted(set(fit_enabled_mc_groups) - set(mc_groups))
@@ -1692,6 +1923,8 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
         },
         "fit_pt_bins": tagger_cfg["pt_bins"],
     }
+    if remote_mc_normalization is not None:
+        payload["remote_mc_normalization"] = remote_mc_normalization
     fit_processes = ["tp3", "tp2", "tp1", "other"]
     template_processes = list(fit_processes)
     if template_qcd_groups:
@@ -1740,6 +1973,11 @@ def compute_sf(cfg, args):
     boohft_repo = resolve_path(cal.get("repo", "boohft-calib"))
     targets = run_targets(cfg)
 
+    remote_normalizations = {}
+    if not args.dry_run:
+        for year_samples in year_sample_groups:
+            remote_normalizations[str(year_samples["year"])] = remote_mc_normalization(cfg, samples, year_samples)
+
     cards = []
     for year_samples in year_sample_groups:
         year = str(year_samples["year"])
@@ -1758,7 +1996,19 @@ def compute_sf(cfg, args):
                 if tagger_name not in taggers:
                     raise SystemExit(f"Tagger {tagger_name} is listed in run_targets but missing from calibration.binning.{jet_type}.{jet_category}")
                 tagger_cfg = taggers[tagger_name]
-                cards.append(generated_card(cfg, samples, year_samples["data"], mc_groups, year, target, tagger_name, tagger_cfg))
+                cards.append(
+                    generated_card(
+                        cfg,
+                        samples,
+                        year_samples["data"],
+                        mc_groups,
+                        year,
+                        target,
+                        tagger_name,
+                        tagger_cfg,
+                        remote_normalizations.get(year),
+                    )
+                )
 
     if not cards:
         raise SystemExit("No scale-factor cards were generated")
