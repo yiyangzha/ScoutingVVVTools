@@ -155,6 +155,8 @@ The Scouting ntuple card uses strict branch binding. Its schema must match ROOT 
 
 Each mode writes a controller `log.txt` in its work directory. Scale-factor modes write `systematics/scale_factor/log.txt`; Condor ntuple jobs keep stdout/stderr/scheduler logs under each generated `ntuple.job_dir` `logs/` directory, matching the convert SLURM pattern of separate per-job logs.
 
+`systematics/scale_factor/check_empty_mc_inputs.py` is a read-only lxplus diagnostic for the selected scale-factor MC inputs. It resolves the current `ntuple_config.json` samples with DAS, records every source file's `Events` entry count plus `Runs/genEventCount` (when present) and `Runs/genEventSumw`, and reports the MC normalization inflation predicted if zero-entry inputs were dropped. Its Events/Runs-count ratio checks the unweighted source event accounting; `genEventSumw` remains the actual MC normalization denominator. With `--xsec-weights`, it also compares those sums to the denominator actually used by topwsf step 1. It does not run conversion or alter ntuples.
+
 Key outputs:
 
 - Convert: `{output_root}/{signal|bkg|data}/...root`.
