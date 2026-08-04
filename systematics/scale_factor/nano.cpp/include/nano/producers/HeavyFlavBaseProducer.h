@@ -71,6 +71,7 @@ struct ProducerConfig {
   std::string preselection;
   ChannelOptions channel_options;
   std::vector<std::string> required_triggers;
+  std::vector<std::string> required_jetht_triggers;
   std::vector<std::string> read_branches;
   std::vector<std::string> optional_read_branches;
   std::unordered_map<std::string, BranchType> nano_branch_types;

@@ -238,6 +238,7 @@ nano::ProducerConfig make_config(const YAML::Node &settings, const std::string &
   config.preselection = settings["preselection"].as<std::string>();
   config.channel_options = parse_channel_options(settings, channel);
   config.required_triggers = nano::runtime::yaml_string_list(settings, "required_triggers");
+  config.required_jetht_triggers = nano::runtime::yaml_string_list(settings, "required_jetht_triggers");
   if (settings["input"]) {
     const auto input = settings["input"];
     if (input["strict_read_branches"]) {
@@ -282,7 +283,7 @@ nano::ProducerConfig make_config(const YAML::Node &settings, const std::string &
   // read_branches safety checks:
   // - Runtime cards should explicitly list every physical NanoAOD branch the
   //   channel reads.
-  // - required_triggers, stored_tagger_names, and optional LHEScaleWeight can
+  // - required trigger lists, stored_tagger_names, and optional LHEScaleWeight can
   //   imply extra physical branches; auto-add them for backward compatibility,
   //   but warn so the card can be made explicit.
   // - If LHEScaleWeight is listed while output.include_lhe_weights is disabled,
@@ -303,13 +304,17 @@ nano::ProducerConfig make_config(const YAML::Node &settings, const std::string &
     config.tagger_names.push_back(item.as<std::string>());
   }
   std::set<std::string> seen(config.read_branches.begin(), config.read_branches.end());
-  for (const auto &trigger : config.required_triggers) {
-    if (seen.insert(trigger).second) {
-      std::cerr << "Info: adding branch " << trigger << " to read_branches from required_triggers.\n";
-      config.read_branches.push_back(trigger);
+  const auto add_trigger_branches = [&](const std::vector<std::string> &triggers, const char *config_key) {
+    for (const auto &trigger : triggers) {
+      if (seen.insert(trigger).second) {
+        std::cerr << "Info: adding branch " << trigger << " to read_branches from " << config_key << ".\n";
+        config.read_branches.push_back(trigger);
+      }
+      config.nano_branch_types[trigger] = nano::BranchType::kBool;
     }
-    config.nano_branch_types[trigger] = nano::BranchType::kBool;
-  }
+  };
+  add_trigger_branches(config.required_triggers, "required_triggers");
+  add_trigger_branches(config.required_jetht_triggers, "required_jetht_triggers");
   const bool auto_add_tagger_branches =
       !settings["stored_tagger_auto_add_branches"] || settings["stored_tagger_auto_add_branches"].as<bool>();
   if (auto_add_tagger_branches) {
@@ -494,36 +499,6 @@ std::unique_ptr<TFile> open_input_file_with_retry(const std::string &input_file)
   throw std::runtime_error("Failed to open input file: " + input_file);
 }
 
-bool input_tree_has_entries(const std::string &input_file, const std::string &tree_name) {
-  auto input = open_input_file_with_retry(input_file);
-  auto *tree = dynamic_cast<TTree *>(input->Get(tree_name.c_str()));
-  if (!tree) {
-    throw std::runtime_error("Missing tree " + tree_name + " in " + input_file);
-  }
-  if (tree->GetEntries() == 0) {
-    std::cerr << "nano_run: skipping 0-entry input file=" << input_file << " tree=" << tree_name << "\n";
-    return false;
-  }
-  return true;
-}
-
-void write_empty_output_variations(const std::string &output_file, const CliOptions &cli, const YAML::Node &settings,
-                                   const std::vector<nano::JmeVariation> &variations) {
-  const auto config = make_config(settings, cli.channel, cli.run_data);
-  auto producer = make_producer(config);
-  producer->begin_file();
-  for (const auto variation : variations) {
-    const auto path = variation_output_path(output_file, variation);
-    if (const auto parent = fs::path(path).parent_path(); !parent.empty()) {
-      fs::create_directories(parent);
-    }
-    nano::RootOutputFile output(path);
-    output.book_events(producer->output());
-    output.write();
-    std::cout << "processed=0 accepted=0 variation=" << nano::variation_name(variation) << " output=" << path << "\n";
-  }
-}
-
 std::vector<std::string> process_one_file_variations(const std::string &input_file, const std::string &output_file, const CliOptions &cli,
                                                      const YAML::Node &settings,
                                                      const std::vector<nano::JmeVariation> &variations) {
@@ -632,20 +607,7 @@ int main(int argc, char **argv) {
       input = nano::runtime::normalize_input_path(input);
     }
 
-    std::vector<std::string> nonempty_inputs;
-    nonempty_inputs.reserve(inputs.size());
-    for (const auto &input : inputs) {
-      if (input_tree_has_entries(input, cli.tree_name)) {
-        nonempty_inputs.push_back(input);
-      }
-    }
     const auto variations = nano::parse_jme_variation_list(normalized_variations_arg(cli));
-    if (nonempty_inputs.empty()) {
-      std::cerr << "nano_run: all input files have 0 entries; writing empty output\n";
-      write_empty_output_variations(cli.output_file, cli, settings, variations);
-      return 0;
-    }
-    inputs = std::move(nonempty_inputs);
 
     if (inputs.size() == 1U) {
       process_one_file_variations(inputs.front(), cli.output_file, cli, settings, variations);

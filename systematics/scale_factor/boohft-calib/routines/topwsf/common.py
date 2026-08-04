@@ -206,49 +206,6 @@ def _lhe_scale_norms(lhe_scale_sumw, nominal_index):
     return norms, True
 
 
-def _remote_mc_normalization(cfg, sample):
-    payload = getattr(cfg, "remote_mc_normalization", None)
-    if payload is None:
-        return None
-    if not isinstance(payload, dict):
-        raise TypeError("remote_mc_normalization in the topwsf card must be a mapping")
-    samples = payload.get("samples")
-    if not isinstance(samples, dict):
-        raise KeyError("remote_mc_normalization.samples is missing from the topwsf card")
-    if sample not in samples:
-        raise KeyError(f"Missing remote MC normalization for sample {sample}")
-    normalization = samples[sample]
-    if not isinstance(normalization, dict):
-        raise TypeError(f"remote MC normalization for {sample} must be a mapping")
-    return normalization
-
-
-def _merged_ntuple_gen_event_sumw(path):
-    with uproot.open(path, handler=MemmapSource) as f:
-        if "Runs" not in f or "genEventSumw" not in f["Runs"].keys():
-            return None
-        return float(np.sum(f["Runs"]["genEventSumw"].array(library="np")))
-
-
-def _remote_normalization_consistency(remote_normalization, merged_sumw, sample):
-    if merged_sumw is None:
-        return "merged ntuple has no Runs/genEventSumw"
-    full_sumw = float(remote_normalization["genEventSumw"])
-    nonempty_sumw = remote_normalization.get("genEventSumwNonemptyEventsFiles")
-    expected = [("complete source metadata", full_sumw)]
-    if nonempty_sumw is not None:
-        expected.append(("zero-entry source inputs omitted", float(nonempty_sumw)))
-    scale = max(1.0, *(abs(value) for _, value in expected))
-    for label, value in expected:
-        if abs(merged_sumw - value) <= 1e-8 * scale:
-            return label
-    expected_text = ", ".join(f"{label}={value:.12g}" for label, value in expected)
-    raise ValueError(
-        f"Merged ntuple Runs/genEventSumw={merged_sumw:.12g} for {sample} does not match "
-        f"the original remote NanoAOD accounting ({expected_text}). Refuse to normalize an incomplete input."
-    )
-
-
 def compute_xsec_weights(cfg, file_metadata):
     out = {}
     nominal_lhe_index = int(cfg.lhe_scale_weights["nominal"])
@@ -267,31 +224,15 @@ def compute_xsec_weights(cfg, file_metadata):
             continue
         if "xsec_pb" not in meta:
             raise KeyError(f"Missing xsec for sample {sample}")
-        remote_normalization = _remote_mc_normalization(cfg, sample)
-        if remote_normalization is not None:
-            if "genEventSumw" not in remote_normalization:
-                raise KeyError(f"Remote MC normalization is missing genEventSumw for sample {sample}")
-            sumw = float(remote_normalization["genEventSumw"])
-            remote_count = remote_normalization.get("genEventCount")
-            count = -1 if remote_count is None else int(remote_count)
-            remote_lhe_sumw = remote_normalization.get("lheScaleSumw")
-            lhe_scale_sumw = None if remote_lhe_sumw is None else np.asarray(remote_lhe_sumw, dtype=float)
-            normalization_source = "remote ScoutingNanoAOD Runs"
-            merged_ntuple_sumw = _merged_ntuple_gen_event_sumw(meta["path"])
-            normalization_consistency = _remote_normalization_consistency(remote_normalization, merged_ntuple_sumw, sample)
-        else:
-            with uproot.open(meta["path"], handler=MemmapSource) as f:
-                if "Runs" not in f:
-                    raise KeyError(f"Missing Runs tree for MC sample {sample}: {meta['path']}")
-                runs = f["Runs"]
-                if "genEventSumw" not in runs.keys():
-                    raise KeyError(f"Missing Runs/genEventSumw for MC sample {sample}: {meta['path']}")
-                sumw = float(np.sum(runs["genEventSumw"].array(library="np")))
-                count = int(np.sum(runs["genEventCount"].array(library="np"))) if "genEventCount" in runs.keys() else -1
-                lhe_scale_sumw = _sum_lhe_scale_sumw(runs)
-            normalization_source = "merged ntuple Runs"
-            merged_ntuple_sumw = sumw
-            normalization_consistency = "not using remote normalization"
+        with uproot.open(meta["path"], handler=MemmapSource) as f:
+            if "Runs" not in f:
+                raise KeyError(f"Missing Runs tree for MC sample {sample}: {meta['path']}")
+            runs = f["Runs"]
+            if "genEventSumw" not in runs.keys():
+                raise KeyError(f"Missing Runs/genEventSumw for MC sample {sample}: {meta['path']}")
+            sumw = float(np.sum(runs["genEventSumw"].array(library="np")))
+            count = int(np.sum(runs["genEventCount"].array(library="np"))) if "genEventCount" in runs.keys() else -1
+            lhe_scale_sumw = _sum_lhe_scale_sumw(runs)
         if abs(sumw) <= 1e-20:
             raise ValueError(f"Zero Runs/genEventSumw for MC sample {sample}: {meta['path']}")
         lhe_scale_norm, lhe_scale_norm_available = _lhe_scale_norms(lhe_scale_sumw, nominal_lhe_index)
@@ -315,9 +256,6 @@ def compute_xsec_weights(cfg, file_metadata):
             "lheScaleSumw": [] if lhe_scale_sumw is None else [float(x) for x in lhe_scale_sumw],
             "lheScaleNorm": lhe_scale_norm,
             "lheScaleNormAvailable": lhe_scale_norm_available,
-            "normalizationSource": normalization_source,
-            "mergedNtupleGenEventSumw": merged_ntuple_sumw,
-            "normalizationConsistency": normalization_consistency,
         }
     return out
 
