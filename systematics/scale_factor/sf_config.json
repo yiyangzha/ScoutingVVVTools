@@ -37,7 +37,7 @@
     "category": "w",
     "selection": "(passMuTrig) & (fj_1_eta > -2.4) & (fj_1_eta < 2.4) & (fj_1_pt >= 170.) & (leptonicW_pt > 150.)",
     "jetht_trigger": {
-      "enabled": true,
+      "enabled": false,
       "ntuple_branch": "passJetHT"
     },
     "template_pt_bins": [103, 170.0, 1200.0],
