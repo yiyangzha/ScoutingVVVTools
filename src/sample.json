@@ -10,7 +10,7 @@
       "is_signal": false,
       "xsection": -1,
       "lumi": 0.13,
-      "raw_entries": 21980881
+      "raw_entries": -1
     },
     {
       "name": "2024C",
@@ -122,7 +122,7 @@
       "is_signal": false,
       "xsection": -1,
       "lumi": 11.56,
-      "raw_entries": 2663429178
+      "raw_entries": -1
     },
     {
       "name": "www",
@@ -133,7 +133,7 @@
       "has_theory_weights": true,
       "xsection": 232.8,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wwz",
@@ -144,7 +144,7 @@
       "has_theory_weights": true,
       "xsection": 185.1,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wzz",
@@ -155,7 +155,7 @@
       "has_theory_weights": true,
       "xsection": 62.06,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zzz",
@@ -166,7 +166,7 @@
       "has_theory_weights": true,
       "xsection": 15.91,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_had",
@@ -177,7 +177,7 @@
       "has_theory_weights": true,
       "xsection": 84.28,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_had",
@@ -188,7 +188,7 @@
       "has_theory_weights": true,
       "xsection": 9.4,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush",
@@ -199,7 +199,7 @@
       "has_theory_weights": true,
       "xsection": 28.273698,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush",
@@ -210,7 +210,7 @@
       "has_theory_weights": true,
       "xsection": 18.075834,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_zto2q_hlnu2q",
@@ -221,7 +221,7 @@
       "has_theory_weights": true,
       "xsection": 9.086248,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_zto2q_h2l2nu",
@@ -232,7 +232,7 @@
       "has_theory_weights": true,
       "xsection": 2.195742,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_zto2l_hlnu2q",
@@ -243,7 +243,7 @@
       "has_theory_weights": true,
       "xsection": 1.312347,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_zto2l_h4q",
@@ -254,7 +254,7 @@
       "has_theory_weights": true,
       "xsection": 1.357663,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ggzh_zto2l_h2l2nu",
@@ -265,7 +265,7 @@
       "has_theory_weights": true,
       "xsection": 0.317136,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_zto2q_hlnu2q",
@@ -276,7 +276,7 @@
       "has_theory_weights": true,
       "xsection": 81.466916,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_zto2q_h2l2nu",
@@ -287,7 +287,7 @@
       "has_theory_weights": true,
       "xsection": 19.686932,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_zto2l_hlnu2q",
@@ -298,7 +298,7 @@
       "has_theory_weights": true,
       "xsection": 11.766446,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_zto2l_h4q",
@@ -309,7 +309,7 @@
       "has_theory_weights": true,
       "xsection": 12.172746,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zh_zto2l_h2l2nu",
@@ -320,7 +320,7 @@
       "has_theory_weights": true,
       "xsection": 2.843427,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush_wlnu_hlnu2q",
@@ -331,7 +331,7 @@
       "has_theory_weights": true,
       "xsection": 27.329983,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush_wlnu_h2l2nu",
@@ -342,7 +342,7 @@
       "has_theory_weights": true,
       "xsection": 6.604442,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush_w2q_hlnu2q",
@@ -353,7 +353,7 @@
       "has_theory_weights": true,
       "xsection": 56.547397,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush_w2q_h2l2nu",
@@ -364,7 +364,7 @@
       "has_theory_weights": true,
       "xsection": 13.664992,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush_wlnu_hlnu2q",
@@ -375,7 +375,7 @@
       "has_theory_weights": true,
       "xsection": 17.472502,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush_wlnu_h2l2nu",
@@ -386,7 +386,7 @@
       "has_theory_weights": true,
       "xsection": 4.222327,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush_w2q_hlnu2q",
@@ -397,7 +397,7 @@
       "has_theory_weights": true,
       "xsection": 36.151669,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush_w2q_h2l2nu",
@@ -408,7 +408,7 @@
       "has_theory_weights": true,
       "xsection": 8.736251,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wplush_w2q_h4q",
@@ -419,7 +419,7 @@
       "has_theory_weights": true,
       "xsection": 58.5,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wminush_w2q_h4q",
@@ -430,7 +430,7 @@
       "has_theory_weights": true,
       "xsection": 37.4,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht40to70",
@@ -440,7 +440,7 @@
       "is_signal": false,
       "xsection": 312300000000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht70to100",
@@ -450,7 +450,7 @@
       "is_signal": false,
       "xsection": 58470000000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht100to200",
@@ -460,7 +460,7 @@
       "is_signal": false,
       "xsection": 25310000000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht200to400",
@@ -470,7 +470,7 @@
       "is_signal": false,
       "xsection": 1960000000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht400to600",
@@ -480,7 +480,7 @@
       "is_signal": false,
       "xsection": 97400000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht600to800",
@@ -490,7 +490,7 @@
       "is_signal": false,
       "xsection": 13540000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht800to1000",
@@ -500,7 +500,7 @@
       "is_signal": false,
       "xsection": 3010000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht1000to1200",
@@ -510,7 +510,7 @@
       "is_signal": false,
       "xsection": 890300,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht1200to1500",
@@ -520,7 +520,7 @@
       "is_signal": false,
       "xsection": 384800,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht1500to2000",
@@ -530,7 +530,7 @@
       "is_signal": false,
       "xsection": 127300,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "qcd_ht2000",
@@ -540,7 +540,7 @@
       "is_signal": false,
       "xsection": 26260,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ttbar_had",
@@ -551,7 +551,7 @@
       "has_theory_weights": true,
       "xsection": 419657,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ttbar_semilep",
@@ -562,7 +562,7 @@
       "has_theory_weights": true,
       "xsection": 405702,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "tbarwplus_had",
@@ -573,7 +573,7 @@
       "has_theory_weights": true,
       "xsection": 19971,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "twminus_had",
@@ -584,7 +584,7 @@
       "has_theory_weights": true,
       "xsection": 19971,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wjets_h100to400",
@@ -595,7 +595,7 @@
       "has_theory_weights": true,
       "xsection": 16120000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wjets_h400to800",
@@ -606,7 +606,7 @@
       "has_theory_weights": true,
       "xsection": 356900,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wjets_h800to1500",
@@ -617,7 +617,7 @@
       "has_theory_weights": true,
       "xsection": 29520,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wjets_h1500to2500",
@@ -628,7 +628,7 @@
       "has_theory_weights": true,
       "xsection": 1825,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wjets_h2500",
@@ -639,7 +639,7 @@
       "has_theory_weights": true,
       "xsection": 115.8,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zjets_h100to400",
@@ -650,7 +650,7 @@
       "has_theory_weights": true,
       "xsection": 6328000,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zjets_h400to800",
@@ -661,7 +661,7 @@
       "has_theory_weights": true,
       "xsection": 145100,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zjets_h800to1500",
@@ -672,7 +672,7 @@
       "has_theory_weights": true,
       "xsection": 12900,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zjets_h1500to2500",
@@ -683,7 +683,7 @@
       "has_theory_weights": true,
       "xsection": 854.1,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "zjets_h2500",
@@ -694,7 +694,7 @@
       "has_theory_weights": true,
       "xsection": 56.84,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h1500to2500_m120",
@@ -705,7 +705,7 @@
       "has_theory_weights": true,
       "xsection": 1.679,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h1500to2500_m4to50",
@@ -716,7 +716,7 @@
       "has_theory_weights": true,
       "xsection": 20.7,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h1500to2500_m50to120",
@@ -727,7 +727,7 @@
       "has_theory_weights": true,
       "xsection": 50.51,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h2500_m120",
@@ -738,7 +738,7 @@
       "has_theory_weights": true,
       "xsection": 0.124,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h2500_m4to50",
@@ -749,7 +749,7 @@
       "has_theory_weights": true,
       "xsection": 1.067,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h2500_m50to120",
@@ -760,7 +760,7 @@
       "has_theory_weights": true,
       "xsection": 3.455,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h400to800_m120",
@@ -771,7 +771,7 @@
       "has_theory_weights": true,
       "xsection": 175.3,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h800to1500_m120",
@@ -782,7 +782,7 @@
       "has_theory_weights": true,
       "xsection": 20.97,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h800to1500_m4to50",
@@ -793,7 +793,7 @@
       "has_theory_weights": true,
       "xsection": 420.9,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "dy_h800to1500_m50to120",
@@ -804,7 +804,7 @@
       "has_theory_weights": true,
       "xsection": 698.7,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ttbar_2l2nu",
@@ -815,7 +815,7 @@
       "has_theory_weights": true,
       "xsection": 98087.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "twminus_lnu2q",
@@ -826,7 +826,7 @@
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "tbarwplus_lnu2q",
@@ -837,7 +837,7 @@
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h100to400_m0to120",
@@ -848,7 +848,7 @@
       "has_theory_weights": true,
       "xsection": 1636000.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h100to400_m120",
@@ -859,7 +859,7 @@
       "has_theory_weights": true,
       "xsection": 10180.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h1500to2500_m0to120",
@@ -870,7 +870,7 @@
       "has_theory_weights": true,
       "xsection": 450.3,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h1500to2500_m120",
@@ -881,7 +881,7 @@
       "has_theory_weights": true,
       "xsection": 5.052,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h2500_m0to120",
@@ -892,7 +892,7 @@
       "has_theory_weights": true,
       "xsection": 30.85,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h2500_m120",
@@ -903,7 +903,7 @@
       "has_theory_weights": true,
       "xsection": 0.378,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h400to800_m0to120",
@@ -914,7 +914,7 @@
       "has_theory_weights": true,
       "xsection": 59860.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h400to800_m120",
@@ -925,7 +925,7 @@
       "has_theory_weights": true,
       "xsection": 526.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h40to100_m0to120",
@@ -936,7 +936,7 @@
       "has_theory_weights": true,
       "xsection": 4259000.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h800to1500_m0to120",
@@ -947,7 +947,7 @@
       "has_theory_weights": true,
       "xsection": 6226.0,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "wlnu_h800to1500_m120",
@@ -958,7 +958,7 @@
       "has_theory_weights": true,
       "xsection": 62.45,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WWTo4Q",
@@ -969,7 +969,7 @@
       "has_theory_weights": true,
       "xsection": 54820,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WWToLNu2Q",
@@ -980,7 +980,7 @@
       "has_theory_weights": true,
       "xsection": 52980,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WZto2L2Q",
@@ -991,7 +991,7 @@
       "has_theory_weights": true,
       "xsection": 6724,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WZto2Nu2Q",
@@ -1002,7 +1002,7 @@
       "has_theory_weights": true,
       "xsection": 7188,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WZto4Q",
@@ -1013,7 +1013,7 @@
       "has_theory_weights": true,
       "xsection": 24880,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "WZtoLNu2Q",
@@ -1024,7 +1024,7 @@
       "has_theory_weights": true,
       "xsection": 12110,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ZZto2L2Q",
@@ -1035,7 +1035,7 @@
       "has_theory_weights": true,
       "xsection": 3860,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ZZto2Nu2Q",
@@ -1046,7 +1046,7 @@
       "has_theory_weights": true,
       "xsection": 4522,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ZZto4Q",
@@ -1057,7 +1057,7 @@
       "has_theory_weights": true,
       "xsection": 7832,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "ZZto4L",
@@ -1068,7 +1068,7 @@
       "has_theory_weights": true,
       "xsection": 163.380707,
       "lumi": -1,
-      "raw_entries": 0
+      "raw_entries": -1
     },
     {
       "name": "2024C_official",
