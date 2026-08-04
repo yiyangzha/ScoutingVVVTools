@@ -305,6 +305,7 @@ systematics/scale_factor/boohft-calib/output/
 systematics/scale_factor/boohft-calib/web/
 systematics/scale_factor/boohft-calib/run/
 systematics/scale_factor/boohft-calib/work/
+systematics/study
 
 # Common local CMS/environment products
 CMSSW_*/

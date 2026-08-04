@@ -494,6 +494,36 @@ std::unique_ptr<TFile> open_input_file_with_retry(const std::string &input_file)
   throw std::runtime_error("Failed to open input file: " + input_file);
 }
 
+bool input_tree_has_entries(const std::string &input_file, const std::string &tree_name) {
+  auto input = open_input_file_with_retry(input_file);
+  auto *tree = dynamic_cast<TTree *>(input->Get(tree_name.c_str()));
+  if (!tree) {
+    throw std::runtime_error("Missing tree " + tree_name + " in " + input_file);
+  }
+  if (tree->GetEntries() == 0) {
+    std::cerr << "nano_run: skipping 0-entry input file=" << input_file << " tree=" << tree_name << "\n";
+    return false;
+  }
+  return true;
+}
+
+void write_empty_output_variations(const std::string &output_file, const CliOptions &cli, const YAML::Node &settings,
+                                   const std::vector<nano::JmeVariation> &variations) {
+  const auto config = make_config(settings, cli.channel, cli.run_data);
+  auto producer = make_producer(config);
+  producer->begin_file();
+  for (const auto variation : variations) {
+    const auto path = variation_output_path(output_file, variation);
+    if (const auto parent = fs::path(path).parent_path(); !parent.empty()) {
+      fs::create_directories(parent);
+    }
+    nano::RootOutputFile output(path);
+    output.book_events(producer->output());
+    output.write();
+    std::cout << "processed=0 accepted=0 variation=" << nano::variation_name(variation) << " output=" << path << "\n";
+  }
+}
+
 std::vector<std::string> process_one_file_variations(const std::string &input_file, const std::string &output_file, const CliOptions &cli,
                                                      const YAML::Node &settings,
                                                      const std::vector<nano::JmeVariation> &variations) {
@@ -602,7 +632,21 @@ int main(int argc, char **argv) {
       input = nano::runtime::normalize_input_path(input);
     }
 
+    std::vector<std::string> nonempty_inputs;
+    nonempty_inputs.reserve(inputs.size());
+    for (const auto &input : inputs) {
+      if (input_tree_has_entries(input, cli.tree_name)) {
+        nonempty_inputs.push_back(input);
+      }
+    }
     const auto variations = nano::parse_jme_variation_list(normalized_variations_arg(cli));
+    if (nonempty_inputs.empty()) {
+      std::cerr << "nano_run: all input files have 0 entries; writing empty output\n";
+      write_empty_output_variations(cli.output_file, cli, settings, variations);
+      return 0;
+    }
+    inputs = std::move(nonempty_inputs);
+
     if (inputs.size() == 1U) {
       process_one_file_variations(inputs.front(), cli.output_file, cli, settings, variations);
       return 0;

@@ -2,7 +2,7 @@
   "sample_config": "../../src/sample.json",
   "year": ["2024"],
   "nano_version": "v15",
-  "production_version": "v1",
+  "production_version": "v2_GHI_UParT0769",
   "xsection_to_pb": 0.001,
   "run_targets": [
     {
@@ -30,7 +30,7 @@
     "split_by_era": true,
     "use_tier_storage": true,
     "tier_storage_base": "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
-    "generated_card_dir": "generated/topwsf",
+    "generated_card_dir": "generated/topwsf/v2_GHI_UParT0769",
     "run_launcher": true,
     "run_step": "11",
     "workers": [4, 2],
@@ -54,17 +54,13 @@
       "enabled": true,
       "ntuple_branch": "ak4_btag_max",
       "working_point_by_year": {
-        "2024": 0.5
+        "2024": 0.769
       }
     },
     "samples": {
       "by_year": {
         "2024": {
           "data": [
-            "2024C",
-            "2024D",
-            "2024E",
-            "2024F",
             "2024G",
             "2024H",
             "2024I"
@@ -157,16 +153,16 @@
             "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "ZvsQCD": {
-            "label": "Scouting GloParT Z(bb+cc+ss+qq)VsQCD",
+            "label": "Scouting GloParT ZVsQCD",
             "expr": "(fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq) / (fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
-            "score_bins": [[0.0, 0.20], [0.20, 0.50], [0.50, 0.75], [0.75, 0.90], [0.90, 0.97], [0.97, 1.0]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "VvsQCD": {
-            "label": "Scouting GloParT V(Z+W)VsQCD",
+            "label": "Scouting GloParT VVsQCD",
             "expr": "(fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq) / (fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 300], [300, 400], [400, 600], [600, 1200]],
-            "score_bins": [[0.0, 0.40], [0.40, 0.70], [0.70, 0.85], [0.85, 0.93], [0.93, 0.97], [0.97, 1.0]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           }
         }
       },

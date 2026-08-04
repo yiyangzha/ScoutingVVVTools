@@ -2,7 +2,7 @@
   "sample_config": "../../src/sample.json",
   "year": ["2024"],
   "nano_version": "v15",
-  "production_version": "v1",
+  "production_version": "v2_GHI_UParT0769",
   "run_targets": [
     {
       "jet_type": "ak8",
@@ -27,8 +27,8 @@
     "split_by_era": true,
     "use_tier_storage": true,
     "tier_storage_base": "root://cceos.ihep.ac.cn//eos/ihep/cms/store/user/yiyangz/Research/VVV/ScoutingVVVTools_sf/scale_factor/ntuples",
-    "generated_sample_dir": "generated/samples",
-    "job_dir": "jobs/ntuples/{jet_type}_{jet_category}_{era}_{sample_set}",
+    "generated_sample_dir": "generated/samples/v2_GHI_UParT0769",
+    "job_dir": "jobs/ntuples/v2_GHI_UParT0769/{jet_type}_{jet_category}_{era}_{sample_set}",
     "nfiles_per_job": 5,
     "num_events": -1,
     "build_jobs": "auto",
@@ -46,10 +46,6 @@
       "by_year": {
         "2024": {
           "data": [
-            "2024C",
-            "2024D",
-            "2024E",
-            "2024F",
             "2024G",
             "2024H",
             "2024I"

@@ -528,11 +528,40 @@ else
   done
 fi
 
+declare -A REMOTE_PARENT_READY=()
+
+ensure_remote_parent() {
+  local remote=$1
+  local without_scheme="${remote#root://}"
+  local host="${without_scheme%%/*}"
+  local path="${without_scheme#${host}}"
+  local parent
+  local key
+
+  while [[ "${path}" == //* ]]; do
+    path="${path#/}"
+  done
+  if [[ "${path}" != /* ]]; then
+    path="/${path}"
+  fi
+  parent="${path%/*}"
+  [[ -n "${parent}" ]] || parent="/"
+  key="${host}|${parent}"
+  if [[ -n "${REMOTE_PARENT_READY[${key}]:-}" ]]; then
+    return
+  fi
+
+  log_step "Creating remote output directory root://${host}${parent}"
+  "${SITE_XRDFS}" "root://${host}" mkdir -p "${parent}"
+  REMOTE_PARENT_READY["${key}"]=1
+}
+
 copy_output() {
   local local_file=$1
   local final_file=$2
 
   if [[ "${final_file}" == root://* ]]; then
+    ensure_remote_parent "${final_file}"
     log_step "Copying ${local_file} to ${final_file}"
     "${SITE_XRDCP}" --silent -p -f "${local_file}" "${final_file}"
   elif [[ "${final_file}" == /eos/cms* ]]; then
