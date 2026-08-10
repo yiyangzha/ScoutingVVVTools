@@ -16,8 +16,10 @@ plotting are reused unchanged from ``signal_region.py`` (imported as ``sr``). On
 the candidate generator and the global selection are reimplemented here, because
 in the original they live as nested closures that cannot be imported.
 
-The script and ``signal_region.py`` share one config file. Point the env var
-``SR_HIST_CONFIG_PATH`` at it (default: ``config_hist.json`` next to this file).
+The script and ``signal_region.py`` share one config file. Pass its path as the
+first command-line argument (``python signal_region_hist.py path/to/config.json``),
+or set the env var ``SR_HIST_CONFIG_PATH`` (default: ``config_hist.json`` next to
+this file) as a fallback.
 """
 
 import os
@@ -32,9 +34,12 @@ import time
 #    (bdt_root / score_axes / lumi / min_bkg_weight / ...). This script then
 #    reopens the same file to read its extra histogram-search keys.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-HIST_CFG_PATH = os.path.abspath(
-    os.environ.get("SR_HIST_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config_hist.json"))
-)
+if len(sys.argv) > 1:
+    HIST_CFG_PATH = os.path.abspath(sys.argv[1])
+else:
+    HIST_CFG_PATH = os.path.abspath(
+        os.environ.get("SR_HIST_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config_hist.json"))
+    )
 os.environ["SCAN_CONFIG_PATH"] = HIST_CFG_PATH
 
 import numpy as np

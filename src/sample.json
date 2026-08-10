@@ -69,7 +69,7 @@
       "has_theory_weights": true,
       "xsection": 15.91,
       "lumi": -1,
-      "raw_entries": 15985738
+      "raw_entries": 16192091
     },
     {
       "name": "ZH-Zto2Q-Hto2Wto4Q",
@@ -123,7 +123,7 @@
       "is_signal": false,
       "xsection": 312300000000,
       "lumi": -1,
-      "raw_entries": 82833074
+      "raw_entries": 110777315
     },
     {
       "name": "qcd_ht70to100",
@@ -133,7 +133,7 @@
       "is_signal": false,
       "xsection": 58470000000,
       "lumi": -1,
-      "raw_entries": 89385785
+      "raw_entries": 108584880
     },
     {
       "name": "qcd_ht100to200",
@@ -143,7 +143,7 @@
       "is_signal": false,
       "xsection": 25310000000,
       "lumi": -1,
-      "raw_entries": 119994055
+      "raw_entries": 120388125
     },
     {
       "name": "qcd_ht200to400",
@@ -153,7 +153,7 @@
       "is_signal": false,
       "xsection": 1960000000,
       "lumi": -1,
-      "raw_entries": 111037845
+      "raw_entries": 115255250
     },
     {
       "name": "qcd_ht400to600",
@@ -163,7 +163,7 @@
       "is_signal": false,
       "xsection": 97400000,
       "lumi": -1,
-      "raw_entries": 82335073
+      "raw_entries": 106725734
     },
     {
       "name": "qcd_ht600to800",
@@ -173,7 +173,7 @@
       "is_signal": false,
       "xsection": 13540000,
       "lumi": -1,
-      "raw_entries": 60263293
+      "raw_entries": 127208561
     },
     {
       "name": "qcd_ht800to1000",
@@ -183,7 +183,7 @@
       "is_signal": false,
       "xsection": 3010000,
       "lumi": -1,
-      "raw_entries": 33653261
+      "raw_entries": 117688602
     },
     {
       "name": "qcd_ht1000to1200",
@@ -193,7 +193,7 @@
       "is_signal": false,
       "xsection": 890300,
       "lumi": -1,
-      "raw_entries": 46146995
+      "raw_entries": 95888751
     },
     {
       "name": "qcd_ht1200to1500",
@@ -203,17 +203,17 @@
       "is_signal": false,
       "xsection": 384800,
       "lumi": -1,
-      "raw_entries": 89199284
+      "raw_entries": 106024471
     },
     {
       "name": "qcd_ht1500to2000",
-      "path": "/QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-1500to2000_v5-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-1500to2000_v5_jetMatchFix-00000000000000000000000000000000/USER",
       "sample_ID": 19,
       "is_MC": true,
       "is_signal": false,
       "xsection": 127300,
       "lumi": -1,
-      "raw_entries": 1991848
+      "raw_entries": 113208234
     },
     {
       "name": "qcd_ht2000",
@@ -223,7 +223,7 @@
       "is_signal": false,
       "xsection": 26260,
       "lumi": -1,
-      "raw_entries": 75786665
+      "raw_entries": 84459045
     },
     {
       "name": "ttbar_had",
@@ -234,7 +234,7 @@
       "has_theory_weights": true,
       "xsection": 419657,
       "lumi": -1,
-      "raw_entries": 218761537
+      "raw_entries": 473944839
     },
     {
       "name": "ttbar_semilep",
@@ -245,7 +245,7 @@
       "has_theory_weights": true,
       "xsection": 405702,
       "lumi": -1,
-      "raw_entries": 421337004
+      "raw_entries": 484298177
     },
     {
       "name": "ww",
@@ -289,7 +289,7 @@
       "has_theory_weights": true,
       "xsection": 19971,
       "lumi": -1,
-      "raw_entries": 21910000
+      "raw_entries": 24000000
     },
     {
       "name": "twminus_had",
@@ -300,7 +300,7 @@
       "has_theory_weights": true,
       "xsection": 19971,
       "lumi": -1,
-      "raw_entries": 14300000
+      "raw_entries": 23999000
     },
     {
       "name": "wjets_h100to400",
@@ -311,7 +311,7 @@
       "has_theory_weights": true,
       "xsection": 16120000,
       "lumi": -1,
-      "raw_entries": 371113674
+      "raw_entries": 384703157
     },
     {
       "name": "wjets_h400to800",
@@ -322,7 +322,7 @@
       "has_theory_weights": true,
       "xsection": 356900,
       "lumi": -1,
-      "raw_entries": 322248059
+      "raw_entries": 401294004
     },
     {
       "name": "wjets_h800to1500",
@@ -333,7 +333,7 @@
       "has_theory_weights": true,
       "xsection": 29520,
       "lumi": -1,
-      "raw_entries": 42431637
+      "raw_entries": 52712810
     },
     {
       "name": "wjets_h1500to2500",
@@ -344,7 +344,7 @@
       "has_theory_weights": true,
       "xsection": 1825,
       "lumi": -1,
-      "raw_entries": 34554731
+      "raw_entries": 48297099
     },
     {
       "name": "wjets_h2500",
@@ -355,7 +355,7 @@
       "has_theory_weights": true,
       "xsection": 115.8,
       "lumi": -1,
-      "raw_entries": 22640418
+      "raw_entries": 49595432
     },
     {
       "name": "zjets_h100to400",
@@ -366,7 +366,7 @@
       "has_theory_weights": true,
       "xsection": 6328000,
       "lumi": -1,
-      "raw_entries": 444836190
+      "raw_entries": 454296062
     },
     {
       "name": "zjets_h400to800",
@@ -377,7 +377,7 @@
       "has_theory_weights": true,
       "xsection": 145100,
       "lumi": -1,
-      "raw_entries": 153534858
+      "raw_entries": 181646889
     },
     {
       "name": "zjets_h800to1500",
@@ -388,7 +388,7 @@
       "has_theory_weights": true,
       "xsection": 12900,
       "lumi": -1,
-      "raw_entries": 50924755
+      "raw_entries": 51519410
     },
     {
       "name": "zjets_h1500to2500",
@@ -399,7 +399,7 @@
       "has_theory_weights": true,
       "xsection": 854.1,
       "lumi": -1,
-      "raw_entries": 17878061
+      "raw_entries": 66985455
     },
     {
       "name": "zjets_h2500",
@@ -410,7 +410,7 @@
       "has_theory_weights": true,
       "xsection": 56.84,
       "lumi": -1,
-      "raw_entries": 35588703
+      "raw_entries": 42051768
     },
     {
       "name": "dytoll_ht400to800_mll120",
@@ -454,7 +454,7 @@
       "has_theory_weights": true,
       "xsection": 50.51,
       "lumi": -1,
-      "raw_entries": 1722319
+      "raw_entries": 1889567
     },
     {
       "name": "dy_h2500_m120",
@@ -520,7 +520,7 @@
       "has_theory_weights": true,
       "xsection": 420.9,
       "lumi": -1,
-      "raw_entries": 1640331
+      "raw_entries": 1833349
     },
     {
       "name": "dy_h800to1500_m50to120",
@@ -542,7 +542,7 @@
       "has_theory_weights": true,
       "xsection": 98087.0,
       "lumi": -1,
-      "raw_entries": 55376000
+      "raw_entries": 59986000
     },
     {
       "name": "twminus_lnu2q",
@@ -553,7 +553,7 @@
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 27529890
+      "raw_entries": 28762382
     },
     {
       "name": "tbarwplus_lnu2q",
@@ -564,7 +564,7 @@
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 27199200
+      "raw_entries": 29390933
     },
     {
       "name": "wlnu_h100to400_m0to120",
@@ -575,7 +575,7 @@
       "has_theory_weights": true,
       "xsection": 1636000.0,
       "lumi": -1,
-      "raw_entries": 364946300
+      "raw_entries": 377402809
     },
     {
       "name": "wlnu_h100to400_m120",
@@ -597,7 +597,7 @@
       "has_theory_weights": true,
       "xsection": 450.3,
       "lumi": -1,
-      "raw_entries": 13877942
+      "raw_entries": 15282279
     },
     {
       "name": "wlnu_h1500to2500_m120",
@@ -608,7 +608,7 @@
       "has_theory_weights": true,
       "xsection": 5.052,
       "lumi": -1,
-      "raw_entries": 14293402
+      "raw_entries": 15160746
     },
     {
       "name": "wlnu_h2500_m0to120",
@@ -619,7 +619,7 @@
       "has_theory_weights": true,
       "xsection": 30.85,
       "lumi": -1,
-      "raw_entries": 12264214
+      "raw_entries": 13634921
     },
     {
       "name": "wlnu_h2500_m120",
@@ -630,7 +630,7 @@
       "has_theory_weights": true,
       "xsection": 0.378,
       "lumi": -1,
-      "raw_entries": 11494777
+      "raw_entries": 14068249
     },
     {
       "name": "wlnu_h400to800_m0to120",
@@ -641,7 +641,7 @@
       "has_theory_weights": true,
       "xsection": 59860.0,
       "lumi": -1,
-      "raw_entries": 124923789
+      "raw_entries": 125419239
     },
     {
       "name": "wlnu_h400to800_m120",
@@ -663,7 +663,7 @@
       "has_theory_weights": true,
       "xsection": 4259000.0,
       "lumi": -1,
-      "raw_entries": 362050671
+      "raw_entries": 362564818
     },
     {
       "name": "wlnu_h800to1500_m0to120",
@@ -674,7 +674,7 @@
       "has_theory_weights": true,
       "xsection": 6226.0,
       "lumi": -1,
-      "raw_entries": 14829381
+      "raw_entries": 15283623
     },
     {
       "name": "wlnu_h800to1500_m120",
@@ -685,7 +685,7 @@
       "has_theory_weights": true,
       "xsection": 62.45,
       "lumi": -1,
-      "raw_entries": 11604076
+      "raw_entries": 12681807
     },
     {
       "name": "WWTo4Q",
@@ -707,7 +707,7 @@
       "has_theory_weights": true,
       "xsection": 52980,
       "lumi": -1,
-      "raw_entries": 100192867
+      "raw_entries": 100815753
     },
     {
       "name": "WZto2L2Q",
@@ -729,7 +729,7 @@
       "has_theory_weights": true,
       "xsection": 7188,
       "lumi": -1,
-      "raw_entries": 7516647
+      "raw_entries": 7738130
     },
     {
       "name": "WZto4Q",
@@ -762,7 +762,7 @@
       "has_theory_weights": true,
       "xsection": 3860,
       "lumi": -1,
-      "raw_entries": 21271128
+      "raw_entries": 21572700
     },
     {
       "name": "ZZto2Nu2Q",
@@ -821,7 +821,7 @@
       "has_theory_weights": true,
       "xsection": 0.667521,
       "lumi": -1,
-      "raw_entries": 6426000
+      "raw_entries": 6710000
     },
     {
       "name": "GluGluZH-Zto2L-Hto2WtoLNu2Q",
@@ -854,7 +854,7 @@
       "has_theory_weights": true,
       "xsection": 4.47035,
       "lumi": -1,
-      "raw_entries": 5549000
+      "raw_entries": 6769000
     },
     {
       "name": "WminusH-Wto2Q-Hto2Wto2L2Nu",
@@ -931,7 +931,7 @@
       "has_theory_weights": true,
       "xsection": 5.433571,
       "lumi": -1,
-      "raw_entries": 2225848
+      "raw_entries": 3393951
     },
     {
       "name": "WplusH-WtoLNu-Hto2Wto4Q",
@@ -997,7 +997,7 @@
       "has_theory_weights": true,
       "xsection": 15.06468,
       "lumi": -1,
-      "raw_entries": 6100501
+      "raw_entries": 6704760
     },
     {
       "name": "ZH-Zto2Q-Hto2WtoLNu2Q",
@@ -1030,7 +1030,7 @@
       "has_theory_weights": true,
       "xsection": 11.235491,
       "lumi": -1,
-      "raw_entries": 1750939
+      "raw_entries": 3392002
     }
   ]
 }

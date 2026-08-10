@@ -54,9 +54,17 @@ _cfg_path = os.environ.get("BDT_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.
 if not os.path.isabs(_cfg_path):
     _cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _cfg_path))
 
+_branch_path = os.environ.get("BDT_BRANCH_PATH", os.path.join(_SCRIPT_DIR, "branch.json"))
+if not os.path.isabs(_branch_path):
+    _branch_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _branch_path))
+
+_selection_path = os.environ.get("BDT_SELECTION_PATH", os.path.join(_SCRIPT_DIR, "selection.json"))
+if not os.path.isabs(_selection_path):
+    _selection_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _selection_path))
+
 cfg     = _load_json(_cfg_path)
-br_cfg  = _load_json(os.path.join(_SCRIPT_DIR, "branch.json"))
-sel_cfg = _load_json(os.path.join(_SCRIPT_DIR, "selection.json"))
+br_cfg  = _load_json(_branch_path)
+sel_cfg = _load_json(_selection_path)
 
 _sample_cfg_path = cfg["sample_config"]
 if not os.path.isabs(_sample_cfg_path):
@@ -639,13 +647,13 @@ def write_config_copy(output_root):
 
 def write_branch_copy(output_root):
     branch_copy_path = os.path.join(output_root, "branch.json")
-    shutil.copy2(os.path.join(_SCRIPT_DIR, "branch.json"), branch_copy_path)
+    shutil.copy2(_branch_path, branch_copy_path)
     log_message(f"Wrote branch file: {branch_copy_path}")
 
 
 def write_selection_copy(output_root):
     selection_copy_path = os.path.join(output_root, "selection.json")
-    shutil.copy2(os.path.join(_SCRIPT_DIR, "selection.json"), selection_copy_path)
+    shutil.copy2(_selection_path, selection_copy_path)
     log_message(f"Wrote selection file: {selection_copy_path}")
 
 
@@ -2016,29 +2024,47 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             model = xgb.train(feval=recorder, **train_kwargs)
         return model, recorder, monitor
 
-    log_message(
-        f"Starting stage 1 (native multi:softprob, n_estimators={n_estimators}, eta={learning_rate})"
-    )
-    try:
-        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
-    except xgb.core.XGBoostError:
-        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
-
-    stage1_best = stage1_monitor.best_iteration
-    if stage1_best is None:
-        stage1_best = stage1_model.num_boosted_rounds() - 1
-    stage1_rounds = int(stage1_best) + 1
-    if stage1_model.num_boosted_rounds() != stage1_rounds:
-        stage1_model = stage1_model[:stage1_rounds]
-    stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
-    stage1_reg_loss = _loss_value_at(
-        stage1_history, "train", "regularization", stage1_rounds - 1
-    )
-
     base_path = model_name[:-5] if model_name.endswith(".json") else model_name
     stage1_save_path = f"{base_path}_stage1.json"
-    stage1_model.save_model(stage1_save_path)
-    log_message(f"Wrote model file: {stage1_save_path}")
+    resume_stage1 = bool(os.environ.get("BDT_RESUME_STAGE1")) and os.path.exists(stage1_save_path)
+
+    if resume_stage1:
+        log_message(
+            f"BDT_RESUME_STAGE1 set and found existing {stage1_save_path}; "
+            "loading stage-1 model instead of retraining"
+        )
+        stage1_model = xgb.Booster()
+        stage1_model.load_model(stage1_save_path)
+        stage1_rounds = stage1_model.num_boosted_rounds()
+        stage1_reg_loss = _booster_regularization_loss(
+            stage1_model, stage1_params["reg_lambda"], stage1_params["reg_alpha"],
+            stage1_params["gamma"], stage1_params["eta"],
+        )
+        _metric_keys = ("classification", "mlogloss", "decorrelation", "regularization", "total")
+        stage1_history = {"train": {k: [] for k in _metric_keys},
+                           "test": {k: [] for k in _metric_keys}}
+    else:
+        log_message(
+            f"Starting stage 1 (native multi:softprob, n_estimators={n_estimators}, eta={learning_rate})"
+        )
+        try:
+            stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
+        except xgb.core.XGBoostError:
+            stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
+
+        stage1_best = stage1_monitor.best_iteration
+        if stage1_best is None:
+            stage1_best = stage1_model.num_boosted_rounds() - 1
+        stage1_rounds = int(stage1_best) + 1
+        if stage1_model.num_boosted_rounds() != stage1_rounds:
+            stage1_model = stage1_model[:stage1_rounds]
+        stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
+        stage1_reg_loss = _loss_value_at(
+            stage1_history, "train", "regularization", stage1_rounds - 1
+        )
+
+        stage1_model.save_model(stage1_save_path)
+        log_message(f"Wrote model file: {stage1_save_path}")
 
     if not use_decor:
         # No stage 2. Copy stage 1 as the main model file so downstream paths stay unchanged.

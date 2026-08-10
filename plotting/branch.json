@@ -6,6 +6,29 @@
       "is_signal"
     ],
     "branches": {
+      "ScoutingEvent_aplanarity": {
+        "bins": 50,
+        "x_range": [
+          0,
+          0.5
+        ],
+      "logx": false,
+      "logy": true
+      },      
+      "ScoutingFatPFJetRecluster_mass_1": {
+        "bins": 160,
+        "x_range": [
+          0,
+          400
+        ]
+      },
+      "ScoutingFatPFJetRecluster_mass_2": {
+        "bins": 160,
+        "x_range": [
+          0,
+          400
+        ]
+      },
       "ScoutingFatPFJetRecluster_mass": {
         "bins": 50,
         "x_range": [
@@ -111,17 +134,145 @@
       },
       "ScoutingFatPFJetRecluster_msoftdrop_1" : {
 	      "x_range" : [0,300],
-	      "bins" : 60
+	      "bins" : 60,
+	      "logx": false,
+      	      "logy": false
       },
       "ScoutingFatPFJetRecluster_msoftdrop_2" : {
 	      "x_range" : [0,300],
-	      "bins" : 60
+	      "bins" : 60,
+	      "logx": false,
+      	      "logy": false
       },
        "ScoutingMET_pt" : {
 	      "x_range" : [0,600],
 	      "bins" : 60
+      },
+        "ScoutingFatPFJetRecluster_prob_Xbb_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+         "ScoutingFatPFJetRecluster_prob_Xbb_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+          "ScoutingFatPFJetRecluster_prob_Xcc_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+         "ScoutingFatPFJetRecluster_prob_Xcc_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xcs_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xcs_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xqq_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xqq_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xss_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xss_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xud_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_prob_Xud_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_VvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_VvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_VvsQCD_max" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_VvsQCD_sum" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_WvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_WvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_WvsQCD_max" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_WvsQCD_sum" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+        "ScoutingFatPFJetRecluster_ZvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingFatPFJetRecluster_ZvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+        "ScoutingPFJetRecluster2_scoutUParT_probb_1" : {
+	      "x_range" : [0,1]
+      },
+        "ScoutingPFJetRecluster2_scoutUParT_probb_2" : {
+	      "x_range" : [0,1]
+      },
+        "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_all" : {
+	      "x_range" : [0,1]
+      },
+        "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_dR0p4" : {
+	      "x_range" : [0,1]
+      },
+        "ScoutingPFJetRecluster2_scoutUParT_probb_second_max" : {
+	      "x_range" : [0,1]
       }
-     
     }
   },
   "fat3": {
@@ -131,7 +282,16 @@
       "is_signal"
     ],
     "branches": {
-    
+
+      "ScoutingEvent_aplanarity": {
+        "bins": 50,
+        "x_range": [
+          0,
+          0.5
+        ],
+        "logx": false,
+        "logy": true
+      },
        "nScoutingElectron_selected" : {
 	      "x_range" : [-0.5,5],
 	      "bins" : 6
@@ -210,16 +370,190 @@
       },
       "ScoutingFatPFJetRecluster_msoftdrop_1" : {
 	      "x_range" : [0,300],
-	      "bins" : 60
+	      "bins" : 60,
+	      "logx": false,
+	      "logy": false
       },
       "ScoutingFatPFJetRecluster_msoftdrop_2" : {
 	      "x_range" : [0,300],
-	      "bins" : 60
+	      "bins" : 60,
+	      "logx": false,
+	      "logy": false
       },
       "ScoutingFatPFJetRecluster_msoftdrop_3" : {
 	      "x_range" : [0,300],
+	      "bins" : 60,
+	      "logx": false,
+	      "logy": false
+      },
+      "ScoutingMET_pt" : {
+	      "x_range" : [0,600],
 	      "bins" : 60
-      }   
+      },
+      "ScoutingFatPFJetRecluster_prob_Xbb_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xbb_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xbb_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcc_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcc_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcc_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcs_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcs_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xcs_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xqq_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xqq_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xqq_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xss_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xss_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xss_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xud_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xud_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_prob_Xud_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_VvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_VvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_VvsQCD_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_VvsQCD_max" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_VvsQCD_sum" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_WvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_WvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_WvsQCD_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_WvsQCD_max" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_WvsQCD_sum" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logy": true
+      },
+      "ScoutingFatPFJetRecluster_ZvsQCD_1" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_ZvsQCD_2" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingFatPFJetRecluster_ZvsQCD_3" : {
+	      "x_range" : [0,1],
+	      "bins" : 50,
+	      "logx": true
+      },
+      "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_all" : {
+	      "x_range" : [0,1]
+      },
+      "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_dR0p4" : {
+	      "x_range" : [0,1]
+      },
+      "ScoutingPFJetRecluster2_scoutUParT_probb_second_max" : {
+	      "x_range" : [0,1]
+      }
     }
   },
   "ttbar_cr": {

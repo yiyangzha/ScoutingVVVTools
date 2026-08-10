@@ -13,6 +13,10 @@ SLURM_EXTRA=""
 X509_SRC="/tmp/x509up_u$(id -u)"
 X509_DST="/depot/cms/users/$(whoami)/x509up_u$(id -u)"
 
+timestamp() {
+  date '+%Y-%m-%d %H:%M:%S'
+}
+
 
 
 usage() {

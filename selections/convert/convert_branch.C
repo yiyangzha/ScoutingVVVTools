@@ -2242,6 +2242,40 @@ Value evalMinDeltaR(const vector<ExprPtr>& args, const EvalContext& context) {
     return makeNumberValue(best);
 }
 
+// max_ratio_within_dr(anchor, collection, dr_threshold [, default]): among
+// collection members within dr_threshold (deltaR) of anchor, the maximum
+// ratio of a candidate's pT to the anchor's pT; `default` if none qualify.
+// The anchor is evaluated ONCE in the caller's context before the loop --
+// unlike max_value()/min_value() (evalAggregation), which rebind
+// currentObject/self to each candidate while looping, so an outer "self"
+// cannot be referenced from inside their loop body. Following min_deltaR's
+// convention (self passed explicitly as args[0]) sidesteps that: this can be
+// called as max_ratio_within_dr(self, ak4_nocuts, 0.8, default) from within
+// a per-AK8-slot formula to get the nearby-AK4/AK8 pT ratio feature used by
+// the ISR-vs-W discriminant score.
+Value evalMaxRatioWithinDr(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error("max_ratio_within_dr requires anchor, collection, and dr_threshold arguments");
+    }
+    const TLorentzVector anchorP4 = toP4(evalExpression(args[0], context));
+    const RuntimeCollection* collection = toCollection(evalExpression(args[1], context));
+    const double drThreshold = static_cast<double>(evalNumber(args[2], context));
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+
+    const double anchorPt = anchorP4.Pt();
+    bool found = false;
+    long double best = defaultValue;
+    for (const auto& object : collection->objects) {
+        if (anchorP4.DeltaR(object.p4) >= drThreshold) continue;
+        const long double ratio = (anchorPt > 0.0) ? static_cast<long double>(object.p4.Pt() / anchorPt) : 0.0L;
+        if (!found || ratio > best) {
+            best = ratio;
+            found = true;
+        }
+    }
+    return makeNumberValue(found ? best : defaultValue);
+}
+
 // Among the reference objects (args[1..]), pick the one closest to args[0] in deltaR
 // and return the deltaPhi between args[0] and that closest reference. Used to attach,
 // per AK4 jet, the deltaPhi to the closest signal AK8 jet.
@@ -2501,6 +2535,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "min_deltaR") {
         return evalMinDeltaR(args, context);
+    }
+    if (op == "max_ratio_within_dr") {
+        return evalMaxRatioWithinDr(args, context);
     }
     if (op == "deltaPhi_at_min_deltaR") {
         return evalDeltaPhiAtMinDeltaR(args, context);

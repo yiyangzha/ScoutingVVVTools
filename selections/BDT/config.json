@@ -1,11 +1,11 @@
 {
   "submit_trees": [
-    "fat3"
+    "fat2",  "fat3"
   ],
   "sample_config": "../../src/sample.json",
   "input_root": "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/dataset/",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
-  "output_root": "./{tree_name}_lepton_veto",
+  "output_root": "./{tree_name}_new_btagging_lepton_veto",
   "model_pattern": "{output_root}/{tree_name}_model",
   "model_type": "bdt",
   "entries_per_sample": 750000,
@@ -28,10 +28,30 @@
       "zzz"
     ],
     "VH": [
-      "zh_had",
-      "ggzh_had",
-      "wplush",
-      "wminush"
+      "ZH-Zto2Q-Hto2Wto4Q",
+      "ZH-Zto2L-Hto2Wto2L2Nu",
+      "ZH-Zto2L-Hto2Wto4Q",
+      "ZH-Zto2L-Hto2WtoLNu2Q",
+      "ZH-Zto2Q-Hto2Wto2L2Nu",
+      "ZH-Zto2Q-Hto2WtoLNu2Q",
+      "GluGluZH-Zto2Q-Hto2Wto4Q",
+      "GluGluZH-Zto2L-Hto2Wto2L2Nu",
+      "GluGluZH-Zto2L-Hto2Wto4Q",
+      "GluGluZH-Zto2L-Hto2WtoLNu2Q",
+      "GluGluZH-Zto2Q-Hto2Wto2L2Nu",
+      "GluGluZH-Zto2Q-Hto2WtoLNu2Q",
+      "WminusH-Wto2Q-Hto2Wto4Q",
+      "WminusH-Wto2Q-Hto2Wto2L2Nu",
+      "WminusH-Wto2Q-Hto2WtoLNu2Q",
+      "WminusH-WtoLNu-Hto2Wto2L2Nu",
+      "WminusH-WtoLNu-Hto2Wto4Q",
+      "WminusH-WtoLNu-Hto2WtoLNu2Q",
+      "WplusH-Wto2Q-Hto2Wto4Q",
+      "WplusH-Wto2Q-Hto2Wto2L2Nu",
+      "WplusH-Wto2Q-Hto2WtoLNu2Q",
+      "WplusH-WtoLNu-Hto2Wto2L2Nu",
+      "WplusH-WtoLNu-Hto2Wto4Q",
+      "WplusH-WtoLNu-Hto2WtoLNu2Q"
     ],
     "Top": [
       "ttbar_had",
@@ -198,6 +218,99 @@
     "weight_decay": 0.0001,
     "early_stopping_rounds": 10,
     "permutation_importance_events": 1000000
+  },
+  "boosted3": {
+    "n_estimators": 1500,
+    "n_estimators_decorr": 1000,
+    "max_depth": 7,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 6,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.75,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
+  },
+  "boosted2_resolved": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
+  },
+  "boosted2_unresolved": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
   },
   "decor_tail_aware": true,
   "decor_tail_min_prob": 0.002,

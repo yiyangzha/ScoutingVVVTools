@@ -108,6 +108,10 @@ Sample selection for modes 0, 1, 6:
                    help="Extra sbatch arguments (space-separated)")
     p.add_argument("--slurm-files-per-job", type=int, default=50, metavar="N",
                    help="Target input files per SLURM job for mode 0; default 50 pairs with --slurm-cpus=1 (serial) to keep per-job wall time reasonable")
+    p.add_argument("--slurm-retries", type=int, default=3, metavar="N",
+                   help="Retry a failed SLURM job (e.g. transient xrootd/remote-file crashes) up to N times before giving up; 1 disables retries (default: 3)")
+    p.add_argument("--slurm-retry-delay", type=int, default=30, metavar="SECONDS",
+                   help="Seconds to sleep between retry attempts (default: 30)")
     p.add_argument("--max-jobs", type=int, default=1, metavar="N",
                    help="Max concurrent local jobs (default: 1)")
 
@@ -358,7 +362,7 @@ def copy_log_to_output_dirs(mode, config_path, work_dir, log_path):
         if not d.is_dir():
             log(f"log copy: skipping missing output dir {d}")
             continue
-        dest = d / "log.txt"
+        dest = d / log_path.name
         try:
             shutil.copy2(log_path, dest)
             log(f"copied log to {dest}")
@@ -508,6 +512,27 @@ def launch_job_local(sample, mode, mode_cfg, config_path, bin_path, work_dir,
 # SLURM job launching
 # ---------------------------------------------------------------------------
 
+def build_retry_wrap(cmd, retries, delay, label=""):
+    """Wrap a shell command so SLURM retries it in-place on failure.
+
+    Batch/sample jobs open input files over xrootd, which occasionally crashes
+    with a transient ROOT/XrdCl segfault (TNetXNGFile::SetEnv) unrelated to the
+    job's actual config or data. Retrying the same job a few times in-process
+    (rather than requiring a manual resubmission, as happened for the
+    convert_hybrid_resolved batch-11/12 crash) papers over that flakiness
+    without masking a real, persistent failure (it still exits non-zero after
+    the last attempt).
+    """
+    if retries <= 1:
+        return cmd
+    return (
+        f"n=0; until {cmd}; do ec=$?; n=$((n+1)); "
+        f'if [ "$n" -ge {retries} ]; then exit $ec; fi; '
+        f'echo "[retry] {label} attempt $n/{retries} failed (exit=$ec); retrying in {delay}s" >&2; '
+        f"sleep {delay}; done"
+    )
+
+
 def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
                      root_libdir=""):
     config_env = mode_cfg["config_env"]
@@ -528,9 +553,13 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
     if args.slurm_extra:
         sbatch_args.extend(args.slurm_extra.split())
     ldpath_prefix = f"export LD_LIBRARY_PATH={root_libdir}:${{LD_LIBRARY_PATH:-}}; " if root_libdir else ""
+    retry_cmd = build_retry_wrap(
+        f"env {config_env}={config_path} {bin_path} {sample}",
+        args.slurm_retries, args.slurm_retry_delay, label=f"{label}_{sample}",
+    )
     sbatch_args.append(
         f"--wrap={ldpath_prefix}export X509_USER_PROXY={x509_dst}; "
-        f"env {config_env}={config_path} {bin_path} {sample}"
+        f"{retry_cmd}"
     )
 
     r = subprocess.run(sbatch_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
@@ -603,7 +632,11 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
             cmd.extend(args.slurm_extra.split())
         # wrap_body is appended after base_env_str; any NAME=VALUE tokens before
         # the executable are absorbed by `env` as additional environment variables.
-        cmd.append(f"--wrap={ldpath_prefix}{x509_prefix}{base_env_str} {wrap_body}")
+        retry_cmd = build_retry_wrap(
+            f"{base_env_str} {wrap_body}",
+            args.slurm_retries, args.slurm_retry_delay, label=job_name,
+        )
+        cmd.append(f"--wrap={ldpath_prefix}{x509_prefix}{retry_cmd}")
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
         if result.returncode != 0:
             sys.exit(f"sbatch failed for {job_name}: {result.stderr.decode().strip()}")
@@ -740,9 +773,10 @@ def main():
         )
 
     work_dir = ROOT_DIR / mode_cfg["subdir"]
-    log_path = work_dir / "log.txt"
 
     config_path = resolve_config(args.config_input, work_dir)
+    log_name = "log.txt" if config_path.stem == "config" else f"log_{config_path.stem}.txt"
+    log_path = work_dir / log_name
 
     # X509 cert copy happens before log redirect so errors go to terminal
     x509_dst = None

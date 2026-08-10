@@ -537,6 +537,31 @@
             "onlyMC": false
           },
           {
+            "name": "ScoutingPFJetRecluster2_scoutUParT_probbb",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_scoutUParT_probleptonicB",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_scoutUParT_probc",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_scoutUParT_probg",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_scoutUParT_probuds",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
             "name": "ScoutingPFJetRecluster2_genPartIdx",
             "type": "S",
             "onlyMC": true,
@@ -1715,6 +1740,30 @@
               "onlyMC": false
             },
             {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4",
+              "type": "F",
+              "formula": "max_value(ak4_dR0p4, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_second_max_dR0p4",
+              "type": "F",
+              "formula": "nth_max_value(ak4_dR0p4, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_all",
+              "type": "F",
+              "formula": "max_value(ak4_all, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_second_max_all",
+              "type": "F",
+              "formula": "nth_max_value(ak4_all, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), 2, -99)",
+              "onlyMC": false
+            },
+            {
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_max_pt",
               "type": "F",
               "formula": "value_at_max(ak4, ScoutingPFJetRecluster2_scoutUParT_probb, ScoutingPFJetRecluster2_pt, -99)",
@@ -2439,6 +2488,30 @@
               "name": "ScoutingPFJetRecluster2_scoutUParT_probb_second_max_all",
               "type": "F",
               "formula": "nth_max_value(ak4_all, ScoutingPFJetRecluster2_scoutUParT_probb, 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4",
+              "type": "F",
+              "formula": "max_value(ak4_dR0p4, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_second_max_dR0p4",
+              "type": "F",
+              "formula": "nth_max_value(ak4_dR0p4, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), 2, -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_all",
+              "type": "F",
+              "formula": "max_value(ak4_all, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), -99)",
+              "onlyMC": false
+            },
+            {
+              "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_second_max_all",
+              "type": "F",
+              "formula": "nth_max_value(ak4_all, safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99), 2, -99)",
               "onlyMC": false
             },
             {

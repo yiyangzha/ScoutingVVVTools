@@ -4,7 +4,7 @@
     {
       "name": "ak8",
       "source": "ScoutingFatPFJetRecluster",
-      "selection": "pt(self) > 200",
+      "selection": "(1)",
       "sort": "pt(self) desc"
     },
     {
