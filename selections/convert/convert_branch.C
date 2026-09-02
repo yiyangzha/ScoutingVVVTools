@@ -2159,6 +2159,87 @@ Value evalFirstBosonAncestorIndex(const vector<ExprPtr>& args, const EvalContext
     return makeNumberValue(static_cast<long double>(current));
 }
 
+// count_hadronic_tau_from_wz(collection, pdgid_field, mother_index_field) /
+// count_leptonic_tau_from_wz(collection, pdgid_field, mother_index_field):
+// Count hard-process W/Z bosons whose decay proceeds via a tau (|pdgId| == 15) that is
+// itself a DIRECT daughter of the boson, split by how that tau subsequently decays.
+//
+// This exists because nGenHadronicWZ (wz_had_quarks/2) only counts a boson as hadronic
+// when its direct daughter is a quark -- a W/Z -> tau -> hadrons + nu chain is always
+// tagged "leptonic" there, even though ~65% of tau decays are hadronic (a narrow,
+// jet-like visible signature with no electron/muon at all). Since any e/mu-based lepton
+// veto and any jet-based BDT can only ever see the tau's decay PRODUCTS -- never the
+// intermediate tau itself -- a hadronically-decaying tau is functionally invisible to
+// both, and physically indistinguishable from a genuine light-quark jet. This builtin
+// exposes that population so its effect on the nGenHadronicWZ-based purity metric can be
+// quantified directly, rather than assumed.
+//
+// For each candidate tau, first walk DOWN through same-pdgId self-copy daughters (the
+// tau equivalent of first_boson_ancestor_index's upward same-pdgId climb: a radiated/
+// copied tau appears as its own daughter with identical pdgId before it actually decays)
+// to reach the final copy, then classify that copy's own daughters: presence of an
+// electron/muon (|pdgId| in {11,13}) means a leptonic tau decay, its absence (given the
+// tau did decay at all) means hadronic.
+Value evalCountTauDecayFromBoson(const string& op, const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error(op + " requires collection, pdgId field, and mother-index field expressions");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int size = static_cast<int>(collection->objects.size());
+
+    auto fieldAt = [&](int index, const ExprPtr& fieldExpr) -> long double {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &collection->objects[index];
+        return evalNumber(fieldExpr, loop);
+    };
+    auto pdgIdAt = [&](int index) -> long long { return llabs(llround(fieldAt(index, args[1]))); };
+    auto motherIndexAt = [&](int index) -> int { return static_cast<int>(llround(fieldAt(index, args[2]))); };
+
+    long long count = 0;
+    for (int i = 0; i < size; ++i) {
+        if (pdgIdAt(i) != 15) continue;
+        const int motherIdx = motherIndexAt(i);
+        if (motherIdx < 0 || motherIdx >= size) continue;
+        const long long motherPdgId = pdgIdAt(motherIdx);
+        if (motherPdgId != 24 && motherPdgId != 23) continue;
+        // i is a "root" tau: the first recorded copy directly attributed to the W/Z.
+
+        int current = i;
+        bool hasLeptonDaughter = false;
+        bool decayed = false;
+        for (int step = 0; step <= size; ++step) {
+            int nextTauCopy = -1;
+            bool anyDaughter = false;
+            bool leptonDaughterHere = false;
+            for (int j = 0; j < size; ++j) {
+                if (motherIndexAt(j) != current) continue;
+                anyDaughter = true;
+                const long long daughterPdgId = pdgIdAt(j);
+                if (daughterPdgId == 15 && nextTauCopy < 0) nextTauCopy = j;
+                if (daughterPdgId == 11 || daughterPdgId == 13) leptonDaughterHere = true;
+            }
+            if (nextTauCopy >= 0) {
+                current = nextTauCopy;
+                continue;  // still a self-copy; keep climbing down to the final tau
+            }
+            if (anyDaughter) {
+                hasLeptonDaughter = leptonDaughterHere;
+                decayed = true;
+            }
+            break;
+        }
+        if (!decayed) continue;  // undecayed tau in the record (shouldn't happen); skip
+
+        if (op == "count_leptonic_tau_from_wz") {
+            if (hasLeptonDaughter) ++count;
+        } else {
+            if (!hasLeptonDaughter) ++count;
+        }
+    }
+    return makeNumberValue(static_cast<long double>(count));
+}
+
 Value evalPairwiseMetric(const string& op,
                          const vector<ExprPtr>& args,
                          const EvalContext& context) {
@@ -2349,6 +2430,68 @@ BestJetPairResult findBestJetPair(const RuntimeCollection* collection, const str
     return result;
 }
 
+// Charge/flavor of a single collection object, resolved through whichever of the three
+// lepton sources (ScoutingElectron / ScoutingMuonVtx / ScoutingMuonNoVtx) it was merged
+// from -- mirrors the first_valid(...) idiom used throughout branch.json (each source's
+// pt defaults to `def` = -99 on an object that didn't come from it).
+struct LeptonChargeFlavor {
+    bool valid = false;
+    bool isElectron = false;
+    int charge = 0;
+};
+
+LeptonChargeFlavor getLeptonChargeFlavor(const RuntimeCollection& collection, const RuntimeObject& object) {
+    LeptonChargeFlavor result;
+    if (getObjectField(collection, object, "ScoutingElectron_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = true;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingElectron_bestTrack_charge", def)));
+        return result;
+    }
+    if (getObjectField(collection, object, "ScoutingMuonVtx_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = false;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingMuonVtx_charge", def)));
+        return result;
+    }
+    if (getObjectField(collection, object, "ScoutingMuonNoVtx_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = false;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingMuonNoVtx_charge", def)));
+    }
+    return result;
+}
+
+// Same-flavor opposite-sign (SFOS) lepton pair selection: among all 2-object pairs
+// (i < j, i,j < limit) in a collection, find the SFOS pair whose invariant mass is
+// closest to the Z mass. Pairs that aren't same-flavor-opposite-sign are skipped
+// entirely (not merely disfavoured), so "not found" means no SFOS pair exists.
+BestJetPairResult findBestSFOSPair(const RuntimeCollection* collection, int limit) {
+    BestJetPairResult result;
+    const int count = min(limit, static_cast<int>(collection->objects.size()));
+    double bestMetric = 0.;
+    for (int i = 0; i < count; ++i) {
+        const LeptonChargeFlavor infoI = getLeptonChargeFlavor(*collection, collection->objects[i]);
+        if (!infoI.valid) continue;
+        for (int j = i + 1; j < count; ++j) {
+            const LeptonChargeFlavor infoJ = getLeptonChargeFlavor(*collection, collection->objects[j]);
+            if (!infoJ.valid) continue;
+            if (infoI.isElectron != infoJ.isElectron) continue;
+            if (infoI.charge * infoJ.charge >= 0) continue;
+            const TLorentzVector sum = collection->objects[i].p4 + collection->objects[j].p4;
+            const double metric = fabs(sum.M() - kNominalZMass);
+            if (!result.found || metric < bestMetric) {
+                bestMetric = metric;
+                result.found = true;
+                result.i = i;
+                result.j = j;
+                result.sum = sum;
+            }
+        }
+    }
+    return result;
+}
+
 // pair_p4_min_dr(collection [, limit]) / pair_p4_closest_wz_mass(collection [, limit]):
 // returns the summed 4-vector of the winning pair (zero vector if fewer than 2 objects),
 // meant to be composed with mass()/pt()/eta()/phi(), e.g.
@@ -2390,6 +2533,43 @@ Value evalPairIndexSelection(const string& criterion, const vector<ExprPtr>& arg
         return makeNumberValue(static_cast<long double>(best.j));
     }
     throw runtime_error("pair_index_* slot must be 1 or 2");
+}
+
+// pair_p4_sfos_z_mass(collection [, limit]) / pair_index_sfos_z_mass(collection, slot
+// [, limit [, default]]): same call shape as pair_p4_combined_wz_dr / pair_index_combined_wz_dr,
+// but selects the same-flavor opposite-sign pair closest to the Z mass instead of a plain
+// jet pair. "not found" (index default, zero-vector p4) means no SFOS pair exists.
+Value evalPairP4SFOS(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.empty()) {
+        throw runtime_error("pair_p4_sfos_z_mass requires a collection argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const BestJetPairResult best = findBestSFOSPair(collection, limit);
+    return makeP4Value(best.found ? best.sum : TLorentzVector());
+}
+
+Value evalPairIndexSFOS(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 2) {
+        throw runtime_error("pair_index_sfos_z_mass requires a collection and a slot (1 or 2) argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int slot = static_cast<int>(llround(evalNumber(args[1], context)));
+    const int limit = (args.size() >= 3) ? static_cast<int>(llround(evalNumber(args[2], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    const BestJetPairResult best = findBestSFOSPair(collection, limit);
+    if (!best.found) {
+        return makeNumberValue(defaultValue);
+    }
+    if (slot == 1) {
+        return makeNumberValue(static_cast<long double>(best.i));
+    }
+    if (slot == 2) {
+        return makeNumberValue(static_cast<long double>(best.j));
+    }
+    throw runtime_error("pair_index_sfos_z_mass slot must be 1 or 2");
 }
 
 Value evalCall(const ExprPtr& expr, const EvalContext& context) {
@@ -2483,6 +2663,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     if (op == "first_boson_ancestor_index") {
         return evalFirstBosonAncestorIndex(args, context);
     }
+    if (op == "count_hadronic_tau_from_wz" || op == "count_leptonic_tau_from_wz") {
+        return evalCountTauDecayFromBoson(op, args, context);
+    }
     if (op == "pair_p4_min_dr") {
         return evalPairP4Selection("min_dr", args, context);
     }
@@ -2500,6 +2683,12 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "pair_index_combined_wz_dr") {
         return evalPairIndexSelection("combined_wz_dr", args, context);
+    }
+    if (op == "pair_p4_sfos_z_mass") {
+        return evalPairP4SFOS(args, context);
+    }
+    if (op == "pair_index_sfos_z_mass") {
+        return evalPairIndexSFOS(args, context);
     }
     if (op == "mass") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).M());

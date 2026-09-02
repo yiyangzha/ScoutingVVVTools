@@ -1,8 +1,8 @@
 {
   "lumi": 255.8,
   "n_signal_regions": 4,
-  "bdt_root": "../BDT/fat2_vjets_tailaware_decorr3",
-  "output_dir": "./output/fat2_vjets_tailaware_decorr3_hist_tuned",
+  "bdt_root": "../BDT/boosted2_unresolved_new_sorting",
+  "output_dir": "./output/boosted2_unresolved_new_sorting",
   "score_axes": "all",
   "min_bkg_weight": 5.0,
   "min_signal_weight": 0.0,

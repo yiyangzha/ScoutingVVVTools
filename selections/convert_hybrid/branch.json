@@ -708,6 +708,18 @@
               "onlyMC": true
             },
             {
+              "name": "nGenHadronicTauWZ",
+              "type": "I",
+              "formula": "count_hadronic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
+              "onlyMC": true
+            },
+            {
+              "name": "nGenLeptonicTauWZ",
+              "type": "I",
+              "formula": "count_leptonic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
+              "onlyMC": true
+            },
+            {
               "name": "nScoutingPrimaryVertex",
               "type": "I",
               "formula": "nScoutingPrimaryVertex",
@@ -1470,6 +1482,18 @@
               "name": "nGenHadronicWZ",
               "type": "I",
               "formula": "size(wz_had_quarks) / 2",
+              "onlyMC": true
+            },
+            {
+              "name": "nGenHadronicTauWZ",
+              "type": "I",
+              "formula": "count_hadronic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
+              "onlyMC": true
+            },
+            {
+              "name": "nGenLeptonicTauWZ",
+              "type": "I",
+              "formula": "count_leptonic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
               "onlyMC": true
             },
             {
@@ -2651,6 +2675,18 @@
               "name": "nGenHadronicWZ",
               "type": "I",
               "formula": "size(wz_had_quarks) / 2",
+              "onlyMC": true
+            },
+            {
+              "name": "nGenHadronicTauWZ",
+              "type": "I",
+              "formula": "count_hadronic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
+              "onlyMC": true
+            },
+            {
+              "name": "nGenLeptonicTauWZ",
+              "type": "I",
+              "formula": "count_leptonic_tau_from_wz(GenPart, GenPart_pdgId, GenPart_genPartIdxMother)",
               "onlyMC": true
             },
             {

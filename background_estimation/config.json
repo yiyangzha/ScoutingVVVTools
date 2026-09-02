@@ -1,26 +1,16 @@
 {
   "lumi": 255.8,
-  "bdt_root": "../selections/BDT/fat2_vjets_tailaware_decorr3",
-  "signal_region_csv": "../selections/signal_region/output/fat2_vjets_tailaware_decorr3_minbkg50/signal_region.csv",
-  "output_dir": "./output/fat2_vjets_tailaware_decorr3_minbkg50_sideband",
+  "bdt_root": "../selections/BDT/boosted3",
+  "signal_region_csv": "../selections/signal_region/output/boosted3_hist/signal_region.csv",
+  "output_dir": "./output/boosted3",
   "root_file_name": "qcd_abcd_yields.root",
   "abcd_branches": {
-    "fat2": [
-      "ScoutingFatPFJetRecluster_msoftdrop_1"
-    ],
-    "fat3": [
+    "boosted3": [
       "ScoutingFatPFJetRecluster_msoftdrop_1"
     ]
   },
   "a_region_shape_branches": {
-    "fat2": [
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max",
-      "ScoutingFatPFJetRecluster_VvsQCD_1",
-      "ScoutingFatPFJetRecluster_VvsQCD_2",
-      "ScoutingFatPFJetRecluster_WvsQCD_1",
-      "ScoutingFatPFJetRecluster_WvsQCD_2"
-    ],
-    "fat3": [
+    "boosted3": [
       "ScoutingPFJetRecluster2_scoutUParT_probb_max",
       "ScoutingFatPFJetRecluster_VvsQCD_1",
       "ScoutingFatPFJetRecluster_VvsQCD_2",

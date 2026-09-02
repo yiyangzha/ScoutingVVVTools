@@ -255,6 +255,21 @@ def _current_sample_files(sample_name):
     return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
 
 
+def _segment_stale(seg):
+    """True if seg's file is missing, or the live file no longer has enough
+    entries to cover the frozen [entry_start, entry_stop) range (e.g. the
+    sample was reconverted with a tighter selection since training time)."""
+    if not os.path.exists(seg["file"]):
+        return True
+    try:
+        with uproot.open(seg["file"]) as uf:
+            if TREE_NAME not in uf:
+                return True
+            return int(uf[TREE_NAME].num_entries) < seg["entry_stop"]
+    except Exception:
+        return True
+
+
 def _refresh_test_segments(sample_name):
     files = _current_sample_files(sample_name)
     if not files:
@@ -340,7 +355,7 @@ def load_test_data(branches):
         raw_entries   = int(info["raw_entries"])
         total_entries = int(sample_meta["total_entries"])
         test_segments = sample_meta["test_segments"]
-        if any(not os.path.exists(seg["file"]) for seg in test_segments):
+        if any(_segment_stale(seg) for seg in test_segments):
             total_entries, test_segments = _refresh_test_segments(sample_name)
         if raw_entries <= 0:
             raise RuntimeError(

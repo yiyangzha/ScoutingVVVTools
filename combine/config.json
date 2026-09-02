@@ -1,17 +1,32 @@
 {
   "channels": [
     {
-      "name": "fat2",
-      "root_file": "../background_estimation/output/fat2_vjets_tailaware_minbkg20/qcd_abcd_yields.root",
-      "bdt_root": "../selections/BDT/fat2_vjets_tailaware"
+      "name": "boosted3",
+      "root_file": "../background_estimation/output/boosted3/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/boosted3"
     },
     {
-      "name": "fat3",
-      "root_file": "../background_estimation/output/fat3_vjets_full_minbkg50/qcd_abcd_yields.root",
-      "bdt_root": "../selections/BDT/fat3_vjets_full"
+      "name": "boosted2_resolved",
+      "root_file": "../background_estimation/output/boosted2_resolved/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/boosted2_resolved"
+    },
+    {
+      "name": "boosted2_unresolved",
+      "root_file": "../background_estimation/output/boosted2_unresolved/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/boosted2_unresolved"
+    },
+    {
+      "name": "boosted2_leptonic_1lep",
+      "root_file": "../background_estimation/output/boosted2_leptonic_1lep/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/boosted2_leptonic_1lep"
+    },
+    {
+      "name": "boosted2_leptonic_2lep",
+      "root_file": "../background_estimation/output/boosted2_leptonic_2lep/qcd_abcd_yields.root",
+      "bdt_root": "../selections/BDT/boosted2_leptonic_2lep"
     }
   ],
-  "output_dir": "./vjets_full_minbkg20",
+  "output_dir": "./leptonic_categories",
   "combine_cmd": "combine",
   "combine_cards_cmd": "combineCards.py",
   "lumi_unc": 0.016,

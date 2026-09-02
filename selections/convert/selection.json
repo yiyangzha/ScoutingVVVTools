@@ -4,7 +4,19 @@
     {
       "name": "ak8",
       "source": "ScoutingFatPFJetRecluster",
-      "selection": "(1)",
+      "selection": "pt(self) > 175.0",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "ak4_nocuts",
+      "source": "ScoutingPFJetRecluster2",
+      "selection": "1",
+      "sort": "pt(self) desc"
+    },
+    {
+      "name": "ak8_kept2",
+      "source": "ScoutingFatPFJetRecluster",
+      "selection": "pt(self) > 175.0",
       "sort": "pt(self) desc"
     },
     {
@@ -26,9 +38,9 @@
       "sort": "pt(self) desc"
     },
     {
-      "name": "ak4_nocuts",
+      "name": "ak4_resolved",
       "source": "ScoutingPFJetRecluster2",
-      "selection": "1",
+      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster2_nConstituents > 1 && ScoutingPFJetRecluster2_neHEF < 0.99 && ScoutingPFJetRecluster2_neEmEF < 0.90 && ScoutingPFJetRecluster2_chHadMultiplicity > 0 && ScoutingPFJetRecluster2_muEF < 0.80 && min_deltaR(self, ak8_kept2) > 0.8",
       "sort": "pt(self) desc"
     },
     {
@@ -64,26 +76,29 @@
       "sort": "pt(self) desc"
     },
     {
-      "name": "lep",
-      "merge": ["ele", "mu_vtx", "mu_novtx"],
-      "selection": "1",
-      "sort": "pt(self) desc"
-    },
-    {
       "name": "ele_veto",
-      "merge": ["ele"],
+      "merge": [
+        "ele"
+      ],
       "selection": "(((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20))",
       "sort": "pt(self) desc"
     },
     {
       "name": "mu_veto",
-      "merge": ["mu_vtx", "mu_novtx"],
+      "merge": [
+        "mu_vtx",
+        "mu_novtx"
+      ],
       "selection": "(ScoutingMuonVtx_pt > -90 && (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2 && (ScoutingMuonVtx_type == 2 || ScoutingMuonVtx_type == 6 || ScoutingMuonVtx_type == 10 || ScoutingMuonVtx_type == 14)) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) || (ScoutingMuonNoVtx_pt > -90 && (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2 && (ScoutingMuonNoVtx_type == 2 || ScoutingMuonNoVtx_type == 6 || ScoutingMuonNoVtx_type == 10 || ScoutingMuonNoVtx_type == 14)) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))",
       "sort": "pt(self) desc"
     },
     {
       "name": "lep_veto",
-      "merge": ["ele", "mu_vtx", "mu_novtx"],
+      "merge": [
+        "ele",
+        "mu_vtx",
+        "mu_novtx"
+      ],
       "selection": "(ScoutingElectron_pt > -90 && ((abs(ScoutingElectron_eta) < 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0126 && abs(ScoutingElectron_dEtaIn) < 0.00463 && abs(ScoutingElectron_dPhiIn) < 0.148 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.209 && ScoutingElectron_missingHits <= 2) || (abs(ScoutingElectron_eta) >= 1.479 && ScoutingElectron_sigmaIetaIeta < 0.0457 && abs(ScoutingElectron_dEtaIn) < 0.00814 && abs(ScoutingElectron_dPhiIn) < 0.19 && ScoutingElectron_hOverE < 0.10 && abs(ScoutingElectron_ooEMOop) < 0.132 && ScoutingElectron_missingHits <= 3)) && (safe_div(ScoutingElectron_trackIso + ScoutingElectron_ecalIso + ScoutingElectron_hcalIso, ScoutingElectron_pt, 99) < 0.20)) || (ScoutingMuonVtx_pt > -90 && (ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2 && (ScoutingMuonVtx_type == 2 || ScoutingMuonVtx_type == 6 || ScoutingMuonVtx_type == 10 || ScoutingMuonVtx_type == 14)) && (safe_div(ScoutingMuonVtx_trackIso, ScoutingMuonVtx_pt, 99) < 0.15)) || (ScoutingMuonNoVtx_pt > -90 && (ScoutingMuonNoVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonNoVtx_normchi2 < 3 && ScoutingMuonNoVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonNoVtx_nValidPixelHits > 0 && ScoutingMuonNoVtx_nRecoMuonMatchedStations >= 2 && (ScoutingMuonNoVtx_type == 2 || ScoutingMuonNoVtx_type == 6 || ScoutingMuonNoVtx_type == 10 || ScoutingMuonNoVtx_type == 14)) && (safe_div(ScoutingMuonNoVtx_trackIso, ScoutingMuonNoVtx_pt, 99) < 0.15))",
       "sort": "pt(self) desc"
     },
@@ -109,7 +124,10 @@
     }
   ],
   "tree_selection": {
-    "fat2": "size(ak8) == 2 && size(ak4) >= 2",
-    "fat3": "size(ak8) >= 3"
+    "boosted3": "(size(ak8) >= 3 && (min(value_at(ak8, 0, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), min(value_at(ak8, 1, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), value_at(ak8, 2, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000)))) > 0.469) && size(lep_veto) == 0",
+    "boosted2_resolved": "((size(ak8) == 2 || (size(ak8) >= 3 && (min(value_at(ak8, 0, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), min(value_at(ak8, 1, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), value_at(ak8, 2, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000)))) <= 0.469)) && size(ak4_resolved) >= 2) && size(lep_veto) == 0",
+    "boosted2_unresolved": "((size(ak8) == 2 || (size(ak8) >= 3 && (min(value_at(ak8, 0, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), min(value_at(ak8, 1, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000), value_at(ak8, 2, (-0.0097*min(abs(ScoutingFatPFJetRecluster_msoftdrop - 80.4), abs(ScoutingFatPFJetRecluster_msoftdrop - 91.2)) + 2.5884*safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0) - 2.2984*max_ratio_within_dr(self, ak4_nocuts, 0.8, 1000000) + 3.3657), -1000000000)))) <= 0.469)) && size(ak4_resolved) < 2) && size(lep_veto) == 0",
+    "boosted2_leptonic_1lep": "size(ak8) == 2 && size(lep_veto) == 1",
+    "boosted2_leptonic_2lep": "size(ak8) == 2 && pair_index_sfos_z_mass(lep_veto, 1, 3, -1) >= 0"
   }
 }

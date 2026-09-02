@@ -116,6 +116,14 @@ THEORY_SAMPLES = [
     if s.get("has_theory_weights", False) and s.get("is_MC", True)
 ]
 
+# Optional restriction to a subset of samples (e.g. one sample per SLURM
+# shard); absent/empty means "all theory-weight samples", preserving prior
+# behaviour.
+_submit_samples = cfg.get("submit_samples") or []
+if _submit_samples:
+    _submit_set = set(_submit_samples)
+    THEORY_SAMPLES = [s for s in THEORY_SAMPLES if s in _submit_set]
+
 # LHEScaleWeight indices to include (exclude anti-correlated corners 2 and 6).
 SCALE_VALID = [0, 1, 3, 4, 5, 7, 8]
 

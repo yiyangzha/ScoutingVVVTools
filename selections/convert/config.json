@@ -7,7 +7,7 @@
   "resume_successful_batches": true,
   "lumi_mask": "Cert_Collisions2024_378981_386951_Golden.json",
   "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
-  "output_root": "../../dataset",
+  "output_root": "../../dataset_hybrid_leptonic",
   "output_pattern": "{output_root}/{sample_group}/{sample}.root",
   "sample_config": "../../src/sample.json"
 }

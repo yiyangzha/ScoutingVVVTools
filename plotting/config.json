@@ -1,8 +1,8 @@
 {
-  "submit_trees": ["fat2", "fat3"],
+  "submit_trees": ["boosted3", "boosted2_resolved", "boosted2_unresolved", "boosted2_leptonic_1lep", "boosted2_leptonic_2lep"],
   "sample_config": "../src/sample.json",
   "convert_branch_config": "../selections/convert/branch.json",
-  "bdt_root": "../selections/BDT/{tree_name}_vjets_tailaware_decorr3//",
+  "bdt_root": "../selections/BDT/{tree_name}",
   "output_root": "./pre-selection/{tree_name}",
   "output_root_nosel": "./no-selection_btagged/{tree_name}",
   "output_shapes": "./class-shapes/{tree_name}",
@@ -10,20 +10,29 @@
   "data_samples": ["data_2024"],
   "default_bins": 50,
   "event_reweight_branches": {
-    "fat2": ["weight_pu"],
-    "fat3": ["weight_pu"]
+    "boosted3": ["weight_pu"],
+    "boosted2_resolved": ["weight_pu"],
+    "boosted2_unresolved": ["weight_pu"],
+    "boosted2_leptonic_1lep": ["weight_pu"],
+    "boosted2_leptonic_2lep": ["weight_pu"]
   },
   "theory_syst_json": "../selections/theory_weights/output/theory_syst_yields.json",
   "_note_n_workers": "n_workers: parallel pool size for pre-pass, streaming, and rendering. null = cpu_count.",
   "n_workers": 12,
   "_note_plot_branches": "Set plot_branches per tree to restrict which branches are plotted. null or absent key plots all branches.",
   "plot_branches": {
-    "fat2": null,
-    "fat3": null
+    "boosted3": null,
+    "boosted2_resolved": null,
+    "boosted2_unresolved": null,
+    "boosted2_leptonic_1lep": null,
+    "boosted2_leptonic_2lep": null
   },
   "_note_plot_thresholds": "Plot-only event selection, independent of selections/BDT/selection.json. Scalar = col > value. [lo, hi] = lo < col < hi. Applied even with --no-selection.",
   "plot_thresholds": {
-    "fat2": {},
-    "fat3": {}
+    "boosted3": {},
+    "boosted2_resolved": {},
+    "boosted2_unresolved": {},
+    "boosted2_leptonic_1lep": {},
+    "boosted2_leptonic_2lep": {}
   }
 }

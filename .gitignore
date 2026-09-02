@@ -219,3 +219,5 @@ CMSSW_*
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+selections/convert/recovery_*
+selections/convert_hybrid/recovery_*

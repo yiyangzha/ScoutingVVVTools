@@ -112,6 +112,11 @@ Sample selection for modes 0, 1, 6:
                    help="Retry a failed SLURM job (e.g. transient xrootd/remote-file crashes) up to N times before giving up; 1 disables retries (default: 3)")
     p.add_argument("--slurm-retry-delay", type=int, default=30, metavar="SECONDS",
                    help="Seconds to sleep between retry attempts (default: 30)")
+    p.add_argument("--slurm-exclude", default="hammer-f001,hammer-f006,hammer-f008",
+                   metavar="NODES",
+                   help="Comma-separated nodes to exclude from SLURM scheduling "
+                        "(default: known-bad nodes hammer-f001/f006/f008; "
+                        "pass '' to disable)")
     p.add_argument("--max-jobs", type=int, default=1, metavar="N",
                    help="Max concurrent local jobs (default: 1)")
 
@@ -546,8 +551,9 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
         f"--cpus-per-task={args.slurm_cpus}",
         f"--mem={args.slurm_mem}",
         f"--time={args.slurm_time}",
-        f"--exclude=hammer-f004,hammer-f007",
     ]
+    if args.slurm_exclude:
+        sbatch_args.append(f"--exclude={args.slurm_exclude}")
     if args.slurm_partition:
         sbatch_args.append(f"--account={args.slurm_partition}")
     if args.slurm_extra:
@@ -624,6 +630,8 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
             f"--mem={args.slurm_mem}",
             f"--time={args.slurm_time}",
         ]
+        if args.slurm_exclude:
+            cmd.append(f"--exclude={args.slurm_exclude}")
         if args.slurm_partition:
             cmd.append(f"--account={args.slurm_partition}")
         if depends_on:

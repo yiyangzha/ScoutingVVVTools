@@ -88,6 +88,13 @@ MC_SAMPLES = [
     if s.get("is_MC", False)
 ]
 
+# Optional restriction to a subset of samples (e.g. one sample per SLURM
+# shard); absent/empty means "all MC samples", preserving prior behaviour.
+_submit_samples = cfg.get("submit_samples") or []
+if _submit_samples:
+    _submit_set = set(_submit_samples)
+    MC_SAMPLES = [s for s in MC_SAMPLES if s in _submit_set]
+
 
 # ---------------------------------------------------------------------------
 # Per-tree helpers
