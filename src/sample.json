@@ -29,7 +29,7 @@
     },
     {
       "name": "www",
-      "path": "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/WWW-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNano_MC_WWW_v5_jetMatchFix-00000000000000000000000000000000/USER",
       "sample_ID": 0,
       "is_MC": true,
       "is_signal": true,
@@ -40,7 +40,7 @@
     },
     {
       "name": "wwz",
-      "path": "/WWZ-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/WWZ-4F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNano_MC_WWZ_v5-00000000000000000000000000000000/USER",
       "sample_ID": 1,
       "is_MC": true,
       "is_signal": true,
@@ -51,7 +51,7 @@
     },
     {
       "name": "wzz",
-      "path": "/WZZ-5F_TuneCP5_13p6TeV_amcatnlo-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/WZZ-5F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNano_MC_WZZ_v5-00000000000000000000000000000000/USER",
       "sample_ID": 2,
       "is_MC": true,
       "is_signal": true,
@@ -62,7 +62,7 @@
     },
     {
       "name": "zzz",
-      "path": "/ZZZ-5F_TuneCP5_13p6TeV_amcatnlo-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/ZZZ-5F_TuneCP5_13p6TeV_amcatnlo-pythia8/jschulte-ScoutingNano_MC_ZZZ_v5-00000000000000000000000000000000/USER",
       "sample_ID": 3,
       "is_MC": true,
       "is_signal": true,
@@ -72,52 +72,52 @@
       "raw_entries": 16192091
     },
     {
-      "name": "zh_had",
-      "path": "/ZH-Zto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "name": "ZH-Zto2Q-Hto2Wto4Q",
+      "path": "/ZH-Zto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH_v5-00000000000000000000000000000000/USER",
       "sample_ID": 4,
       "is_MC": true,
       "is_signal": true,
       "has_theory_weights": true,
-      "xsection": 84.28,
+      "xsection": 64.412976,
       "lumi": -1,
-      "raw_entries": 6379386
+      "raw_entries": 6586101
     },
     {
-      "name": "ggzh_had",
-      "path": "/GluGluZH-Zto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "name": "GluGluZH-Zto2Q-Hto2Wto4Q",
+      "path": "/GluGluZH-Zto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH_v5-00000000000000000000000000000000/USER",
       "sample_ID": 5,
       "is_MC": true,
       "is_signal": true,
       "has_theory_weights": true,
-      "xsection": 9.4,
+      "xsection": 4.621875,
       "lumi": -1,
       "raw_entries": 6756000
     },
     {
-      "name": "wplush",
-      "path": "/WplusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "name": "WplusH-Wto2Q-Hto2Wto4Q",
+      "path": "/WplusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-Wto2Q-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
       "sample_ID": 6,
       "is_MC": true,
       "is_signal": true,
       "has_theory_weights": true,
-      "xsection": 58.5,
+      "xsection": 48.040278,
       "lumi": -1,
       "raw_entries": 3395977
     },
     {
-      "name": "wminush",
-      "path": "/WminusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "name": "WminusH-Wto2Q-Hto2Wto4Q",
+      "path": "/WminusH-Wto2Q-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminsH-Wto2Q-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
       "sample_ID": 7,
       "is_MC": true,
       "is_signal": true,
       "has_theory_weights": true,
-      "xsection": 37.4,
+      "xsection": 48.040278,
       "lumi": -1,
       "raw_entries": 3382165
     },
     {
       "name": "qcd_ht40to70",
-      "path": "/QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-40to70_v5-00000000000000000000000000000000/USER",
       "sample_ID": 10,
       "is_MC": true,
       "is_signal": false,
@@ -127,7 +127,7 @@
     },
     {
       "name": "qcd_ht70to100",
-      "path": "/QCD-4Jets_Bin-HT-70to100_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-70to100_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-70to100_v5-00000000000000000000000000000000/USER",
       "sample_ID": 11,
       "is_MC": true,
       "is_signal": false,
@@ -137,7 +137,7 @@
     },
     {
       "name": "qcd_ht100to200",
-      "path": "/QCD-4Jets_Bin-HT-100to200_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-100to200_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-100to200_v5-00000000000000000000000000000000/USER",
       "sample_ID": 12,
       "is_MC": true,
       "is_signal": false,
@@ -147,7 +147,7 @@
     },
     {
       "name": "qcd_ht200to400",
-      "path": "/QCD-4Jets_Bin-HT-200to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-200to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-200to400_v5-00000000000000000000000000000000/USER",
       "sample_ID": 13,
       "is_MC": true,
       "is_signal": false,
@@ -157,95 +157,95 @@
     },
     {
       "name": "qcd_ht400to600",
-      "path": "/QCD-4Jets_Bin-HT-400to600_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-400to600_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-400to600_v5-00000000000000000000000000000000/USER",
       "sample_ID": 14,
       "is_MC": true,
       "is_signal": false,
       "xsection": 97400000,
       "lumi": -1,
-      "raw_entries": 101684185
+      "raw_entries": 106725734
     },
     {
       "name": "qcd_ht600to800",
-      "path": "/QCD-4Jets_Bin-HT-600to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-600to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-600to800_v5-00000000000000000000000000000000/USER",
       "sample_ID": 15,
       "is_MC": true,
       "is_signal": false,
       "xsection": 13540000,
       "lumi": -1,
-      "raw_entries": 126705137
+      "raw_entries": 127535907
     },
     {
       "name": "qcd_ht800to1000",
-      "path": "/QCD-4Jets_Bin-HT-800to1000_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-800to1000_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-800to1000_v5-00000000000000000000000000000000/USER",
       "sample_ID": 16,
       "is_MC": true,
       "is_signal": false,
       "xsection": 3010000,
       "lumi": -1,
-      "raw_entries": 125433977
+      "raw_entries": 118730244
     },
     {
       "name": "qcd_ht1000to1200",
-      "path": "/QCD-4Jets_Bin-HT-1000to1200_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-1000to1200_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-1000to1200_v5-00000000000000000000000000000000/USER",
       "sample_ID": 17,
       "is_MC": true,
       "is_signal": false,
       "xsection": 890300,
       "lumi": -1,
-      "raw_entries": 111425445
+      "raw_entries": 100791718
     },
     {
       "name": "qcd_ht1200to1500",
-      "path": "/QCD-4Jets_Bin-HT-1200to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-1200to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-1200to1500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 18,
       "is_MC": true,
       "is_signal": false,
       "xsection": 384800,
       "lumi": -1,
-      "raw_entries": 63709577
+      "raw_entries": 106024471
     },
     {
       "name": "qcd_ht1500to2000",
-      "path": "/QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-1500to2000_v5_jetMatchFix-00000000000000000000000000000000/USER",
       "sample_ID": 19,
       "is_MC": true,
       "is_signal": false,
       "xsection": 127300,
       "lumi": -1,
-      "raw_entries": 115738116
+      "raw_entries": 113208234
     },
     {
       "name": "qcd_ht2000",
-      "path": "/QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_QCD_HT-2000_v5-00000000000000000000000000000000/USER",
       "sample_ID": 20,
       "is_MC": true,
       "is_signal": false,
       "xsection": 26260,
       "lumi": -1,
-      "raw_entries": 97803060
+      "raw_entries": 84983029
     },
     {
       "name": "ttbar_had",
-      "path": "/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TTTo4Q_v5-00000000000000000000000000000000/USER",
       "sample_ID": 21,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 419657,
       "lumi": -1,
-      "raw_entries": 466577787
+      "raw_entries": 473944839
     },
     {
       "name": "ttbar_semilep",
-      "path": "/TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TTToLNu2Q_v5-00000000000000000000000000000000/USER",
       "sample_ID": 22,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 405702,
       "lumi": -1,
-      "raw_entries": 17089556
+      "raw_entries": 484298177
     },
     {
       "name": "ww",
@@ -256,7 +256,7 @@
       "has_theory_weights": true,
       "xsection": 80230,
       "lumi": -1,
-      "raw_entries": 63994208
+      "raw_entries": 0
     },
     {
       "name": "wz",
@@ -267,7 +267,7 @@
       "has_theory_weights": true,
       "xsection": 29100,
       "lumi": -1,
-      "raw_entries": 30260725
+      "raw_entries": 0
     },
     {
       "name": "zz",
@@ -278,11 +278,11 @@
       "has_theory_weights": true,
       "xsection": 12750,
       "lumi": -1,
-      "raw_entries": 4800000
+      "raw_entries": 0
     },
     {
       "name": "tbarwplus_had",
-      "path": "/TbarWplusto4Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/TbarWplusto4Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TbarWplus_v5-00000000000000000000000000000000/USER",
       "sample_ID": 26,
       "is_MC": true,
       "is_signal": false,
@@ -293,7 +293,7 @@
     },
     {
       "name": "twminus_had",
-      "path": "/TWminusto4Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_v1-00000000000000000000000000000000/USER",
+      "path": "/TWminusto4Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TWminus_v5-00000000000000000000000000000000/USER",
       "sample_ID": 27,
       "is_MC": true,
       "is_signal": false,
@@ -304,40 +304,40 @@
     },
     {
       "name": "wjets_h100to400",
-      "path": "/Wto2Q-3Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-100to400_v4-00000000000000000000000000000000/USER",
+      "path": "/Wto2Q-3Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-100to400_v5-00000000000000000000000000000000/USER",
       "sample_ID": 28,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 16120000,
       "lumi": -1,
-      "raw_entries": 382597952
+      "raw_entries": 384703157
     },
     {
       "name": "wjets_h400to800",
-      "path": "/Wto2Q-3Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-400to800_v4-00000000000000000000000000000000/USER",
+      "path": "/Wto2Q-3Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-400to800_v5-00000000000000000000000000000000/USER",
       "sample_ID": 29,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 356900,
       "lumi": -1,
-      "raw_entries": 326771394
+      "raw_entries": 401294004
     },
     {
       "name": "wjets_h800to1500",
-      "path": "/Wto2Q-3Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-800to1500_v4-00000000000000000000000000000000/USER",
+      "path": "/Wto2Q-3Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-800to1500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 30,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 29520,
       "lumi": -1,
-      "raw_entries": 53389988
+      "raw_entries": 52712810
     },
     {
       "name": "wjets_h1500to2500",
-      "path": "/Wto2Q-3Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-1500to2500_v4-00000000000000000000000000000000/USER",
+      "path": "/Wto2Q-3Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-1500to2500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 31,
       "is_MC": true,
       "is_signal": false,
@@ -348,40 +348,40 @@
     },
     {
       "name": "wjets_h2500",
-      "path": "/Wto2Q-3Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-2500_v4-00000000000000000000000000000000/USER",
+      "path": "/Wto2Q-3Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Wto2Q_HT-2500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 32,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 115.8,
       "lumi": -1,
-      "raw_entries": 52106542
+      "raw_entries": 50555741
     },
     {
       "name": "zjets_h100to400",
-      "path": "/Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-100to400_v4-00000000000000000000000000000000/USER",
+      "path": "/Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-100to400_v5-00000000000000000000000000000000/USER",
       "sample_ID": 33,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 6328000,
       "lumi": -1,
-      "raw_entries": 453031704
+      "raw_entries": 454296062
     },
     {
       "name": "zjets_h400to800",
-      "path": "/Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-400to800_v4-00000000000000000000000000000000/USER",
+      "path": "/Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-400to800_v5-00000000000000000000000000000000/USER",
       "sample_ID": 34,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 145100,
       "lumi": -1,
-      "raw_entries": 179922286
+      "raw_entries": 181646889
     },
     {
       "name": "zjets_h800to1500",
-      "path": "/Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-800to1500_v4-00000000000000000000000000000000/USER",
+      "path": "/Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-800to1500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 35,
       "is_MC": true,
       "is_signal": false,
@@ -392,18 +392,18 @@
     },
     {
       "name": "zjets_h1500to2500",
-      "path": "/Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-1500to2500_v4-00000000000000000000000000000000/USER",
+      "path": "/Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-1500to2500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 36,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 854.1,
       "lumi": -1,
-      "raw_entries": 66157123
+      "raw_entries": 67209394
     },
     {
       "name": "zjets_h2500",
-      "path": "/Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-2500_v4-00000000000000000000000000000000/USER",
+      "path": "/Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_Zto2Q_HT-2500_v5-00000000000000000000000000000000/USER",
       "sample_ID": 37,
       "is_MC": true,
       "is_signal": false,
@@ -414,7 +414,7 @@
     },
     {
       "name": "dytoll_ht400to800_mll120",
-      "path": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-400to800-MLL-120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-400to800-MLL-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 38,
       "is_MC": true,
       "is_signal": false,
@@ -423,13 +423,9 @@
       "lumi": -1,
       "raw_entries": 1775774
     },
-
-
-
-
     {
       "name": "dy_h1500to2500_m120",
-      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 39,
       "is_MC": true,
       "is_signal": false,
@@ -440,7 +436,7 @@
     },
     {
       "name": "dy_h1500to2500_m4to50",
-      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-4to50_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-4to50_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 40,
       "is_MC": true,
       "is_signal": false,
@@ -451,7 +447,7 @@
     },
     {
       "name": "dy_h1500to2500_m50to120",
-      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-50to120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-1500to2500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-1500to2500-MLL-50to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 41,
       "is_MC": true,
       "is_signal": false,
@@ -462,7 +458,7 @@
     },
     {
       "name": "dy_h2500_m120",
-      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 42,
       "is_MC": true,
       "is_signal": false,
@@ -473,7 +469,7 @@
     },
     {
       "name": "dy_h2500_m4to50",
-      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-4to50_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-4to50_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 43,
       "is_MC": true,
       "is_signal": false,
@@ -484,7 +480,7 @@
     },
     {
       "name": "dy_h2500_m50to120",
-      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-50to120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-2500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-2500-MLL-50to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 44,
       "is_MC": true,
       "is_signal": false,
@@ -495,7 +491,7 @@
     },
     {
       "name": "dy_h400to800_m120",
-      "path": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-400to800-MLL-120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-400to800-MLL-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 45,
       "is_MC": true,
       "is_signal": false,
@@ -506,7 +502,7 @@
     },
     {
       "name": "dy_h800to1500_m120",
-      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 46,
       "is_MC": true,
       "is_signal": false,
@@ -517,7 +513,7 @@
     },
     {
       "name": "dy_h800to1500_m4to50",
-      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-4to50_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-4to50_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-4to50_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 47,
       "is_MC": true,
       "is_signal": false,
@@ -528,7 +524,7 @@
     },
     {
       "name": "dy_h800to1500_m50to120",
-      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-50to120_v4-00000000000000000000000000000000/USER",
+      "path": "/DYto2L-4Jets_Bin-HT-800to1500-MLL-50to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_DYto2L-4Jets_Bin-HT-800to1500-MLL-50to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 48,
       "is_MC": true,
       "is_signal": false,
@@ -539,40 +535,40 @@
     },
     {
       "name": "ttbar_2l2nu",
-      "path": "/TTto2L2Nu_Par-ERD-On_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TTTo2L2Nu_v4-00000000000000000000000000000000/USER",
+      "path": "/TTto2L2Nu_Par-ERD-On_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TTTo2L2Nu_v5-00000000000000000000000000000000/USER",
       "sample_ID": 49,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 98087.0,
       "lumi": -1,
-      "raw_entries": 9894000
+      "raw_entries": 59986000
     },
     {
       "name": "twminus_lnu2q",
-      "path": "/TWminustoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TWminustoLNu2Q_v4-00000000000000000000000000000000/USER",
+      "path": "/TWminustoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_TWminustoLNu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 50,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 27296519
+      "raw_entries": 28762382
     },
     {
       "name": "tbarwplus_lnu2q",
-      "path": "/TbarWplustoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/jschulte-ScoutingNano_MC_TbarWplustoLNu2Q_v4-00000000000000000000000000000000/USER",
+      "path": "/TbarWplustoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/yiyangz-ScoutingNano_MC_TbarWplustoLNu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 51,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 19310.0,
       "lumi": -1,
-      "raw_entries": 27513654
+      "raw_entries": 29390933
     },
     {
       "name": "wlnu_h100to400_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-100to400-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-100to400-MLNu-0to120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-100to400-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-100to400-MLNu-0to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 52,
       "is_MC": true,
       "is_signal": false,
@@ -583,7 +579,7 @@
     },
     {
       "name": "wlnu_h100to400_m120",
-      "path": "/WtoLNu-4Jets_Bin-HT-100to400-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-100to400-MLNu-120__v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-100to400-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-100to400-MLNu-120__260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 53,
       "is_MC": true,
       "is_signal": false,
@@ -594,62 +590,62 @@
     },
     {
       "name": "wlnu_h1500to2500_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-0to120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-0to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 54,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 450.3,
       "lumi": -1,
-      "raw_entries": 15095554
+      "raw_entries": 15282279
     },
     {
       "name": "wlnu_h1500to2500_m120",
-      "path": "/WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-1500to2500-MLNu-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 55,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 5.052,
       "lumi": -1,
-      "raw_entries": 13925234
+      "raw_entries": 15160746
     },
     {
       "name": "wlnu_h2500_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-2500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-2500-MLNu-0to120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-2500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-2500-MLNu-0to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 56,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 30.85,
       "lumi": -1,
-      "raw_entries": 12897904
+      "raw_entries": 13634921
     },
     {
       "name": "wlnu_h2500_m120",
-      "path": "/WtoLNu-4Jets_Bin-HT-2500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-2500-MLNu-120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-2500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-2500-MLNu-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 57,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 0.378,
       "lumi": -1,
-      "raw_entries": 12222746
+      "raw_entries": 14068249
     },
     {
       "name": "wlnu_h400to800_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-400to800-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-400to800_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-400to800-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-400to800_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 58,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 59860.0,
       "lumi": -1,
-      "raw_entries": 121212898
+      "raw_entries": 125419239
     },
     {
       "name": "wlnu_h400to800_m120",
-      "path": "/WtoLNu-4Jets_Bin-HT-400to800-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-400to800-MLNu-120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-400to800-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-400to800-MLNu-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 59,
       "is_MC": true,
       "is_signal": false,
@@ -660,18 +656,18 @@
     },
     {
       "name": "wlnu_h40to100_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-40to100-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-40to100-MLNu-0to120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-40to100-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-40to100-MLNu-0to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 60,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 4259000.0,
       "lumi": -1,
-      "raw_entries": 338529968
+      "raw_entries": 362564818
     },
     {
       "name": "wlnu_h800to1500_m0to120",
-      "path": "/WtoLNu-4Jets_Bin-HT-800to1500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-800to1500-MLNu-0to120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-800to1500-MLNu-0to120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-800to1500-MLNu-0to120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 61,
       "is_MC": true,
       "is_signal": false,
@@ -682,95 +678,95 @@
     },
     {
       "name": "wlnu_h800to1500_m120",
-      "path": "/WtoLNu-4Jets_Bin-HT-800to1500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/jschulte-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-800to1500-MLNu-120_v4-00000000000000000000000000000000/USER",
+      "path": "/WtoLNu-4Jets_Bin-HT-800to1500-MLNu-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/yiyangz-ScoutingNano_MC_WtoLNu-4Jets_Bin-HT-800to1500-MLNu-120_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 62,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 62.45,
       "lumi": -1,
-      "raw_entries": 12263513
+      "raw_entries": 12681807
     },
     {
       "name": "WWTo4Q",
-      "path": "/WWto4Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_WWto4Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WWto4Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_WWto4Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 63,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 54820,
       "lumi": -1,
-      "raw_entries": 9685391
+      "raw_entries": 12090004
     },
     {
       "name": "WWToLNu2Q",
-      "path": "/WWtoLNu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_WWtoLNu2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WWtoLNu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_WWtoLNu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 64,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 52980,
       "lumi": -1,
-      "raw_entries": 93507172
+      "raw_entries": 100815753
     },
     {
       "name": "WZto2L2Q",
-      "path": "/WZto2L2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_WZto2L2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WZto2L2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_WZto2L2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 65,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 6724,
       "lumi": -1,
-      "raw_entries": 5965289
+      "raw_entries": 15032979
     },
     {
       "name": "WZto2Nu2Q",
-      "path": "/WZto2Nu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_Zto2Nu2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WZto2Nu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_Zto2Nu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 66,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 7188,
       "lumi": -1,
-      "raw_entries": 7684938
+      "raw_entries": 7738130
     },
     {
       "name": "WZto4Q",
-      "path": "/WZto4Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_WZto4Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WZto4Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_WZto4Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 67,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 24880,
       "lumi": -1,
-      "raw_entries": 5310886
+      "raw_entries": 6132868
     },
     {
       "name": "WZtoLNu2Q",
-      "path": "/WZtoLNu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_WZtoLNu2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/WZtoLNu2Q-1Jets-4FS_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_WZtoLNu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 68,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 12110,
       "lumi": -1,
-      "raw_entries": 28614253
+      "raw_entries": 30788498
     },
     {
       "name": "ZZto2L2Q",
-      "path": "/ZZto2L2Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_ZZto2L2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/ZZto2L2Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_ZZto2L2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 69,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 3860,
       "lumi": -1,
-      "raw_entries": 10410171
+      "raw_entries": 21572700
     },
     {
       "name": "ZZto2Nu2Q",
-      "path": "/ZZto2Nu2Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_ZZto2Nu2Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/ZZto2Nu2Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_ZZto2Nu2Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 70,
       "is_MC": true,
       "is_signal": false,
@@ -781,25 +777,260 @@
     },
     {
       "name": "ZZto4Q",
-      "path": "/ZZto4Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/jschulte-ScoutingNano_MC_ZZto4Q_v4_redo-00000000000000000000000000000000/USER",
+      "path": "/ZZto4Q-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_ZZto4Q_260713_v5-00000000000000000000000000000000/USER",
       "sample_ID": 71,
       "is_MC": true,
       "is_signal": false,
       "has_theory_weights": true,
       "xsection": 7832,
       "lumi": -1,
-      "raw_entries": 2920063
+      "raw_entries": 4971870
     },
     {
       "name": "data_2024",
-      "path": ["/ScoutingPFRun3/jschulte-ScoutingNano_Data_part1_v4-00000000000000000000000000000000/USER", "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part2_v4-00000000000000000000000000000000/USER", "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part3_v4-00000000000000000000000000000000/USER", "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part4_v4-00000000000000000000000000000000/USER"],
+      "path": [
+        "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part1_v4-00000000000000000000000000000000/USER",
+        "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part2_v4-00000000000000000000000000000000/USER",
+        "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part3_v4-00000000000000000000000000000000/USER",
+        "/ScoutingPFRun3/jschulte-ScoutingNano_Data_part4_v4-00000000000000000000000000000000/USER"
+      ],
       "sample_ID": 28,
       "is_MC": false,
       "is_signal": false,
       "xsection": -1,
       "lumi": 11.56,
       "raw_entries": 2663429178
+    },
+    {
+      "name": "GluGluZH-Zto2L-Hto2Wto2L2Nu",
+      "path": "/GluGluZH-Zto2L-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH-Zto2L-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 72,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 0.156118,
+      "lumi": -1,
+      "raw_entries": 6730998
+    },
+    {
+      "name": "GluGluZH-Zto2L-Hto2Wto4Q",
+      "path": "/GluGluZH-Zto2L-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH-Zto2L-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 73,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 0.667521,
+      "lumi": -1,
+      "raw_entries": 6710000
+    },
+    {
+      "name": "GluGluZH-Zto2L-Hto2WtoLNu2Q",
+      "path": "/GluGluZH-Zto2L-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH-Zto2L-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 74,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 0.645637,
+      "lumi": -1,
+      "raw_entries": 6741998
+    },
+    {
+      "name": "GluGluZH-Zto2Q-Hto2Wto2L2Nu",
+      "path": "/GluGluZH-Zto2Q-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH-Zto2Q-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 75,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 1.080948,
+      "lumi": -1,
+      "raw_entries": 6756000
+    },
+    {
+      "name": "GluGluZH-Zto2Q-Hto2WtoLNu2Q",
+      "path": "/GluGluZH-Zto2Q-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_GluGluZH-Zto2Q-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 76,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 4.47035,
+      "lumi": -1,
+      "raw_entries": 6769000
+    },
+    {
+      "name": "WminusH-Wto2Q-Hto2Wto2L2Nu",
+      "path": "/WminusH-Wto2Q-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminusH-Wto2Q-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 77,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 11.235491,
+      "lumi": -1,
+      "raw_entries": 3341371
+    },
+    {
+      "name": "WminusH-Wto2Q-Hto2WtoLNu2Q",
+      "path": "/WminusH-Wto2Q-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminusH-Wto2Q-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 78,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 46.465304,
+      "lumi": -1,
+      "raw_entries": 3397929
+    },
+    {
+      "name": "WminusH-WtoLNu-Hto2Wto2L2Nu",
+      "path": "/WminusH-WtoLNu-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminusH-WtoLNu-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 79,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 5.433571,
+      "lumi": -1,
+      "raw_entries": 3386948
+    },
+    {
+      "name": "WminusH-WtoLNu-Hto2Wto4Q",
+      "path": "/WminusH-WtoLNu-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminusH-WtoLNu-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 80,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 23.232652,
+      "lumi": -1,
+      "raw_entries": 3341497
+    },
+    {
+      "name": "WminusH-WtoLNu-Hto2WtoLNu2Q",
+      "path": "/WminusH-WtoLNu-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WminusH-WtoLNu-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 81,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 22.470982,
+      "lumi": -1,
+      "raw_entries": 3325512
+    },
+    {
+      "name": "WplusH-Wto2Q-Hto2WtoLNu2Q",
+      "path": "/WplusH-Wto2Q-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-Wto2Q-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 82,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 46.465304,
+      "lumi": -1,
+      "raw_entries": 3391045
+    },
+    {
+      "name": "WplusH-WtoLNu-Hto2Wto2L2Nu",
+      "path": "/WplusH-WtoLNu-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-WtoLNu-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 83,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 5.433571,
+      "lumi": -1,
+      "raw_entries": 3393951
+    },
+    {
+      "name": "WplusH-WtoLNu-Hto2Wto4Q",
+      "path": "/WplusH-WtoLNu-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-WtoLNu-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 84,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 23.232652,
+      "lumi": -1,
+      "raw_entries": 3396967
+    },
+    {
+      "name": "WplusH-WtoLNu-Hto2WtoLNu2Q",
+      "path": "/WplusH-WtoLNu-Hto2WtoLNu2Q_M-125_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-WtoLNu-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 85,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 22.470982,
+      "lumi": -1,
+      "raw_entries": 3396968
+    },
+    {
+      "name": "ZH-Zto2L-Hto2Wto2L2Nu",
+      "path": "/ZH-Zto2L-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH-Zto2L-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 86,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 2.175739,
+      "lumi": -1,
+      "raw_entries": 6643616
+    },
+    {
+      "name": "ZH-Zto2L-Hto2Wto4Q",
+      "path": "/ZH-Zto2L-Hto2Wto4Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH-Zto2L-Hto2Wto4Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 87,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 9.30294,
+      "lumi": -1,
+      "raw_entries": 6692810
+    },
+    {
+      "name": "ZH-Zto2L-Hto2WtoLNu2Q",
+      "path": "/ZH-Zto2L-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH-Zto2L-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 88,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 8.997948,
+      "lumi": -1,
+      "raw_entries": 6774279
+    },
+    {
+      "name": "ZH-Zto2Q-Hto2Wto2L2Nu",
+      "path": "/ZH-Zto2Q-Hto2Wto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH-Zto2Q-Hto2Wto2L2Nu_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 89,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 15.06468,
+      "lumi": -1,
+      "raw_entries": 6704760
+    },
+    {
+      "name": "ZH-Zto2Q-Hto2WtoLNu2Q",
+      "path": "/ZH-Zto2Q-Hto2WtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_ZH-Zto2Q-Hto2WtoLNu2Q_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 90,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 62.301232,
+      "lumi": -1,
+      "raw_entries": 6737862
+    },
+    {
+      "name": "ZZto4L",
+      "path": "/ZZto4L-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8/yiyangz-ScoutingNano_MC_ZZto4L_260713_v5-00000000000000000000000000000000/USER",
+      "sample_ID": 91,
+      "is_MC": true,
+      "is_signal": false,
+      "has_theory_weights": true,
+      "xsection": -1,
+      "lumi": -1,
+      "raw_entries": 40586133
+    },
+    {
+      "name": "WplusH-Wto2Q-Hto2Wto2L2Nu",
+      "path": "/WplusH_Wto2Q_Hto2Wto2L2Nu_M-125_Par-M-125_TuneCP5_13p6TeV_powhegMINLO-jhugen-pythia8/jschulte-ScoutingNano_MC_WplusH-Wto2Q-Hto2Wto2L2Nu_v5_jetMatchFix-00000000000000000000000000000000/USER",
+      "sample_ID": 92,
+      "is_MC": true,
+      "is_signal": true,
+      "has_theory_weights": true,
+      "xsection": 11.235491,
+      "lumi": -1,
+      "raw_entries": 3392002
     }
-   
   ]
 }

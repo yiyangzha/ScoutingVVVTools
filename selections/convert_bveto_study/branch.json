@@ -11,9 +11,9 @@
       { "name": "nScoutingFatPFJetRecluster", "type": "I", "onlyMC": false },
       { "name": "nScoutingPFJetRecluster2", "type": "I", "onlyMC": false },
       { "name": "nScoutingElectron", "type": "I", "onlyMC": false },
-      { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false },
+      { "name": "nScoutingMuonNoVtx", "type": "I", "onlyMC": false, "optional": true },
       { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
-      { "name": "nScoutingPhoton", "type": "I", "onlyMC": false },
+      { "name": "nScoutingPhoton", "type": "I", "onlyMC": false, "optional": true },
       { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false }
     ],
     "collections": [
@@ -57,6 +57,7 @@
         "name": "ScoutingMuonNoVtx",
         "size": "nScoutingMuonNoVtx",
         "max_size": 30,
+        "optional": true,
         "p4": {
           "pt": "ScoutingMuonNoVtx_pt",
           "eta": "ScoutingMuonNoVtx_eta",
@@ -118,7 +119,18 @@
           { "name": "ScoutingPFJetRecluster2_neEmEF", "type": "F", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_chHadMultiplicity", "type": "S", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_muEF", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false }
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probbb", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probleptonicB", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probc", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probg", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probuds", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probbb_TT4Q", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probleptonicB_TT4Q", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probc_TT4Q", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probg_TT4Q", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probuds_TT4Q", "type": "F", "onlyMC": false }
         ]
       }
     ]
@@ -248,6 +260,9 @@
             { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_eta", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_mass", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall", "type": "F", "collection": "ak4", "slots": 4, "formula": "safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99)", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_TT4Q", "type": "F", "collection": "ak4", "slots": 4, "formula": "safe_div(ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probbb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probleptonicB_TT4Q, ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probbb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probleptonicB_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probc_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probg_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probuds_TT4Q, -99)", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_deltaPhi_closestSignalAK8", "type": "F", "collection": "ak4", "slots": 4, "formula": "deltaPhi_at_min_deltaR(self, ak8[0], ak8[1])", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_deltaR_closestSignalAK8", "type": "F", "collection": "ak4", "slots": 4, "formula": "min_deltaR(self, ak8, 2)", "onlyMC": false },
 
@@ -444,6 +459,9 @@
             { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_eta", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_mass", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall", "type": "F", "collection": "ak4", "slots": 4, "formula": "safe_div(ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB, ScoutingPFJetRecluster2_scoutUParT_probb + ScoutingPFJetRecluster2_scoutUParT_probbb + ScoutingPFJetRecluster2_scoutUParT_probleptonicB + ScoutingPFJetRecluster2_scoutUParT_probc + ScoutingPFJetRecluster2_scoutUParT_probg + ScoutingPFJetRecluster2_scoutUParT_probuds, -99)", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_scoutUParT_bvsall_TT4Q", "type": "F", "collection": "ak4", "slots": 4, "formula": "safe_div(ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probbb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probleptonicB_TT4Q, ScoutingPFJetRecluster2_scoutUParT_probb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probbb_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probleptonicB_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probc_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probg_TT4Q + ScoutingPFJetRecluster2_scoutUParT_probuds_TT4Q, -99)", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_deltaPhi_closestSignalAK8", "type": "F", "collection": "ak4", "slots": 4, "formula": "deltaPhi_at_min_deltaR(self, ak8[0], ak8[1], ak8[2])", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_deltaR_closestSignalAK8", "type": "F", "collection": "ak4", "slots": 4, "formula": "min_deltaR(self, ak8, 3)", "onlyMC": false },
 

@@ -1,0 +1,32 @@
+{
+  "lumi": 255.8,
+  "n_signal_regions": 4,
+  "bdt_root": "../BDT/boosted2_unresolved_new_sorting",
+  "output_dir": "./output/boosted2_unresolved_new_sorting",
+  "score_axes": "all",
+  "min_bkg_weight": 5.0,
+  "min_signal_weight": 0.0,
+  "min_signal_entries": 0,
+  "min_bkg_entries": 0,
+
+  "coarse_bin_width": 0.01,
+  "fine_bin_width": 0.001,
+  "fine_refine_window": 0.05,
+  "veto_bin_width": 0.01,
+  "beam_width": 160,
+  "top_intervals_per_axis": 16,
+  "coordinate_rounds": 12,
+  "fine_refine_passes": 3,
+  "global_beam_width": 1024,
+  "max_selection_candidates": 1500,
+  "selection_reps_per_axis": 150,
+  "branch_bound_max_nodes": 30000000,
+  "branch_bound_time_limit_seconds": 300,
+  "max_threads": 18,
+  "progress_every_seconds": 15,
+  "validate_prediction_reference": false,
+
+  "qcd_coarse_bin_width": 0.0005,
+  "qcd_fine_bin_width": 0.00002,
+  "qcd_fine_refine_window": 0.01
+}

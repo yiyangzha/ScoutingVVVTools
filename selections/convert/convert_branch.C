@@ -53,6 +53,13 @@ struct SkippableFileError : std::runtime_error {
 const float def = -99.f;
 const double kMissingDistance = -999.;
 const double kLargeDistance = 999.;
+const double kNominalWMass = 80.4;
+const double kNominalZMass = 91.2;
+// Data-driven scales (IQR/1.349 robust sigma, from the true same-W AK4 dijet pair
+// distributions in fat2 www MC) used to combine the mass and deltaR terms of the
+// "combined_wz_dr" resolved-dijet pairing criterion into a unitless chi2-like score.
+const double kWZMassSigma = 12.7;
+const double kPairDrSigma = 0.60;
 const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
 
 const char* kAppConfigPath = "./config.json";
@@ -132,6 +139,7 @@ struct ScalarInputConfig {
     string branch;
     DataType type = DataType::Int;
     bool onlyMC = false;
+    bool optional = false;
     bool bound = false;
     Short_t shortValue = 0;
     Int_t intValue = 0;
@@ -148,6 +156,10 @@ struct ScalarInputConfig {
             return;
         }
         if (!tree->GetBranch(branch.c_str())) {
+            if (optional) {
+                bound = false;
+                return;
+            }
             throw SkippableFileError("Missing scalar branch: " + branch);
         }
 
@@ -202,6 +214,7 @@ struct ArrayInputConfig {
     string branch;
     DataType type = DataType::Float;
     bool onlyMC = false;
+    bool optional = false;
     int maxSize = 0;
     bool bound = false;
     vector<Float_t> floatValues;
@@ -248,6 +261,10 @@ struct ArrayInputConfig {
             return;
         }
         if (!tree->GetBranch(branch.c_str())) {
+            if (optional) {
+                bound = false;
+                return;
+            }
             throw SkippableFileError("Missing array branch: " + branch);
         }
 
@@ -431,6 +448,7 @@ struct AppConfig {
     int maxThreads = 12;
     double maxOutputFileSizeGB = 5.;
     bool resumeSuccessfulBatches = true;
+    bool updateRawEntries = true;
     vector<SampleRuleConfig> sampleRules;
     string puWeightPathPattern;
 };
@@ -445,7 +463,6 @@ struct BatchRequest {
 struct BatchTempCollection {
     vector<string> paths;
     Long64_t rawEntries = 0;
-    size_t skipped = 0;
 };
 
 struct PileupBin {
@@ -1105,6 +1122,7 @@ AppConfig loadAppConfig() {
     config.maxThreads = payload.getIntOr("max_threads", 12);
     config.maxOutputFileSizeGB = static_cast<double>(payload.getNumberOr("max_output_file_size_gb", 5.));
     config.resumeSuccessfulBatches = payload.getBoolOr("resume_successful_batches", true);
+    config.updateRawEntries = payload.getBoolOr("update_raw_entries", true);
 
     const JsonValue samplePayload = simple_json::parseFile(config.sampleConfigPath);
     if (samplePayload.contains("sample")) {
@@ -1273,6 +1291,7 @@ BranchConfig loadBranchConfig(const AppConfig& appConfig) {
         scalar.branch = node.getStringOr("branch", scalar.name);
         scalar.type = parseDataType(node.at("type").asString());
         scalar.onlyMC = node.getBoolOr("onlyMC", false);
+        scalar.optional = node.getBoolOr("optional", false);
         config.scalars.push_back(std::move(scalar));
     }
 
@@ -1281,6 +1300,7 @@ BranchConfig loadBranchConfig(const AppConfig& appConfig) {
         collection.name = node.at("name").asString();
         collection.sizeName = node.at("size").asString();
         collection.maxSize = node.at("max_size").asInt();
+        const bool collectionOptional = node.getBoolOr("optional", false);
         if (node.contains("p4")) {
             const auto& p4 = node.at("p4");
             collection.ptField = p4.at("pt").asString();
@@ -1295,6 +1315,7 @@ BranchConfig loadBranchConfig(const AppConfig& appConfig) {
             field.branch = fieldNode.getStringOr("branch", field.name);
             field.type = parseDataType(fieldNode.at("type").asString());
             field.onlyMC = fieldNode.getBoolOr("onlyMC", false);
+            field.optional = fieldNode.getBoolOr("optional", collectionOptional);
             field.maxSize = collection.maxSize;
             field.initBuffer();
             collection.fields.push_back(std::move(field));
@@ -1910,6 +1931,315 @@ Value evalValueAtNthMax(const vector<ExprPtr>& args, const EvalContext& context)
     return makeNumberValue(nth->second);
 }
 
+// value_at(collection, index_expr, value_expr [, default]): evaluate value_expr
+// in the context of collection[index], where index is the (rounded) result of
+// index_expr in the CURRENT context. Returns default (or `def`) when the index
+// is out of range -- e.g. an unmatched gen index of -1, or one beyond the
+// collection's max_size. Used for cross-collection gen matching, e.g.
+// value_at(GenPart, ScoutingMuonVtx_genPartIdx, GenPart_pdgId, 0).
+Value evalValueAt(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error("value_at requires collection, index expression, and value expression arguments");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    const int index = static_cast<int>(llround(evalNumber(args[1], context)));
+    if (index < 0 || index >= static_cast<int>(collection->objects.size())) {
+        return makeNumberValue(defaultValue);
+    }
+    EvalContext loop = context;
+    loop.currentCollection = collection;
+    loop.currentObject = &collection->objects[index];
+    return makeNumberValue(evalNumber(args[2], loop));
+}
+
+// first_ancestor_index(collection, index_expr, pdgid_field, mother_index_field [, default]):
+// Starting at collection[index_expr], walk the mother chain (mother_index_field) while the
+// mother's pdgid_field is IDENTICAL to the starting object's own pdgid_field -- i.e. skip
+// PYTHIA/parton-shower "self-copy" bookkeeping entries inserted whenever a particle radiates
+// (e.g. a muon's immediate GenPart mother is often a pre-FSR copy of the same muon) -- and
+// return the index of the first ancestor whose pdgId differs. Returns default (or `def`) if
+// index_expr is out of range, or if the chain runs off the end (mother index out of range)
+// before a differing pdgId is found. Typical use: pair with value_at to resolve the true
+// production vertex of a gen-matched lepton, e.g.
+//   value_at(GenPart, first_ancestor_index(GenPart, ScoutingMuonVtx_genPartIdx, GenPart_pdgId,
+//                                           GenPart_genPartIdxMother, -1), GenPart_pdgId, 0)
+Value evalFirstAncestorIndex(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 4) {
+        throw runtime_error(
+            "first_ancestor_index requires collection, index expression, pdgId field "
+            "expression, and mother-index field expression (plus optional default)");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const long double defaultValue = (args.size() >= 5) ? evalNumber(args[4], context) : def;
+    const int size = static_cast<int>(collection->objects.size());
+    const int startIndex = static_cast<int>(llround(evalNumber(args[1], context)));
+    if (startIndex < 0 || startIndex >= size) {
+        return makeNumberValue(defaultValue);
+    }
+
+    auto fieldAt = [&](int index, const ExprPtr& fieldExpr) -> long double {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &collection->objects[index];
+        return evalNumber(fieldExpr, loop);
+    };
+
+    const long double startPdgId = fieldAt(startIndex, args[2]);
+    int current = startIndex;
+    // Cap the walk so a malformed/cyclic mother chain can't hang the conversion.
+    for (int step = 0; step <= size; ++step) {
+        const int motherIndex = static_cast<int>(llround(fieldAt(current, args[3])));
+        if (motherIndex < 0 || motherIndex >= size) {
+            return makeNumberValue(defaultValue);
+        }
+        if (fieldAt(motherIndex, args[2]) != startPdgId) {
+            return makeNumberValue(static_cast<long double>(motherIndex));
+        }
+        current = motherIndex;
+    }
+    return makeNumberValue(defaultValue);
+}
+
+// first_nonqg_ancestor_index(collection, index_expr, pdgid_field, mother_index_field [, default]):
+// Starting at collection[index_expr], walk the mother chain (mother_index_field) while the
+// CURRENT node's pdgid_field is a quark (|pdgId| in 1..6) or gluon (pdgId == 21) -- i.e. keep
+// climbing past intermediate partons and parton-shower radiation (self-copies, gluon splittings,
+// additional emissions) -- and return the index of the first ancestor whose pdgId is NOT a quark
+// or gluon. This differs from first_ancestor_index (which only skips same-pdgId self-copies): it
+// also skips through genuinely different quark/gluon flavors introduced by radiation, so it can
+// trace a jet's matched parton back to the hard-process resonance (e.g. a W boson) even when
+// there were intermediate FSR emissions. Returns default (or `def`) if index_expr is out of
+// range, or if the chain runs off the end before a non-quark/gluon ancestor is found.
+// Typical use: pair with value_at to find the hard-process origin of a gen-matched jet, e.g.
+//   value_at(GenPart, first_nonqg_ancestor_index(GenPart, ScoutingFatPFJetRecluster_genPartIdx,
+//                                                 GenPart_pdgId, GenPart_genPartIdxMother, -1),
+//            GenPart_pdgId, 0)
+bool isQuarkOrGluonPdgId(long double pdgId) {
+    const long long absPdgId = llabs(static_cast<long long>(llround(pdgId)));
+    return (absPdgId >= 1 && absPdgId <= 6) || absPdgId == 21;
+}
+
+Value evalFirstNonQuarkGluonAncestorIndex(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 4) {
+        throw runtime_error(
+            "first_nonqg_ancestor_index requires collection, index expression, pdgId field "
+            "expression, and mother-index field expression (plus optional default)");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const long double defaultValue = (args.size() >= 5) ? evalNumber(args[4], context) : def;
+    const int size = static_cast<int>(collection->objects.size());
+    const int startIndex = static_cast<int>(llround(evalNumber(args[1], context)));
+    if (startIndex < 0 || startIndex >= size) {
+        return makeNumberValue(defaultValue);
+    }
+
+    auto fieldAt = [&](int index, const ExprPtr& fieldExpr) -> long double {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &collection->objects[index];
+        return evalNumber(fieldExpr, loop);
+    };
+
+    if (!isQuarkOrGluonPdgId(fieldAt(startIndex, args[2]))) {
+        return makeNumberValue(static_cast<long double>(startIndex));
+    }
+
+    int current = startIndex;
+    // Cap the walk so a malformed/cyclic mother chain can't hang the conversion.
+    for (int step = 0; step <= size; ++step) {
+        const int motherIndex = static_cast<int>(llround(fieldAt(current, args[3])));
+        if (motherIndex < 0 || motherIndex >= size) {
+            return makeNumberValue(defaultValue);
+        }
+        if (!isQuarkOrGluonPdgId(fieldAt(motherIndex, args[2]))) {
+            return makeNumberValue(static_cast<long double>(motherIndex));
+        }
+        current = motherIndex;
+    }
+    return makeNumberValue(defaultValue);
+}
+
+// first_boson_ancestor_index(collection, index_expr, pdgid_field, mother_index_field
+//                             [, default]):
+// Starting at collection[index_expr], walk the mother chain (mother_index_field) looking
+// for the first ancestor (including the starting particle itself) that is a hard-process
+// boson -- W (|pdgId| == 24), Z (|pdgId| == 23), or Higgs (|pdgId| == 25) -- i.e. the
+// actual resonance that produced the jet, rather than any intermediate quark/gluon/
+// lepton/photon/hadron bookkeeping in between. This is more general than
+// first_nonqg_ancestor_index, which stops at the first non-quark/gluon ancestor and so
+// can be fooled by a lepton/photon/hadron sitting between the jet's matched particle and
+// the real boson further up the chain (the failure mode seen with looser/generic
+// genPartIdx matching schemes, and also why checking the generator's own "isHardProcess"
+// status flag doesn't work here: that flag is set on the boson's own decay products too,
+// so it triggers immediately at the starting particle without ever climbing to the
+// boson). first_boson_ancestor_index instead keeps climbing through ANY particle type
+// until a genuine boson is found.
+//
+// Once a boson ancestor is found, the walk continues climbing through same-pdgId
+// self-copies (mother has the IDENTICAL pdgId -- the same physical particle at an
+// earlier point in its shower history, before it radiated/copied itself) to canonicalize
+// on the EARLIEST recorded copy of that boson. This matters under loose/generic
+// genPartIdx matching schemes where a jet's matched particle can be the boson itself
+// rather than one of its quark daughters: without climbing to the earliest copy, two
+// jets that both trace back to the very same physical boson -- one via a quark
+// descendant (which lands on the LAST copy, immediately before the 2-body decay) and one
+// matched directly to an early copy of the boson -- would resolve to two different
+// GenPart indices, silently breaking any downstream index-equality "same boson" check.
+//
+// If the chain runs off the end (or hits the walk cap) before a boson is found, returns
+// the terminal (last valid) ancestor instead of `default`, so the caller can still
+// inspect its pdgId (e.g. a leftover quark/gluon signals ISR/extra QCD radiation with no
+// W/Z in its history). Returns default only if index_expr itself is out of range.
+// Typical use: pair with value_at to identify the hard-process origin of a gen-matched
+// jet, e.g.
+//   value_at(GenPart, first_boson_ancestor_index(GenPart, ScoutingFatPFJetRecluster_genPartIdx,
+//                                                 GenPart_pdgId, GenPart_genPartIdxMother, -1),
+//            GenPart_pdgId, 0)
+bool isHardProcessBosonPdgId(long double pdgId) {
+    const long long absPdgId = llabs(static_cast<long long>(llround(pdgId)));
+    return absPdgId == 23 || absPdgId == 24 || absPdgId == 25;
+}
+
+Value evalFirstBosonAncestorIndex(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 4) {
+        throw runtime_error(
+            "first_boson_ancestor_index requires collection, index expression, pdgId field "
+            "expression, and mother-index field expression (plus optional default)");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const long double defaultValue = (args.size() >= 5) ? evalNumber(args[4], context) : def;
+    const int size = static_cast<int>(collection->objects.size());
+    const int startIndex = static_cast<int>(llround(evalNumber(args[1], context)));
+    if (startIndex < 0 || startIndex >= size) {
+        return makeNumberValue(defaultValue);
+    }
+
+    auto fieldAt = [&](int index, const ExprPtr& fieldExpr) -> long double {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &collection->objects[index];
+        return evalNumber(fieldExpr, loop);
+    };
+
+    // Given the index of a confirmed boson ancestor, keep climbing through same-pdgId
+    // self-copy mothers to reach the earliest recorded copy of that same physical boson.
+    auto climbToEarliestCopy = [&](int bosonIndex) -> int {
+        const long double bosonPdgId = fieldAt(bosonIndex, args[2]);
+        int earliest = bosonIndex;
+        for (int step = 0; step <= size; ++step) {
+            const int motherIndex = static_cast<int>(llround(fieldAt(earliest, args[3])));
+            if (motherIndex < 0 || motherIndex >= size || fieldAt(motherIndex, args[2]) != bosonPdgId) {
+                return earliest;
+            }
+            earliest = motherIndex;
+        }
+        return earliest;
+    };
+
+    if (isHardProcessBosonPdgId(fieldAt(startIndex, args[2]))) {
+        return makeNumberValue(static_cast<long double>(climbToEarliestCopy(startIndex)));
+    }
+
+    int current = startIndex;
+    // Cap the walk so a malformed/cyclic mother chain can't hang the conversion.
+    for (int step = 0; step <= size; ++step) {
+        const int motherIndex = static_cast<int>(llround(fieldAt(current, args[3])));
+        if (motherIndex < 0 || motherIndex >= size) {
+            // Chain end before any boson ancestor was found: return the terminal
+            // ancestor so the caller can still inspect its pdgId.
+            return makeNumberValue(static_cast<long double>(current));
+        }
+        if (isHardProcessBosonPdgId(fieldAt(motherIndex, args[2]))) {
+            return makeNumberValue(static_cast<long double>(climbToEarliestCopy(motherIndex)));
+        }
+        current = motherIndex;
+    }
+    // Cap exceeded: return the last visited (non-boson) ancestor.
+    return makeNumberValue(static_cast<long double>(current));
+}
+
+// count_hadronic_tau_from_wz(collection, pdgid_field, mother_index_field) /
+// count_leptonic_tau_from_wz(collection, pdgid_field, mother_index_field):
+// Count hard-process W/Z bosons whose decay proceeds via a tau (|pdgId| == 15) that is
+// itself a DIRECT daughter of the boson, split by how that tau subsequently decays.
+//
+// This exists because nGenHadronicWZ (wz_had_quarks/2) only counts a boson as hadronic
+// when its direct daughter is a quark -- a W/Z -> tau -> hadrons + nu chain is always
+// tagged "leptonic" there, even though ~65% of tau decays are hadronic (a narrow,
+// jet-like visible signature with no electron/muon at all). Since any e/mu-based lepton
+// veto and any jet-based BDT can only ever see the tau's decay PRODUCTS -- never the
+// intermediate tau itself -- a hadronically-decaying tau is functionally invisible to
+// both, and physically indistinguishable from a genuine light-quark jet. This builtin
+// exposes that population so its effect on the nGenHadronicWZ-based purity metric can be
+// quantified directly, rather than assumed.
+//
+// For each candidate tau, first walk DOWN through same-pdgId self-copy daughters (the
+// tau equivalent of first_boson_ancestor_index's upward same-pdgId climb: a radiated/
+// copied tau appears as its own daughter with identical pdgId before it actually decays)
+// to reach the final copy, then classify that copy's own daughters: presence of an
+// electron/muon (|pdgId| in {11,13}) means a leptonic tau decay, its absence (given the
+// tau did decay at all) means hadronic.
+Value evalCountTauDecayFromBoson(const string& op, const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error(op + " requires collection, pdgId field, and mother-index field expressions");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int size = static_cast<int>(collection->objects.size());
+
+    auto fieldAt = [&](int index, const ExprPtr& fieldExpr) -> long double {
+        EvalContext loop = context;
+        loop.currentCollection = collection;
+        loop.currentObject = &collection->objects[index];
+        return evalNumber(fieldExpr, loop);
+    };
+    auto pdgIdAt = [&](int index) -> long long { return llabs(llround(fieldAt(index, args[1]))); };
+    auto motherIndexAt = [&](int index) -> int { return static_cast<int>(llround(fieldAt(index, args[2]))); };
+
+    long long count = 0;
+    for (int i = 0; i < size; ++i) {
+        if (pdgIdAt(i) != 15) continue;
+        const int motherIdx = motherIndexAt(i);
+        if (motherIdx < 0 || motherIdx >= size) continue;
+        const long long motherPdgId = pdgIdAt(motherIdx);
+        if (motherPdgId != 24 && motherPdgId != 23) continue;
+        // i is a "root" tau: the first recorded copy directly attributed to the W/Z.
+
+        int current = i;
+        bool hasLeptonDaughter = false;
+        bool decayed = false;
+        for (int step = 0; step <= size; ++step) {
+            int nextTauCopy = -1;
+            bool anyDaughter = false;
+            bool leptonDaughterHere = false;
+            for (int j = 0; j < size; ++j) {
+                if (motherIndexAt(j) != current) continue;
+                anyDaughter = true;
+                const long long daughterPdgId = pdgIdAt(j);
+                if (daughterPdgId == 15 && nextTauCopy < 0) nextTauCopy = j;
+                if (daughterPdgId == 11 || daughterPdgId == 13) leptonDaughterHere = true;
+            }
+            if (nextTauCopy >= 0) {
+                current = nextTauCopy;
+                continue;  // still a self-copy; keep climbing down to the final tau
+            }
+            if (anyDaughter) {
+                hasLeptonDaughter = leptonDaughterHere;
+                decayed = true;
+            }
+            break;
+        }
+        if (!decayed) continue;  // undecayed tau in the record (shouldn't happen); skip
+
+        if (op == "count_leptonic_tau_from_wz") {
+            if (hasLeptonDaughter) ++count;
+        } else {
+            if (!hasLeptonDaughter) ++count;
+        }
+    }
+    return makeNumberValue(static_cast<long double>(count));
+}
+
 Value evalPairwiseMetric(const string& op,
                          const vector<ExprPtr>& args,
                          const EvalContext& context) {
@@ -1993,6 +2323,40 @@ Value evalMinDeltaR(const vector<ExprPtr>& args, const EvalContext& context) {
     return makeNumberValue(best);
 }
 
+// max_ratio_within_dr(anchor, collection, dr_threshold [, default]): among
+// collection members within dr_threshold (deltaR) of anchor, the maximum
+// ratio of a candidate's pT to the anchor's pT; `default` if none qualify.
+// The anchor is evaluated ONCE in the caller's context before the loop --
+// unlike max_value()/min_value() (evalAggregation), which rebind
+// currentObject/self to each candidate while looping, so an outer "self"
+// cannot be referenced from inside their loop body. Following min_deltaR's
+// convention (self passed explicitly as args[0]) sidesteps that: this can be
+// called as max_ratio_within_dr(self, ak4_nocuts, 0.8, default) from within
+// a per-AK8-slot formula to get the nearby-AK4/AK8 pT ratio feature used by
+// the ISR-vs-W discriminant score.
+Value evalMaxRatioWithinDr(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 3) {
+        throw runtime_error("max_ratio_within_dr requires anchor, collection, and dr_threshold arguments");
+    }
+    const TLorentzVector anchorP4 = toP4(evalExpression(args[0], context));
+    const RuntimeCollection* collection = toCollection(evalExpression(args[1], context));
+    const double drThreshold = static_cast<double>(evalNumber(args[2], context));
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+
+    const double anchorPt = anchorP4.Pt();
+    bool found = false;
+    long double best = defaultValue;
+    for (const auto& object : collection->objects) {
+        if (anchorP4.DeltaR(object.p4) >= drThreshold) continue;
+        const long double ratio = (anchorPt > 0.0) ? static_cast<long double>(object.p4.Pt() / anchorPt) : 0.0L;
+        if (!found || ratio > best) {
+            best = ratio;
+            found = true;
+        }
+    }
+    return makeNumberValue(found ? best : defaultValue);
+}
+
 // Among the reference objects (args[1..]), pick the one closest to args[0] in deltaR
 // and return the deltaPhi between args[0] and that closest reference. Used to attach,
 // per AK4 jet, the deltaPhi to the closest signal AK8 jet.
@@ -2016,6 +2380,196 @@ Value evalDeltaPhiAtMinDeltaR(const vector<ExprPtr>& args, const EvalContext& co
         }
     }
     return makeNumberValue(found ? bestDeltaPhi : kMissingDistance);
+}
+
+// Resolved-dijet pair selection: among all 2-object pairs (i < j, i,j < limit) in a
+// collection, find the pair that best matches a criterion. Two criteria are supported:
+//   "min_dr"          -- minimise deltaR(i, j) (closeby-jets heuristic)
+//   "closest_wz_mass" -- minimise |m(i+j) - mW| or |m(i+j) - mZ|, whichever is closer
+// Shared by both the P4-returning (pair_p4_*) and index-returning (pair_index_*)
+// builtins below, so the two families can never disagree about which pair won.
+struct BestJetPairResult {
+    bool found = false;
+    int i = -1;
+    int j = -1;
+    TLorentzVector sum;
+};
+
+BestJetPairResult findBestJetPair(const RuntimeCollection* collection, const string& criterion, int limit) {
+    BestJetPairResult result;
+    const int count = min(limit, static_cast<int>(collection->objects.size()));
+    if (count < 2) {
+        return result;
+    }
+    double bestMetric = 0.;
+    for (int i = 0; i < count; ++i) {
+        const TLorentzVector& p4i = collection->objects[i].p4;
+        for (int j = i + 1; j < count; ++j) {
+            const TLorentzVector& p4j = collection->objects[j].p4;
+            double metric;
+            if (criterion == "min_dr") {
+                metric = p4i.DeltaR(p4j);
+            } else if (criterion == "closest_wz_mass") {
+                const double m = (p4i + p4j).M();
+                metric = min(fabs(m - kNominalWMass), fabs(m - kNominalZMass));
+            } else {  // "combined_wz_dr": chi2-like combination of both terms
+                const double m = (p4i + p4j).M();
+                const double massTerm = min(fabs(m - kNominalWMass), fabs(m - kNominalZMass)) / kWZMassSigma;
+                const double drTerm = p4i.DeltaR(p4j) / kPairDrSigma;
+                metric = massTerm * massTerm + drTerm * drTerm;
+            }
+            if (!result.found || metric < bestMetric) {
+                bestMetric = metric;
+                result.found = true;
+                result.i = i;
+                result.j = j;
+                result.sum = p4i + p4j;
+            }
+        }
+    }
+    return result;
+}
+
+// Charge/flavor of a single collection object, resolved through whichever of the three
+// lepton sources (ScoutingElectron / ScoutingMuonVtx / ScoutingMuonNoVtx) it was merged
+// from -- mirrors the first_valid(...) idiom used throughout branch.json (each source's
+// pt defaults to `def` = -99 on an object that didn't come from it).
+struct LeptonChargeFlavor {
+    bool valid = false;
+    bool isElectron = false;
+    int charge = 0;
+};
+
+LeptonChargeFlavor getLeptonChargeFlavor(const RuntimeCollection& collection, const RuntimeObject& object) {
+    LeptonChargeFlavor result;
+    if (getObjectField(collection, object, "ScoutingElectron_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = true;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingElectron_bestTrack_charge", def)));
+        return result;
+    }
+    if (getObjectField(collection, object, "ScoutingMuonVtx_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = false;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingMuonVtx_charge", def)));
+        return result;
+    }
+    if (getObjectField(collection, object, "ScoutingMuonNoVtx_pt", def) > -90.f) {
+        result.valid = true;
+        result.isElectron = false;
+        result.charge = static_cast<int>(llround(getObjectField(collection, object, "ScoutingMuonNoVtx_charge", def)));
+    }
+    return result;
+}
+
+// Same-flavor opposite-sign (SFOS) lepton pair selection: among all 2-object pairs
+// (i < j, i,j < limit) in a collection, find the SFOS pair whose invariant mass is
+// closest to the Z mass. Pairs that aren't same-flavor-opposite-sign are skipped
+// entirely (not merely disfavoured), so "not found" means no SFOS pair exists.
+BestJetPairResult findBestSFOSPair(const RuntimeCollection* collection, int limit) {
+    BestJetPairResult result;
+    const int count = min(limit, static_cast<int>(collection->objects.size()));
+    double bestMetric = 0.;
+    for (int i = 0; i < count; ++i) {
+        const LeptonChargeFlavor infoI = getLeptonChargeFlavor(*collection, collection->objects[i]);
+        if (!infoI.valid) continue;
+        for (int j = i + 1; j < count; ++j) {
+            const LeptonChargeFlavor infoJ = getLeptonChargeFlavor(*collection, collection->objects[j]);
+            if (!infoJ.valid) continue;
+            if (infoI.isElectron != infoJ.isElectron) continue;
+            if (infoI.charge * infoJ.charge >= 0) continue;
+            const TLorentzVector sum = collection->objects[i].p4 + collection->objects[j].p4;
+            const double metric = fabs(sum.M() - kNominalZMass);
+            if (!result.found || metric < bestMetric) {
+                bestMetric = metric;
+                result.found = true;
+                result.i = i;
+                result.j = j;
+                result.sum = sum;
+            }
+        }
+    }
+    return result;
+}
+
+// pair_p4_min_dr(collection [, limit]) / pair_p4_closest_wz_mass(collection [, limit]):
+// returns the summed 4-vector of the winning pair (zero vector if fewer than 2 objects),
+// meant to be composed with mass()/pt()/eta()/phi(), e.g.
+//   mass(pair_p4_min_dr(ak4, 4))
+Value evalPairP4Selection(const string& criterion, const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.empty()) {
+        throw runtime_error("pair_p4_* requires a collection argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const BestJetPairResult best = findBestJetPair(collection, criterion, limit);
+    return makeP4Value(best.found ? best.sum : TLorentzVector());
+}
+
+// pair_index_min_dr(collection, slot [, limit [, default]]) /
+// pair_index_closest_wz_mass(collection, slot [, limit [, default]]):
+// returns the winning pair's collection index for the requested slot (1 or 2; since
+// collections are pT-sorted, slot 1 is the higher-pT member), or `default` (or `def`)
+// if fewer than 2 objects are available. Lets downstream formulas (or offline analysis)
+// identify exactly which two jets were picked, e.g. to cross-check against gen truth.
+Value evalPairIndexSelection(const string& criterion, const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 2) {
+        throw runtime_error("pair_index_* requires a collection and a slot (1 or 2) argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int slot = static_cast<int>(llround(evalNumber(args[1], context)));
+    const int limit = (args.size() >= 3) ? static_cast<int>(llround(evalNumber(args[2], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    const BestJetPairResult best = findBestJetPair(collection, criterion, limit);
+    if (!best.found) {
+        return makeNumberValue(defaultValue);
+    }
+    if (slot == 1) {
+        return makeNumberValue(static_cast<long double>(best.i));
+    }
+    if (slot == 2) {
+        return makeNumberValue(static_cast<long double>(best.j));
+    }
+    throw runtime_error("pair_index_* slot must be 1 or 2");
+}
+
+// pair_p4_sfos_z_mass(collection [, limit]) / pair_index_sfos_z_mass(collection, slot
+// [, limit [, default]]): same call shape as pair_p4_combined_wz_dr / pair_index_combined_wz_dr,
+// but selects the same-flavor opposite-sign pair closest to the Z mass instead of a plain
+// jet pair. "not found" (index default, zero-vector p4) means no SFOS pair exists.
+Value evalPairP4SFOS(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.empty()) {
+        throw runtime_error("pair_p4_sfos_z_mass requires a collection argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const BestJetPairResult best = findBestSFOSPair(collection, limit);
+    return makeP4Value(best.found ? best.sum : TLorentzVector());
+}
+
+Value evalPairIndexSFOS(const vector<ExprPtr>& args, const EvalContext& context) {
+    if (args.size() < 2) {
+        throw runtime_error("pair_index_sfos_z_mass requires a collection and a slot (1 or 2) argument");
+    }
+    const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
+    const int slot = static_cast<int>(llround(evalNumber(args[1], context)));
+    const int limit = (args.size() >= 3) ? static_cast<int>(llround(evalNumber(args[2], context)))
+                                         : static_cast<int>(collection->objects.size());
+    const long double defaultValue = (args.size() >= 4) ? evalNumber(args[3], context) : def;
+    const BestJetPairResult best = findBestSFOSPair(collection, limit);
+    if (!best.found) {
+        return makeNumberValue(defaultValue);
+    }
+    if (slot == 1) {
+        return makeNumberValue(static_cast<long double>(best.i));
+    }
+    if (slot == 2) {
+        return makeNumberValue(static_cast<long double>(best.j));
+    }
+    throw runtime_error("pair_index_sfos_z_mass slot must be 1 or 2");
 }
 
 Value evalCall(const ExprPtr& expr, const EvalContext& context) {
@@ -2097,6 +2651,45 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     if (op == "value_at_nth_max") {
         return evalValueAtNthMax(args, context);
     }
+    if (op == "value_at") {
+        return evalValueAt(args, context);
+    }
+    if (op == "first_ancestor_index") {
+        return evalFirstAncestorIndex(args, context);
+    }
+    if (op == "first_nonqg_ancestor_index") {
+        return evalFirstNonQuarkGluonAncestorIndex(args, context);
+    }
+    if (op == "first_boson_ancestor_index") {
+        return evalFirstBosonAncestorIndex(args, context);
+    }
+    if (op == "count_hadronic_tau_from_wz" || op == "count_leptonic_tau_from_wz") {
+        return evalCountTauDecayFromBoson(op, args, context);
+    }
+    if (op == "pair_p4_min_dr") {
+        return evalPairP4Selection("min_dr", args, context);
+    }
+    if (op == "pair_p4_closest_wz_mass") {
+        return evalPairP4Selection("closest_wz_mass", args, context);
+    }
+    if (op == "pair_index_min_dr") {
+        return evalPairIndexSelection("min_dr", args, context);
+    }
+    if (op == "pair_index_closest_wz_mass") {
+        return evalPairIndexSelection("closest_wz_mass", args, context);
+    }
+    if (op == "pair_p4_combined_wz_dr") {
+        return evalPairP4Selection("combined_wz_dr", args, context);
+    }
+    if (op == "pair_index_combined_wz_dr") {
+        return evalPairIndexSelection("combined_wz_dr", args, context);
+    }
+    if (op == "pair_p4_sfos_z_mass") {
+        return evalPairP4SFOS(args, context);
+    }
+    if (op == "pair_index_sfos_z_mass") {
+        return evalPairIndexSFOS(args, context);
+    }
     if (op == "mass") {
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).M());
     }
@@ -2131,6 +2724,9 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     }
     if (op == "min_deltaR") {
         return evalMinDeltaR(args, context);
+    }
+    if (op == "max_ratio_within_dr") {
+        return evalMaxRatioWithinDr(args, context);
     }
     if (op == "deltaPhi_at_min_deltaR") {
         return evalDeltaPhiAtMinDeltaR(args, context);
@@ -3209,11 +3805,15 @@ void configureActiveBranches(TTree* tree, const BranchConfig& branchConfig, bool
     }
 
     for (const auto& branch : activeBranches) {
-        tree->SetBranchStatus(branch.c_str(), 1);
+        if (tree->GetBranch(branch.c_str())) {
+            tree->SetBranchStatus(branch.c_str(), 1);
+        }
     }
     tree->SetCacheSize(50 * 1024 * 1024);
     for (const auto& branch : activeBranches) {
-        tree->AddBranchToCache(branch.c_str(), true);
+        if (tree->GetBranch(branch.c_str())) {
+            tree->AddBranchToCache(branch.c_str(), true);
+        }
     }
 }
 
@@ -3239,9 +3839,12 @@ void ensureCollectionBufferCapacities(TTree* tree, BranchConfig& branchConfig, b
     for (auto& collection : branchConfig.collections) {
         const auto sizeIt = scalarBranchMap.find(collection.sizeName);
         const string sizeBranch = (sizeIt != scalarBranchMap.end()) ? sizeIt->second : collection.sizeName;
-        Long64_t observedMax = static_cast<Long64_t>(llround(tree->GetMaximum(sizeBranch.c_str())));
-        if (observedMax < 0) {
-            observedMax = 0;
+        Long64_t observedMax = 0;
+        if (tree->GetBranch(sizeBranch.c_str())) {
+            observedMax = static_cast<Long64_t>(llround(tree->GetMaximum(sizeBranch.c_str())));
+            if (observedMax < 0) {
+                observedMax = 0;
+            }
         }
         const int bindSize = max(collection.maxSize, static_cast<int>(observedMax));
         for (auto& field : collection.fields) {
@@ -3750,11 +4353,13 @@ BatchTempCollection collectSuccessfulBatchTempFiles(const AppConfig& appConfig,
                                      branchConfig.trees,
                                      batchRawEntries,
                                      invalidReason)) {
-            ++collection.skipped;
-            cerr << "Warning: skipping incomplete batch " << (batchIndex + 1)
-                 << "/" << nBatches << " for sample = " << sampleMeta.sample
-                 << ": " << invalidReason << endl;
-            continue;
+            // Input samples are now produced with an upstream event filter, so raw_entries is a
+            // fixed, externally-set normalization that can no longer be reconstructed from
+            // whichever batches happen to be present. A missing/incomplete batch must fail the
+            // merge outright rather than silently producing an under-counted output.
+            throw runtime_error("Missing or incomplete batch " + to_string(batchIndex + 1) +
+                                "/" + to_string(nBatches) + " for sample = " + sampleMeta.sample +
+                                ": " + invalidReason);
         }
         collection.rawEntries += batchRawEntries;
         collection.paths.push_back(batchOutputPath.string());
@@ -3775,11 +4380,22 @@ int finalizeSuccessfulBatches(const AppConfig& appConfig,
     BatchTempCollection batchFiles;
     try {
         batchFiles = collectSuccessfulBatchTempFiles(appConfig, sampleMeta, branchConfig, batchIndices, nBatches);
-        writeSampleRawEntries(appConfig.sampleConfigPath, sampleMeta.sample, batchFiles.rawEntries);
-        cout << "Updated raw_entries in " << appConfig.sampleConfigPath
-             << " for sample = " << sampleMeta.sample
-             << ", tree = " << appConfig.treeName
-             << ", raw_entries = " << batchFiles.rawEntries << endl;
+        if (appConfig.updateRawEntries) {
+            writeSampleRawEntries(appConfig.sampleConfigPath, sampleMeta.sample, batchFiles.rawEntries);
+            cout << "Updated raw_entries in " << appConfig.sampleConfigPath
+                 << " for sample = " << sampleMeta.sample
+                 << ", tree = " << appConfig.treeName
+                 << ", raw_entries = " << batchFiles.rawEntries << endl;
+        } else {
+            // update_raw_entries: false -- input samples are produced with an upstream event
+            // filter, so the processed entry count no longer equals the correct normalization
+            // and raw_entries (set externally) must not be overwritten here.
+            cout << "Processed raw_entries = " << batchFiles.rawEntries
+                 << " for sample = " << sampleMeta.sample
+                 << ", tree = " << appConfig.treeName
+                 << " (not written to " << appConfig.sampleConfigPath
+                 << " -- update_raw_entries is false)" << endl;
+        }
     } catch (const exception& ex) {
         cerr << "raw_entries update error: " << ex.what() << endl;
         return 1;
@@ -3815,48 +4431,29 @@ int finalizeSuccessfulBatches(const AppConfig& appConfig,
         return 1;
     }
 
-    if (batchFiles.skipped > 0) {
-        cerr << "Warning: skipped " << batchFiles.skipped
-             << " incomplete selected batch"
-             << (batchFiles.skipped == 1 ? "" : "es")
-             << " while finalizing sample = " << sampleMeta.sample << endl;
-    }
     return 0;
 }
 
-size_t inferNBatchesFromTempDir(const fs::path& batchTempDir, const string& sampleName) {
-    if (!fs::is_directory(batchTempDir)) {
+size_t computeBatchSize(const AppConfig& appConfig, size_t inputFileCount) {
+    const int threadCount = determineThreadCount(appConfig.maxThreads, inputFileCount);
+    const char* fpbEnv = getenv("CONVERT_FILES_PER_BATCH");
+    size_t fpbOverride = 0;
+    if (fpbEnv != nullptr && *fpbEnv != '\0') {
+        try { fpbOverride = static_cast<size_t>(stoull(fpbEnv)); } catch (...) {}
+    }
+    return fpbOverride > 0 ? fpbOverride : max<size_t>(1, static_cast<size_t>(threadCount) * 32);
+}
+
+// The true expected batch count, derived from the current input file discovery -- NOT from
+// whichever batch temp files happen to already exist on disk. Input samples are now produced
+// with an upstream event filter, so a batch whose job never ran (no temp file at all) must be
+// detected as missing rather than silently shrinking the batch count the merge expects.
+size_t computeNBatches(const AppConfig& appConfig, size_t inputFileCount) {
+    if (inputFileCount == 0) {
         return 0;
     }
-    const string prefix = sampleName + "_";
-    const string suffix = ".root";
-    size_t maxIndex = 0;
-    bool found = false;
-    for (const auto& entry : fs::directory_iterator(batchTempDir)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        const string name = entry.path().filename().string();
-        if (name.size() <= prefix.size() + suffix.size()) {
-            continue;
-        }
-        if (name.substr(0, prefix.size()) != prefix) {
-            continue;
-        }
-        if (name.substr(name.size() - suffix.size()) != suffix) {
-            continue;
-        }
-        const string indexStr = name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
-        size_t batchIndex = 0;
-        if (!parseNonNegativeIndex(indexStr, batchIndex)) {
-            continue;
-        }
-        if (!found || batchIndex > maxIndex) {
-            maxIndex = batchIndex;
-            found = true;
-        }
-    }
-    return found ? maxIndex + 1 : 0;
+    const size_t batchSize = computeBatchSize(appConfig, inputFileCount);
+    return (inputFileCount + batchSize - 1) / batchSize;
 }
 
 }  // namespace
@@ -3902,7 +4499,19 @@ int main(int argc, char** argv) {
 
     if (batchRequest.mergeSuccessfulBatches) {
         const fs::path batchTempDir = makeBatchTempOutputDir(appConfig, sampleMeta);
-        const size_t nBatches = inferNBatchesFromTempDir(batchTempDir, sampleMeta.sample);
+        // Recompute the true expected batch count from the current input file discovery (the
+        // same logic the original batch-processing invocation used), rather than inferring it
+        // from whichever batch temp files happen to exist -- otherwise a batch whose job never
+        // ran at all (no temp file, no sidecar) would be invisible to the merge and silently
+        // dropped instead of failing it.
+        vector<string> inputFiles;
+        try {
+            inputFiles = discoverInputFiles(sampleMeta);
+        } catch (const exception& ex) {
+            cerr << "Input discovery error: " << ex.what() << endl;
+            return 1;
+        }
+        const size_t nBatches = computeNBatches(appConfig, inputFiles.size());
         cout << "Running convert_branch for sample = " << sample
              << ", merge successful batches" << endl;
         cout << "Batch mode: " << nBatches
@@ -3927,16 +4536,7 @@ int main(int argc, char** argv) {
     }
 
     const int threadCount = determineThreadCount(appConfig.maxThreads, inputFiles.size());
-    size_t batchSize;
-    {
-        const char* fpbEnv = getenv("CONVERT_FILES_PER_BATCH");
-        size_t fpbOverride = 0;
-        if (fpbEnv != nullptr && *fpbEnv != '\0') {
-            try { fpbOverride = static_cast<size_t>(stoull(fpbEnv)); } catch (...) {}
-        }
-        batchSize = fpbOverride > 0 ? fpbOverride
-                                    : max<size_t>(1, static_cast<size_t>(threadCount) * 32);
-    }
+    const size_t batchSize = computeBatchSize(appConfig, inputFiles.size());
     const size_t nBatches = (inputFiles.size() + batchSize - 1) / batchSize;
     if (batchRequest.printBatchCount) {
         cout << nBatches << endl;

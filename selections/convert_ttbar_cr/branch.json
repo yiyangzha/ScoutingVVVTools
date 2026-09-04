@@ -12,7 +12,8 @@
       { "name": "nScoutingMuonVtx", "type": "I", "onlyMC": false },
       { "name": "nScoutingPrimaryVertex", "type": "I", "onlyMC": false },
       { "name": "ScoutingMET_pt", "type": "F", "onlyMC": false },
-      { "name": "ScoutingMET_phi", "type": "F", "onlyMC": false }
+      { "name": "ScoutingMET_phi", "type": "F", "onlyMC": false },
+      { "name": "nGenPart", "type": "I", "onlyMC": true }
     ],
     "collections": [
       {
@@ -42,7 +43,8 @@
           { "name": "ScoutingMuonVtx_nRecoMuonMatchedStations", "type": "I", "onlyMC": false },
           { "name": "ScoutingMuonVtx_nValidRecoMuonHits", "type": "I", "onlyMC": false },
           { "name": "ScoutingMuonVtx_trk_dxy", "type": "F", "onlyMC": false },
-          { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "onlyMC": false }
+          { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "onlyMC": false },
+          { "name": "ScoutingMuonVtx_genPartIdx", "type": "I", "onlyMC": true }
         ]
       },
       {
@@ -68,7 +70,10 @@
           { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb", "type": "F", "onlyMC": false },
           { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc", "type": "F", "onlyMC": false },
           { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss", "type": "F", "onlyMC": false },
-          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD", "type": "F", "onlyMC": false }
+          { "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD", "type": "F", "onlyMC": false },
+          { "name": "ScoutingFatPFJetRecluster_topWCategory", "type": "I", "onlyMC": true },
+          { "name": "ScoutingFatPFJetRecluster_genPartIdx", "type": "S", "onlyMC": true },
+          { "name": "ScoutingFatPFJetRecluster_partonFlavour", "type": "F", "onlyMC": true }
         ]
       },
       {
@@ -92,7 +97,27 @@
           { "name": "ScoutingPFJetRecluster2_neEmEF", "type": "F", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_chHadMultiplicity", "type": "S", "onlyMC": false },
           { "name": "ScoutingPFJetRecluster2_muEF", "type": "F", "onlyMC": false },
-          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false }
+          { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "onlyMC": false },
+          { "name": "ScoutingPFJetRecluster2_genPartIdx", "type": "S", "onlyMC": true },
+          { "name": "ScoutingPFJetRecluster2_partonFlavour", "type": "S", "onlyMC": true }
+        ]
+      },
+      {
+        "name": "GenPart",
+        "size": "nGenPart",
+        "max_size": 1024,
+        "p4": {
+          "pt": "GenPart_pt",
+          "eta": "GenPart_eta",
+          "phi": "GenPart_phi",
+          "default_mass": 0.0
+        },
+        "fields": [
+          { "name": "GenPart_pt", "type": "F", "onlyMC": true },
+          { "name": "GenPart_eta", "type": "F", "onlyMC": true },
+          { "name": "GenPart_phi", "type": "F", "onlyMC": true },
+          { "name": "GenPart_pdgId", "type": "I", "onlyMC": true },
+          { "name": "GenPart_genPartIdxMother", "type": "S", "onlyMC": true }
         ]
       }
     ]
@@ -150,12 +175,17 @@
             { "name": "ScoutingMuonVtx_mediumId", "type": "O", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_nValidStandAloneMuonHits > 0 && ScoutingMuonVtx_normchi2 < 3 && ScoutingMuonVtx_nTrackerLayersWithMeasurement > 5 && ScoutingMuonVtx_nValidPixelHits > 0 && ScoutingMuonVtx_nRecoMuonMatchedStations >= 2", "onlyMC": false },
             { "name": "ScoutingMuonVtx_trk_dxy", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_trk_dxy", "onlyMC": false },
             { "name": "ScoutingMuonVtx_trk_dz", "type": "F", "collection": "mu_vtx", "slots": 2, "formula": "ScoutingMuonVtx_trk_dz", "onlyMC": false },
+            { "name": "ScoutingMuonVtx_genPartPdgId", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "value_at(GenPart, ScoutingMuonVtx_genPartIdx, GenPart_pdgId, 0)", "onlyMC": true },
+            { "name": "ScoutingMuonVtx_genPartMotherPdgId", "type": "I", "collection": "mu_vtx", "slots": 2, "formula": "value_at(GenPart, value_at(GenPart, ScoutingMuonVtx_genPartIdx, GenPart_genPartIdxMother, -1), GenPart_pdgId, 0)", "onlyMC": true },
 
             { "name": "ScoutingPFJetRecluster2_pt", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_pt", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_eta", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_eta", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_phi", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_phi", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_mass", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_mass", "onlyMC": false },
             { "name": "ScoutingPFJetRecluster2_scoutUParT_probb", "type": "F", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_scoutUParT_probb", "onlyMC": false },
+            { "name": "ScoutingPFJetRecluster2_partonFlavour", "type": "I", "collection": "ak4", "slots": 4, "formula": "ScoutingPFJetRecluster2_partonFlavour", "onlyMC": true },
+            { "name": "ScoutingPFJetRecluster2_genPartPdgId", "type": "I", "collection": "ak4", "slots": 4, "formula": "value_at(GenPart, ScoutingPFJetRecluster2_genPartIdx, GenPart_pdgId, 0)", "onlyMC": true },
+            { "name": "ScoutingPFJetRecluster2_genPartMotherPdgId", "type": "I", "collection": "ak4", "slots": 4, "formula": "value_at(GenPart, value_at(GenPart, ScoutingPFJetRecluster2_genPartIdx, GenPart_genPartIdxMother, -1), GenPart_pdgId, 0)", "onlyMC": true },
 
             { "name": "ScoutingFatPFJetRecluster_pt", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_pt", "onlyMC": false },
             { "name": "ScoutingFatPFJetRecluster_eta", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_eta", "onlyMC": false },
@@ -164,6 +194,10 @@
             { "name": "ScoutingFatPFJetRecluster_msoftdrop", "type": "F", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_msoftdrop", "onlyMC": false },
             { "name": "ScoutingFatPFJetRecluster_WvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
             { "name": "ScoutingFatPFJetRecluster_VvsQCD", "type": "F", "collection": "ak8", "slots": 2, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcc + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xss + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+            { "name": "ScoutingFatPFJetRecluster_topWCategory", "type": "I", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_topWCategory", "onlyMC": true },
+            { "name": "ScoutingFatPFJetRecluster_partonFlavour", "type": "I", "collection": "ak8", "slots": 2, "formula": "ScoutingFatPFJetRecluster_partonFlavour", "onlyMC": true },
+            { "name": "ScoutingFatPFJetRecluster_genPartPdgId", "type": "I", "collection": "ak8", "slots": 2, "formula": "value_at(GenPart, ScoutingFatPFJetRecluster_genPartIdx, GenPart_pdgId, 0)", "onlyMC": true },
+            { "name": "ScoutingFatPFJetRecluster_genPartMotherPdgId", "type": "I", "collection": "ak8", "slots": 2, "formula": "value_at(GenPart, value_at(GenPart, ScoutingFatPFJetRecluster_genPartIdx, GenPart_genPartIdxMother, -1), GenPart_pdgId, 0)", "onlyMC": true },
 
             { "name": "Probe_pt", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_pt", "onlyMC": false },
             { "name": "Probe_eta", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_eta", "onlyMC": false },
@@ -172,6 +206,10 @@
             { "name": "Probe_msoftdrop", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_msoftdrop", "onlyMC": false },
             { "name": "Probe_dphi_mu", "type": "F", "collection": "probe", "slots": 1, "formula": "abs(deltaPhi(self, mu_vtx[0]))", "onlyMC": false },
             { "name": "Probe_WvsQCD", "type": "F", "collection": "probe", "slots": 1, "formula": "safe_div(ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs, ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs + ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD, 0)", "onlyMC": false },
+            { "name": "Probe_topWCategory", "type": "I", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_topWCategory", "onlyMC": true },
+            { "name": "Probe_partonFlavour", "type": "I", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_partonFlavour", "onlyMC": true },
+            { "name": "Probe_genPartPdgId", "type": "I", "collection": "probe", "slots": 1, "formula": "value_at(GenPart, ScoutingFatPFJetRecluster_genPartIdx, GenPart_pdgId, 0)", "onlyMC": true },
+            { "name": "Probe_genPartMotherPdgId", "type": "I", "collection": "probe", "slots": 1, "formula": "value_at(GenPart, value_at(GenPart, ScoutingFatPFJetRecluster_genPartIdx, GenPart_genPartIdxMother, -1), GenPart_pdgId, 0)", "onlyMC": true },
             { "name": "Probe_prob_Xud", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud", "onlyMC": false },
             { "name": "Probe_prob_Xcs", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xcs", "onlyMC": false },
             { "name": "Probe_prob_Xqq", "type": "F", "collection": "probe", "slots": 1, "formula": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xqq", "onlyMC": false },

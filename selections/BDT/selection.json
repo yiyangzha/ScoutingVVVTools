@@ -1,17 +1,160 @@
 {
-  "fat2": {
+  "boosted3": {
     "clip_ranges": {
-      "ScoutingFatPFJetRecluster_selected_pt_sum": [0, 13600],
-      "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt_1": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt_2": [0, 13600],
-      "ScoutingPFJetRecluster2_pt_1": [0, 13600],
-      "ScoutingPFJetRecluster2_pt_2": [0, 13600],
-      "ScoutingPFJetRecluster2_pt_3": [0, 13600],
-      "ScoutingPFJetRecluster2_pt_4": [0, 13600],
-      "SelectedLepton_pt_1": [0, 13600],
-      "SelectedLepton_pt_2": [0, 13600],
-      "SelectedLepton_pt_3": [0, 13600]
+      "ScoutingFatPFJetRecluster_selected_pt_sum": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_mass": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_3": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_1": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_2": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_3": [
+        0,
+        13600
+      ]
+    },
+    "log_transform": [
+      "ScoutingFatPFJetRecluster_selected_pt_sum",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_msoftdrop_2",
+      "ScoutingFatPFJetRecluster_msoftdrop_3",
+      "ScoutingFatPFJetRecluster_pt_1",
+      "ScoutingFatPFJetRecluster_pt_2",
+      "ScoutingFatPFJetRecluster_pt_3",
+      "ScoutingFatPFJetRecluster_mass",
+      "ScoutingFatPFJetRecluster_pt",
+      "SelectedLepton_pt_1",
+      "SelectedLepton_pt_2",
+      "SelectedLepton_pt_3",
+      "SelectedLepton_ecalIso_1",
+      "SelectedLepton_ecalIso_2",
+      "SelectedLepton_ecalIso_3",
+      "SelectedLepton_hcalIso_1",
+      "SelectedLepton_hcalIso_2",
+      "SelectedLepton_hcalIso_3"
+    ],
+    "thresholds": {
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [
+        50,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_3": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_3": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_eta_1": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_2": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_3": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4": [
+        null,
+        0.5
+      ],
+      "nVetoMuon": [
+        null,
+        0.9
+      ],
+      "nVetoElectron": [
+        null,
+        0.9
+      ]
+    }
+  },
+  "boosted2_resolved": {
+    "clip_ranges": {
+      "ScoutingFatPFJetRecluster_selected_pt_sum": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetReclusterScoutingPFJetRecluster2_pt": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_3": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_4": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_1": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_2": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_3": [
+        0,
+        13600
+      ]
     },
     "log_transform": [
       "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -39,37 +182,101 @@
       "SelectedLepton_hcalIso_3"
     ],
     "thresholds": {
-      "ScoutingFatPFJetRecluster_msoftdrop_1": [50, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_2": [40, 150],
-      "ScoutingFatPFJetRecluster_pt_1": [175, null],
-      "ScoutingFatPFJetRecluster_pt_2": [175, null],
-      "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
-      "ScoutingFatPFJetRecluster_eta_2": [-2.4, 2.4],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6]
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [
+        50,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_eta_1": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_2": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4": [
+        null,
+        0.5
+      ],
+      "nVetoMuon": [
+        null,
+        0.9
+      ],
+      "nVetoElectron": [
+        null,
+        0.9
+      ]
     }
   },
-  "fat3": {
+  "boosted2_unresolved": {
     "clip_ranges": {
-      "ScoutingFatPFJetRecluster_selected_pt_sum": [0, 13600],
-      "ScoutingFatPFJetRecluster_mass": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt_1": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt_2": [0, 13600],
-      "ScoutingFatPFJetRecluster_pt_3": [0, 13600],
-      "SelectedLepton_pt_1": [0, 13600],
-      "SelectedLepton_pt_2": [0, 13600],
-      "SelectedLepton_pt_3": [0, 13600]
+      "ScoutingFatPFJetRecluster_selected_pt_sum": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_3": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_4": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_1": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_2": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_3": [
+        0,
+        13600
+      ]
     },
     "log_transform": [
       "ScoutingFatPFJetRecluster_selected_pt_sum",
       "ScoutingFatPFJetRecluster_sphere_mass",
       "ScoutingFatPFJetRecluster_msoftdrop_2",
-      "ScoutingFatPFJetRecluster_msoftdrop_3",
       "ScoutingFatPFJetRecluster_pt_1",
       "ScoutingFatPFJetRecluster_pt_2",
-      "ScoutingFatPFJetRecluster_pt_3",
-      "ScoutingFatPFJetRecluster_mass",
-      "ScoutingFatPFJetRecluster_pt",
+      "ScoutingPFJetRecluster2_pt_1",
+      "ScoutingPFJetRecluster2_pt_2",
+      "ScoutingPFJetRecluster2_pt_3",
+      "ScoutingPFJetRecluster2_pt_4",
+      "ScoutingPFJetRecluster2_mass_1",
+      "ScoutingPFJetRecluster2_mass_2",
+      "ScoutingPFJetRecluster2_mass_3",
+      "ScoutingPFJetRecluster2_mass_4",
       "SelectedLepton_pt_1",
       "SelectedLepton_pt_2",
       "SelectedLepton_pt_3",
@@ -81,16 +288,248 @@
       "SelectedLepton_hcalIso_3"
     ],
     "thresholds": {
-      "ScoutingFatPFJetRecluster_msoftdrop_1": [50, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_2": [40, 150],
-      "ScoutingFatPFJetRecluster_msoftdrop_3": [40, 150],
-      "ScoutingFatPFJetRecluster_pt_1": [175, null],
-      "ScoutingFatPFJetRecluster_pt_2": [175, null],
-      "ScoutingFatPFJetRecluster_pt_3": [175, null],
-      "ScoutingFatPFJetRecluster_eta_1": [-2.4, 2.4],
-      "ScoutingFatPFJetRecluster_eta_2": [-2.4, 2.4],
-      "ScoutingFatPFJetRecluster_eta_3": [-2.4, 2.4],
-      "ScoutingPFJetRecluster2_scoutUParT_probb_max_dR0p4": [null, 0.6]
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [
+        50,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_eta_1": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_2": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4": [
+        null,
+        0.5
+      ],
+      "nVetoMuon": [
+        null,
+        0.9
+      ],
+      "nVetoElectron": [
+        null,
+        0.9
+      ]
+    }
+  },
+  "boosted2_leptonic_1lep": {
+    "clip_ranges": {
+      "ScoutingFatPFJetRecluster_selected_pt_sum": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_3": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_4": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_1": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_2": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_3": [
+        0,
+        13600
+      ],
+      "LeptonicW_pt": [
+        0,
+        13600
+      ]
+    },
+    "log_transform": [
+      "ScoutingFatPFJetRecluster_selected_pt_sum",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_msoftdrop_2",
+      "ScoutingFatPFJetRecluster_pt_1",
+      "ScoutingFatPFJetRecluster_pt_2",
+      "ScoutingPFJetRecluster2_pt_1",
+      "ScoutingPFJetRecluster2_pt_2",
+      "ScoutingPFJetRecluster2_pt_3",
+      "ScoutingPFJetRecluster2_pt_4",
+      "ScoutingPFJetRecluster2_mass_1",
+      "ScoutingPFJetRecluster2_mass_2",
+      "ScoutingPFJetRecluster2_mass_3",
+      "ScoutingPFJetRecluster2_mass_4",
+      "SelectedLepton_pt_1",
+      "SelectedLepton_pt_2",
+      "SelectedLepton_pt_3",
+      "SelectedLepton_ecalIso_1",
+      "SelectedLepton_ecalIso_2",
+      "SelectedLepton_ecalIso_3",
+      "SelectedLepton_hcalIso_1",
+      "SelectedLepton_hcalIso_2",
+      "SelectedLepton_hcalIso_3",
+      "LeptonicW_pt"
+    ],
+    "thresholds": {
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [
+        50,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_eta_1": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_2": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4": [
+        null,
+        0.5
+      ]
+    }
+  },
+  "boosted2_leptonic_2lep": {
+    "clip_ranges": {
+      "ScoutingFatPFJetRecluster_selected_pt_sum": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_1": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_2": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_3": [
+        0,
+        13600
+      ],
+      "ScoutingPFJetRecluster2_pt_4": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_1": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_2": [
+        0,
+        13600
+      ],
+      "SelectedLepton_pt_3": [
+        0,
+        13600
+      ],
+      "DileptonZ_pt": [
+        0,
+        13600
+      ]
+    },
+    "log_transform": [
+      "ScoutingFatPFJetRecluster_selected_pt_sum",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_msoftdrop_2",
+      "ScoutingFatPFJetRecluster_pt_1",
+      "ScoutingFatPFJetRecluster_pt_2",
+      "ScoutingPFJetRecluster2_pt_1",
+      "ScoutingPFJetRecluster2_pt_2",
+      "ScoutingPFJetRecluster2_pt_3",
+      "ScoutingPFJetRecluster2_pt_4",
+      "ScoutingPFJetRecluster2_mass_1",
+      "ScoutingPFJetRecluster2_mass_2",
+      "ScoutingPFJetRecluster2_mass_3",
+      "ScoutingPFJetRecluster2_mass_4",
+      "SelectedLepton_pt_1",
+      "SelectedLepton_pt_2",
+      "SelectedLepton_pt_3",
+      "SelectedLepton_ecalIso_1",
+      "SelectedLepton_ecalIso_2",
+      "SelectedLepton_ecalIso_3",
+      "SelectedLepton_hcalIso_1",
+      "SelectedLepton_hcalIso_2",
+      "SelectedLepton_hcalIso_3",
+      "DileptonZ_pt"
+    ],
+    "thresholds": {
+      "ScoutingFatPFJetRecluster_msoftdrop_1": [
+        50,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_msoftdrop_2": [
+        40,
+        150
+      ],
+      "ScoutingFatPFJetRecluster_pt_1": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_pt_2": [
+        175,
+        null
+      ],
+      "ScoutingFatPFJetRecluster_eta_1": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingFatPFJetRecluster_eta_2": [
+        -2.4,
+        2.4
+      ],
+      "ScoutingPFJetRecluster2_scoutUParT_bvsall_max_dR0p4": [
+        null,
+        0.5
+      ]
     }
   }
 }

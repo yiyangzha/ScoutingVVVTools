@@ -6,9 +6,12 @@ import ctypes
 import colorsys
 import subprocess
 import sys
+import glob
 import uproot
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Must be placed BEFORE importing pyplot
 import matplotlib.pyplot as plt
 import mplhep as hep
 from concurrent.futures import ThreadPoolExecutor
@@ -225,6 +228,100 @@ for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
         SAMPLE_TO_CLASS[_s] = _idx
 
 
+# -------------------- Rebuild a stale test split from current files --------------------
+# test_ranges.json freezes exact file paths from BDT-training time. If the underlying
+# sample was reconverted since (e.g. a bad source file got replaced, or a follow-up
+# conversion split one big file into several max_output_file_size_gb-capped chunks),
+# those frozen paths can vanish entirely. Rather than hard-failing, recompute that one
+# sample's test split fresh from whatever files exist now, using the exact same
+# train/test-fraction recipe train.py used at training time (see _inspect_sample_tree /
+# _build_segments in selections/BDT/train.py) -- just pointed at current files.
+_INPUT_ROOT = cfg["input_root"]
+if not os.path.isabs(_INPUT_ROOT):
+    _INPUT_ROOT = os.path.normpath(os.path.join(_BDT_DIR, _INPUT_ROOT))
+_INPUT_PATTERN = cfg["input_pattern"]
+_TRAIN_FRACTION = float(cfg.get("train_fraction", 0.7))
+_TEST_ENTRIES_PER_SAMPLE = int(cfg.get("test_entries_per_sample", cfg.get("entries_per_sample", 500000)))
+
+
+def _sample_group(sample_name):
+    return "signal" if SAMPLE_INFO[sample_name]["is_signal"] else "bkg"
+
+
+def _current_sample_files(sample_name):
+    sg   = _sample_group(sample_name)
+    base = _INPUT_PATTERN.format(input_root=_INPUT_ROOT, sample_group=sg, sample=sample_name)
+    stem = base[:-5]  # Drop the ".root" suffix.
+    return sorted(glob.glob(base) + glob.glob(stem + "_*.root"))
+
+
+def _segment_stale(seg):
+    """True if seg's file is missing, or the live file no longer has enough
+    entries to cover the frozen [entry_start, entry_stop) range (e.g. the
+    sample was reconverted with a tighter selection since training time)."""
+    if not os.path.exists(seg["file"]):
+        return True
+    try:
+        with uproot.open(seg["file"]) as uf:
+            if TREE_NAME not in uf:
+                return True
+            return int(uf[TREE_NAME].num_entries) < seg["entry_stop"]
+    except Exception:
+        return True
+
+
+def _refresh_test_segments(sample_name):
+    files = _current_sample_files(sample_name)
+    if not files:
+        raise FileNotFoundError(f"No current files found for sample '{sample_name}' under {_INPUT_ROOT}")
+
+    file_infos = []
+    total_entries = 0
+    for fpath in files:
+        with uproot.open(fpath) as uf:
+            if TREE_NAME not in uf:
+                continue
+            n_entries = int(uf[TREE_NAME].num_entries)
+            file_infos.append({"path": fpath, "entries": n_entries})
+            total_entries += n_entries
+    if total_entries <= 0:
+        raise RuntimeError(f"Zero entries found for sample '{sample_name}' in current files")
+
+    train_stop = int(total_entries * _TRAIN_FRACTION)
+
+    segments = []
+    cursor = 0
+    used_entries = 0
+    for info in file_infos:
+        next_cursor = cursor + info["entries"]
+        overlap_start = max(train_stop, cursor)
+        overlap_stop = min(total_entries, next_cursor)
+        if overlap_stop > overlap_start:
+            local_start = overlap_start - cursor
+            local_stop = overlap_stop - cursor
+            remain = _TEST_ENTRIES_PER_SAMPLE - used_entries
+            if remain > 0:
+                local_stop = min(local_stop, local_start + remain)
+                if local_stop > local_start:
+                    segments.append({
+                        "file": info["path"],
+                        "entry_start": int(local_start),
+                        "entry_stop": int(local_stop),
+                    })
+                    used_entries += local_stop - local_start
+        cursor = next_cursor
+        if used_entries >= _TEST_ENTRIES_PER_SAMPLE:
+            break
+
+    old_total = test_meta["samples"].get(sample_name, {}).get("total_entries")
+    log_warning(
+        f"test split for sample '{sample_name}' rebuilt from current files "
+        f"(a frozen test_ranges.json path no longer exists): total_entries={total_entries} "
+        f"(was {old_total}), {len(segments)} segment(s), {used_entries} test entries"
+    )
+    return total_entries, segments
+
+
 # -------------------- Test data loading --------------------
 def load_test_data(branches):
     """Load test events from test_ranges.json with physics-normalised weights.
@@ -257,13 +354,16 @@ def load_test_data(branches):
         xsec          = float(info["xsection"])
         raw_entries   = int(info["raw_entries"])
         total_entries = int(sample_meta["total_entries"])
+        test_segments = sample_meta["test_segments"]
+        if any(_segment_stale(seg) for seg in test_segments):
+            total_entries, test_segments = _refresh_test_segments(sample_name)
         if raw_entries <= 0:
             raise RuntimeError(
                 f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json"
             )
 
         parts = []
-        for seg in sample_meta["test_segments"]:
+        for seg in test_segments:
             fpath = seg["file"]
             if not os.path.exists(fpath):
                 raise FileNotFoundError(f"Test split file not found: {fpath}")

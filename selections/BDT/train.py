@@ -5,6 +5,8 @@ import shutil
 import uproot
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend: never connect to an X server (batch-safe)
 import matplotlib.pyplot as plt
 import mplhep as hep
 import xgboost as xgb
@@ -52,9 +54,17 @@ _cfg_path = os.environ.get("BDT_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.
 if not os.path.isabs(_cfg_path):
     _cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _cfg_path))
 
+_branch_path = os.environ.get("BDT_BRANCH_PATH", os.path.join(_SCRIPT_DIR, "branch.json"))
+if not os.path.isabs(_branch_path):
+    _branch_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _branch_path))
+
+_selection_path = os.environ.get("BDT_SELECTION_PATH", os.path.join(_SCRIPT_DIR, "selection.json"))
+if not os.path.isabs(_selection_path):
+    _selection_path = os.path.normpath(os.path.join(_SCRIPT_DIR, _selection_path))
+
 cfg     = _load_json(_cfg_path)
-br_cfg  = _load_json(os.path.join(_SCRIPT_DIR, "branch.json"))
-sel_cfg = _load_json(os.path.join(_SCRIPT_DIR, "selection.json"))
+br_cfg  = _load_json(_branch_path)
+sel_cfg = _load_json(_selection_path)
 
 _sample_cfg_path = cfg["sample_config"]
 if not os.path.isabs(_sample_cfg_path):
@@ -637,13 +647,13 @@ def write_config_copy(output_root):
 
 def write_branch_copy(output_root):
     branch_copy_path = os.path.join(output_root, "branch.json")
-    shutil.copy2(os.path.join(_SCRIPT_DIR, "branch.json"), branch_copy_path)
+    shutil.copy2(_branch_path, branch_copy_path)
     log_message(f"Wrote branch file: {branch_copy_path}")
 
 
 def write_selection_copy(output_root):
     selection_copy_path = os.path.join(output_root, "selection.json")
-    shutil.copy2(os.path.join(_SCRIPT_DIR, "selection.json"), selection_copy_path)
+    shutil.copy2(_selection_path, selection_copy_path)
     log_message(f"Wrote selection file: {selection_copy_path}")
 
 
@@ -1283,6 +1293,58 @@ def check_weights(w, name="w"):
 
 
 # -------------------- Decorrelation helpers --------------------
+def _loss_history_from_log(logpath):
+    """Reconstruct the combined (stage1+stage2) loss history from a training log,
+    for BDT_PLOT_ONLY regeneration. Forward-fills the every-Nth logged values to
+    full per-round length. Returns (history, stage_boundary); ({...}, None) if
+    the log is missing/unparseable (loss plots are then simply skipped)."""
+    empty = ({"train": {}, "test": {}}, None)
+    if not logpath or not os.path.exists(logpath):
+        return empty
+    import re
+    key = {"mlogloss": "mlogloss", "classification_loss": "classification",
+           "decorrelation_loss": "decorrelation", "total_loss": "total"}
+    raw = {"1": {"train": {}, "test": {}}, "2": {"train": {}, "test": {}}}
+    nmax = {"1": -1, "2": -1}
+    pat = re.compile(r"\[stage([12])\]\[(\d+)\]\t(.*)")
+    with open(logpath) as fh:
+        for line in fh:
+            m = pat.search(line)
+            if not m:
+                continue
+            stg, rnd = m.group(1), int(m.group(2))
+            nmax[stg] = max(nmax[stg], rnd)
+            for tok in m.group(3).split("\t"):
+                if "-" not in tok or ":" not in tok:
+                    continue
+                name, val = tok.split(":", 1)
+                split, _, met = name.partition("-")
+                if split not in ("train", "test") or met not in key:
+                    continue
+                try:
+                    raw[stg][split].setdefault(key[met], {})[rnd] = float(val)
+                except ValueError:
+                    pass
+    if nmax["1"] < 0 and nmax["2"] < 0:
+        return empty
+    n1, n2 = max(nmax["1"] + 1, 0), max(nmax["2"] + 1, 0)
+
+    def _fill(sparse, n):
+        out, last = [], float("nan")
+        for i in range(n):
+            if i in sparse:
+                last = sparse[i]
+            out.append(last)
+        return out
+
+    hist = {"train": {}, "test": {}}
+    for split in ("train", "test"):
+        for mk in ("mlogloss", "classification", "decorrelation", "total"):
+            hist[split][mk] = _fill(raw["1"][split].get(mk, {}), n1) + \
+                              _fill(raw["2"][split].get(mk, {}), n2)
+    return hist, n1
+
+
 def _resolve_decor_indices(X, decorrelate_feature_names):
     if not decorrelate_feature_names:
         return []
@@ -1861,6 +1923,26 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
 
+    # Plot-only regeneration: load the already-trained models and skip the fit,
+    # so performance plots can be rebuilt (e.g. after a plotting-stage crash)
+    # without a full retrain. Enable with env BDT_PLOT_ONLY=1; optionally point
+    # BDT_PLOT_LOG at the original training log to also rebuild the loss curves.
+    if os.environ.get("BDT_PLOT_ONLY"):
+        base_path = model_name[:-5] if model_name.endswith(".json") else model_name
+        s1p, s2p = f"{base_path}_stage1.json", f"{base_path}.json"
+        if not (os.path.exists(s1p) and os.path.exists(s2p)):
+            raise FileNotFoundError(
+                f"BDT_PLOT_ONLY set but saved models missing: {s1p} / {s2p}")
+        m1 = xgb.Booster(); m1.load_model(s1p)
+        m2 = xgb.Booster(); m2.load_model(s2p)
+        hist, stage_boundary = _loss_history_from_log(os.environ.get("BDT_PLOT_LOG"))
+        if stage_boundary is None:
+            stage_boundary = int(hp.get("n_estimators", 200))
+        log_message(
+            f"BDT_PLOT_ONLY: loaded {s1p} and {s2p}; skipping fit "
+            f"(stage_boundary={stage_boundary})")
+        return m1, m2, splits, hist, stage_boundary
+
     dtrain = _make_dmatrix(X_train, y_train, w_train)
     dtest = _make_dmatrix(X_test, y_test, w_test)
 
@@ -1942,29 +2024,47 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
             model = xgb.train(feval=recorder, **train_kwargs)
         return model, recorder, monitor
 
-    log_message(
-        f"Starting stage 1 (native multi:softprob, n_estimators={n_estimators}, eta={learning_rate})"
-    )
-    try:
-        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
-    except xgb.core.XGBoostError:
-        stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
-
-    stage1_best = stage1_monitor.best_iteration
-    if stage1_best is None:
-        stage1_best = stage1_model.num_boosted_rounds() - 1
-    stage1_rounds = int(stage1_best) + 1
-    if stage1_model.num_boosted_rounds() != stage1_rounds:
-        stage1_model = stage1_model[:stage1_rounds]
-    stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
-    stage1_reg_loss = _loss_value_at(
-        stage1_history, "train", "regularization", stage1_rounds - 1
-    )
-
     base_path = model_name[:-5] if model_name.endswith(".json") else model_name
     stage1_save_path = f"{base_path}_stage1.json"
-    stage1_model.save_model(stage1_save_path)
-    log_message(f"Wrote model file: {stage1_save_path}")
+    resume_stage1 = bool(os.environ.get("BDT_RESUME_STAGE1")) and os.path.exists(stage1_save_path)
+
+    if resume_stage1:
+        log_message(
+            f"BDT_RESUME_STAGE1 set and found existing {stage1_save_path}; "
+            "loading stage-1 model instead of retraining"
+        )
+        stage1_model = xgb.Booster()
+        stage1_model.load_model(stage1_save_path)
+        stage1_rounds = stage1_model.num_boosted_rounds()
+        stage1_reg_loss = _booster_regularization_loss(
+            stage1_model, stage1_params["reg_lambda"], stage1_params["reg_alpha"],
+            stage1_params["gamma"], stage1_params["eta"],
+        )
+        _metric_keys = ("classification", "mlogloss", "decorrelation", "regularization", "total")
+        stage1_history = {"train": {k: [] for k in _metric_keys},
+                           "test": {k: [] for k in _metric_keys}}
+    else:
+        log_message(
+            f"Starting stage 1 (native multi:softprob, n_estimators={n_estimators}, eta={learning_rate})"
+        )
+        try:
+            stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
+        except xgb.core.XGBoostError:
+            stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
+
+        stage1_best = stage1_monitor.best_iteration
+        if stage1_best is None:
+            stage1_best = stage1_model.num_boosted_rounds() - 1
+        stage1_rounds = int(stage1_best) + 1
+        if stage1_model.num_boosted_rounds() != stage1_rounds:
+            stage1_model = stage1_model[:stage1_rounds]
+        stage1_history = _trim_loss_history(stage1_recorder.history, stage1_rounds)
+        stage1_reg_loss = _loss_value_at(
+            stage1_history, "train", "regularization", stage1_rounds - 1
+        )
+
+        stage1_model.save_model(stage1_save_path)
+        log_message(f"Wrote model file: {stage1_save_path}")
 
     if not use_decor:
         # No stage 2. Copy stage 1 as the main model file so downstream paths stay unchanged.

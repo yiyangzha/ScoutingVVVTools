@@ -36,8 +36,11 @@
     "Top": [
       "ttbar_had",
       "ttbar_semilep",
+      "ttbar_2l2nu",
       "tbarwplus_had",
-      "twminus_had"
+      "twminus_had",
+      "twminus_lnu2q",
+      "tbarwplus_lnu2q"
     ],
     "VV": [
       "WWTo4Q",
@@ -59,7 +62,28 @@
       "zjets_h400to800",
       "zjets_h800to1500",
       "zjets_h1500to2500",
-      "zjets_h2500"
+      "zjets_h2500",
+      "wlnu_h100to400_m0to120",
+      "wlnu_h100to400_m120",
+      "wlnu_h1500to2500_m0to120",
+      "wlnu_h1500to2500_m120",
+      "wlnu_h2500_m0to120",
+      "wlnu_h2500_m120",
+      "wlnu_h400to800_m0to120",
+      "wlnu_h400to800_m120",
+      "wlnu_h40to100_m0to120",
+      "wlnu_h800to1500_m0to120",
+      "wlnu_h800to1500_m120",
+      "dy_h1500to2500_m120",
+      "dy_h1500to2500_m4to50",
+      "dy_h1500to2500_m50to120",
+      "dy_h2500_m120",
+      "dy_h2500_m4to50",
+      "dy_h2500_m50to120",
+      "dy_h400to800_m120",
+      "dy_h800to1500_m120",
+      "dy_h800to1500_m4to50",
+      "dy_h800to1500_m50to120"
     ],
     "QCD": [
       "qcd_ht100to200",

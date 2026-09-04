@@ -1,15 +1,21 @@
 {
-  "submit_trees": ["fat2", "fat3"],
+  "submit_trees": ["boosted3", "boosted2_resolved", "boosted2_unresolved", "boosted2_leptonic_1lep", "boosted2_leptonic_2lep"],
   "sample_config": "../../src/sample.json",
-  "input_root": "../../dataset",
+  "input_root": "../../dataset_hybrid_leptonic",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
   "bdt_root": {
-    "fat2": "../BDT/fat2_UParTv2_v2_wloose",
-    "fat3": "../BDT/fat3_UParTv2_v2_wloose"
+    "boosted3": "../BDT/boosted3",
+    "boosted2_resolved": "../BDT/boosted2_resolved",
+    "boosted2_unresolved": "../BDT/boosted2_unresolved",
+    "boosted2_leptonic_1lep": "../BDT/boosted2_leptonic_1lep",
+    "boosted2_leptonic_2lep": "../BDT/boosted2_leptonic_2lep"
   },
   "signal_region_csv": {
-    "fat2": "../signal_region/output/fat2_UParTv2_v2_wloose_hist/signal_region.csv",
-    "fat3": "../signal_region/output/fat3_UParTv2_v2_wloose_hist/signal_region.csv"
+    "boosted3": "../signal_region/output/boosted3_hist/signal_region.csv",
+    "boosted2_resolved": "../signal_region/output/boosted2_resolved_hist/signal_region.csv",
+    "boosted2_unresolved": "../signal_region/output/boosted2_unresolved_hist/signal_region.csv",
+    "boosted2_leptonic_1lep": "../signal_region/output/boosted2_leptonic_1lep_hist/signal_region.csv",
+    "boosted2_leptonic_2lep": "../signal_region/output/boosted2_leptonic_2lep_hist/signal_region.csv"
   },
   "min_region_events": 1,
   "output_dir": "./output",

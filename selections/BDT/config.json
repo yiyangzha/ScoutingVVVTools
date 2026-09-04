@@ -1,9 +1,15 @@
 {
-  "submit_trees": ["fat2", "fat3"],
+  "submit_trees": [
+    "boosted3",
+    "boosted2_resolved",
+    "boosted2_unresolved",
+    "boosted2_leptonic_1lep",
+    "boosted2_leptonic_2lep"
+  ],
   "sample_config": "../../src/sample.json",
-  "input_root": "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/dataset/",
+  "input_root": "/depot/cms/private/users/schul105/VVV/analysis/CMSSW_16_1_0_pre4/src/ScoutingVVVTools/dataset_hybrid_leptonic/",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
-  "output_root": "./{tree_name}_vjets_full",
+  "output_root": "./{tree_name}",
   "model_pattern": "{output_root}/{tree_name}_model",
   "model_type": "bdt",
   "entries_per_sample": 750000,
@@ -19,34 +25,103 @@
   "decor_bin_tau_scale": 0.25,
   "decor_msoftdrop_training_max": 200,
   "class_groups": {
-    "VVV": ["www", "wwz", "wzz", "zzz"],
-    "VH":  ["zh_had", "ggzh_had", "wplush", "wminush"],
-    "Top": ["ttbar_had", "ttbar_semilep","tbarwplus_had", "twminus_had"],
-    "VV":  ["WWTo4Q", "WWToLNu2Q", "WZto2L2Q", "WZto2Nu2Q", "WZto4Q", "WZtoLNu2Q", "ZZto2L2Q", "ZZto4Q"],
-    "VJets": ["wjets_h100to400", "wjets_h400to800", "wjets_h800to1500", "wjets_h1500to2500", "wjets_h2500", "zjets_h100to400", "zjets_h400to800", "zjets_h800to1500", "zjets_h1500to2500", "zjets_h2500"],
-    "QCD": ["qcd_ht100to200", "qcd_ht200to400", "qcd_ht400to600","qcd_ht600to800", "qcd_ht800to1000", "qcd_ht1000to1200","qcd_ht1200to1500", "qcd_ht1500to2000", "qcd_ht2000"]
+    "VVV": [
+      "www",
+      "wwz",
+      "wzz",
+      "zzz"
+    ],
+    "VH": [
+      "ZH-Zto2Q-Hto2Wto4Q",
+      "ZH-Zto2L-Hto2Wto2L2Nu",
+      "ZH-Zto2L-Hto2Wto4Q",
+      "ZH-Zto2L-Hto2WtoLNu2Q",
+      "ZH-Zto2Q-Hto2Wto2L2Nu",
+      "ZH-Zto2Q-Hto2WtoLNu2Q",
+      "GluGluZH-Zto2Q-Hto2Wto4Q",
+      "GluGluZH-Zto2L-Hto2Wto2L2Nu",
+      "GluGluZH-Zto2L-Hto2Wto4Q",
+      "GluGluZH-Zto2L-Hto2WtoLNu2Q",
+      "GluGluZH-Zto2Q-Hto2Wto2L2Nu",
+      "GluGluZH-Zto2Q-Hto2WtoLNu2Q",
+      "WminusH-Wto2Q-Hto2Wto4Q",
+      "WminusH-Wto2Q-Hto2Wto2L2Nu",
+      "WminusH-Wto2Q-Hto2WtoLNu2Q",
+      "WminusH-WtoLNu-Hto2Wto2L2Nu",
+      "WminusH-WtoLNu-Hto2Wto4Q",
+      "WminusH-WtoLNu-Hto2WtoLNu2Q",
+      "WplusH-Wto2Q-Hto2Wto4Q",
+      "WplusH-Wto2Q-Hto2Wto2L2Nu",
+      "WplusH-Wto2Q-Hto2WtoLNu2Q",
+      "WplusH-WtoLNu-Hto2Wto2L2Nu",
+      "WplusH-WtoLNu-Hto2Wto4Q",
+      "WplusH-WtoLNu-Hto2WtoLNu2Q"
+    ],
+    "Top": [
+      "ttbar_had",
+      "ttbar_semilep",
+      "ttbar_2l2nu",
+      "tbarwplus_had",
+      "twminus_had",
+      "twminus_lnu2q",
+      "tbarwplus_lnu2q"
+    ],
+    "VV": [
+      "WWTo4Q",
+      "WWToLNu2Q",
+      "WZto2L2Q",
+      "WZto2Nu2Q",
+      "WZto4Q",
+      "WZtoLNu2Q",
+      "ZZto2L2Q",
+      "ZZto4Q"
+    ],
+    "VJets": [
+      "wjets_h100to400",
+      "wjets_h400to800",
+      "wjets_h800to1500",
+      "wjets_h1500to2500",
+      "wjets_h2500",
+      "zjets_h100to400",
+      "zjets_h400to800",
+      "zjets_h800to1500",
+      "zjets_h1500to2500",
+      "zjets_h2500",
+      "wlnu_h100to400_m0to120",
+      "wlnu_h100to400_m120",
+      "wlnu_h1500to2500_m0to120",
+      "wlnu_h1500to2500_m120",
+      "wlnu_h2500_m0to120",
+      "wlnu_h2500_m120",
+      "wlnu_h400to800_m0to120",
+      "wlnu_h400to800_m120",
+      "wlnu_h40to100_m0to120",
+      "wlnu_h800to1500_m0to120",
+      "wlnu_h800to1500_m120",
+      "dy_h1500to2500_m120",
+      "dy_h1500to2500_m4to50",
+      "dy_h1500to2500_m50to120",
+      "dy_h2500_m120",
+      "dy_h2500_m4to50",
+      "dy_h2500_m50to120",
+      "dy_h400to800_m120",
+      "dy_h800to1500_m120",
+      "dy_h800to1500_m4to50",
+      "dy_h800to1500_m50to120"
+    ],
+    "QCD": [
+      "qcd_ht100to200",
+      "qcd_ht200to400",
+      "qcd_ht400to600",
+      "qcd_ht600to800",
+      "qcd_ht800to1000",
+      "qcd_ht1000to1200",
+      "qcd_ht1200to1500",
+      "qcd_ht1500to2000",
+      "qcd_ht2000"
+    ]
   },
-  "fat2": {
-    "n_estimators": 1200,
-    "n_estimators_decorr": 800,
-    "max_depth": 6,
-    "gamma": 2,
-    "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
-    "lr_reduce_patience": 4,
-    "reg_lambda": 5,
-    "reg_alpha": 1,
-    "min_child_weight": 5,
-    "subsample": 0.8,
-    "colsample_bytree": 0.9,
-    "colsample_bynode": 0.9,
-    "early_stopping_rounds": 20,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "decor_efficiencies": [1.0, 0.5, 0.1, 0.05],
-    "event_reweight_branches": ["weight_pu"]
-  },
-  "fat3": {
+  "boosted3": {
     "n_estimators": 1500,
     "n_estimators_decorr": 1000,
     "max_depth": 7,
@@ -62,40 +137,146 @@
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
     "early_stopping_rounds": 20,
-    "decorrelate": ["ScoutingFatPFJetRecluster_msoftdrop_1"],
-    "decor_efficiencies": [1.0, 0.5, 0.1, 0.05],
-    "event_reweight_branches": ["weight_pu"]
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
   },
-  "fat2_nn": {
-    "epochs": 200,
-    "epochs_decorr": 100,
-    "hidden_layers": [512, 256, 128],
-    "activation": "silu",
-    "dropout": 0.1,
-    "batch_norm": false,
-    "batch_size": 200000,
-    "learning_rate": 0.001,
-    "learning_rate_decorr": 0.0005,
-    "min_learning_rate": 0.00002,
-    "lr_reduce_patience": 6,
-    "weight_decay": 0.0001,
-    "early_stopping_rounds": 10,
-    "permutation_importance_events": 1000000
+  "boosted2_resolved": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
   },
-  "fat3_nn": {
-    "epochs": 180,
-    "epochs_decorr": 100,
-    "hidden_layers": [384, 256, 128],
-    "activation": "silu",
-    "dropout": 0.1,
-    "batch_norm": false,
-    "batch_size": 200000,
-    "learning_rate": 0.001,
-    "learning_rate_decorr": 0.0005,
-    "min_learning_rate": 0.00002,
-    "lr_reduce_patience": 6,
-    "weight_decay": 0.0001,
-    "early_stopping_rounds": 10,
-    "permutation_importance_events": 1000000
-  }
+  "boosted2_unresolved": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
+  },
+  "boosted2_leptonic_1lep": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
+  },
+  "boosted2_leptonic_2lep": {
+    "n_estimators": 1200,
+    "n_estimators_decorr": 800,
+    "max_depth": 6,
+    "gamma": 2,
+    "learning_rate": 0.05,
+    "learning_rate_decorr": 0.02,
+    "min_learning_rate": 0.001,
+    "lr_reduce_patience": 4,
+    "reg_lambda": 5,
+    "reg_alpha": 1,
+    "min_child_weight": 5,
+    "subsample": 0.8,
+    "colsample_bytree": 0.9,
+    "colsample_bynode": 0.9,
+    "early_stopping_rounds": 20,
+    "decorrelate": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1",
+      "ScoutingFatPFJetRecluster_sphere_mass",
+      "ScoutingFatPFJetRecluster_mass_fraction_1"
+    ],
+    "decor_efficiencies": [
+      1.0,
+      0.5,
+      0.1,
+      0.05
+    ],
+    "event_reweight_branches": [
+      "weight_pu"
+    ]
+  },
+  "decor_tail_aware": true,
+  "decor_tail_min_prob": 0.002,
+  "decor_tail_n": 8
 }
