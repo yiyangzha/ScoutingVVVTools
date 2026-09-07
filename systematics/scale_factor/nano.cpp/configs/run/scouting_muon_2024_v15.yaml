@@ -15,6 +15,9 @@ preselection: Sum$(ScoutingMuonVtx_pt>50 && abs(ScoutingMuonVtx_eta)<2.4)>0 && n
 required_triggers:
   - DST_PFScouting_SingleMuon
 
+required_jetht_triggers:
+  - DST_PFScouting_JetHT
+
 input:
   strict_read_branches: true
 

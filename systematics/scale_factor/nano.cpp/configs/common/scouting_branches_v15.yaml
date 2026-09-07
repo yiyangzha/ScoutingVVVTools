@@ -55,6 +55,9 @@ nano_branches:
           "DST_PFScouting_SingleMuon":
             type: "bool"
             root_type: "Bool_t"
+          "DST_PFScouting_JetHT":
+            type: "bool"
+            root_type: "Bool_t"
           "nScoutingFatPFJetRecluster":
             type: "int32"
             root_type: "Int_t"
