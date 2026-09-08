@@ -115,56 +115,56 @@
           "XcsVsQCD": {
             "label": "Scouting GloParT XcsVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xcs / (fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "XudVsQCD": {
             "label": "Scouting GloParT XudVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xud / (fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "WvsQCD": {
             "label": "Scouting GloParT W(cs+ud)VsQCD",
             "expr": "(fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud) / (fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "XbbVsQCD": {
             "label": "Scouting GloParT XbbVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xbb / (fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "XccVsQCD": {
             "label": "Scouting GloParT XccVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xcc / (fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "XssVsQCD": {
             "label": "Scouting GloParT XssVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xss / (fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "XqqVsQCD": {
             "label": "Scouting GloParT XqqVsQCD",
             "expr": "fj_1_scoutGlobalParT_prob_Xqq / (fj_1_scoutGlobalParT_prob_Xqq + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "ZvsQCD": {
             "label": "Scouting GloParT ZVsQCD",
             "expr": "(fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq) / (fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           },
           "VvsQCD": {
             "label": "Scouting GloParT VVsQCD",
             "expr": "(fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq) / (fj_1_scoutGlobalParT_prob_Xcs + fj_1_scoutGlobalParT_prob_Xud + fj_1_scoutGlobalParT_prob_Xbb + fj_1_scoutGlobalParT_prob_Xcc + fj_1_scoutGlobalParT_prob_Xss + fj_1_scoutGlobalParT_prob_Xqq + fj_1_scoutGlobalParT_prob_QCD)",
-            "pt_bins": [[170, 400], [400, 800], [800, null]],
-            "score_bins": [[0.0, 0.05], [0.05, 0.15], [0.15, 0.30], [0.30, 0.50], [0.50, 0.70], [0.70, 1.00]]
+            "pt_bins": [[170, 400], [400, 1200]],
+            "score_bins": [[0.0, 0.50], [0.50, 1.00]]
           }
         }
       },

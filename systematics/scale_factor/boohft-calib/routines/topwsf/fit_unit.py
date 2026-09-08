@@ -39,6 +39,8 @@ def runcmd(cmd, shell=True):
 
 def _pt_text(pt_range):
     lo, hi = pt_range
+    if np.isinf(hi):
+        return f"$p_T$: > {lo:g} GeV"
     return f"$p_T$: [{lo:g}, {hi:g}] GeV"
 
 
@@ -48,6 +50,11 @@ def _project_mass_payload(payload, process_name, wp, region, variation, pt_range
     mass_edges = np.asarray(payload["mass_edges"], dtype=float)
     pt_edges = np.asarray(payload["pt_edges"], dtype=float)
     pt_centers = 0.5 * (pt_edges[:-1] + pt_edges[1:])
+    if not np.isfinite(pt_centers[-1]):
+        # The trailing overflow bin runs to +inf and has no usable center.
+        # Represent it by a point just above the pT axis maximum, so that only a
+        # fit bin reaching beyond that maximum selects it.
+        pt_centers[-1] = pt_edges[-2] + 0.5 * (pt_edges[-2] - pt_edges[-3])
     lo, hi = pt_range
     mask = (pt_centers >= lo) & (pt_centers < hi)
     hout = bh.Histogram(bh.axis.Variable(mass_edges), storage=bh.storage.Weight())
@@ -636,6 +643,8 @@ def _make_summary_plot(results, categories, outputdir, args):
 
     def _pt_label(pt_range):
         lo, hi = pt_range
+        if np.isinf(hi):
+            return f"(> {lo:g})"
         return f"({lo:g}, {hi:g})"
 
     pt_ranges = sorted({_pt_key(r) for r in results})

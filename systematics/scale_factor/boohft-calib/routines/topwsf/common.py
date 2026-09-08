@@ -272,7 +272,9 @@ def read_json(path):
 
 def pt_name(pt_range):
     lo, hi = pt_range
-    return f"pt{int(lo)}to{int(hi)}"
+    # An unbounded pT bin is configured as +inf, which int() cannot format.
+    hi_text = "Inf" if np.isinf(hi) else str(int(hi))
+    return f"pt{int(lo)}to{hi_text}"
 
 
 def float_token(value):

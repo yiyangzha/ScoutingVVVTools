@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import shutil
 import shlex
@@ -34,7 +35,14 @@ def scalar_yaml(value):
         return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return repr(value)
+    if isinstance(value, float):
+        if math.isinf(value):
+            # repr() gives "inf"/"-inf", which YAML reads back as a plain string.
+            return ".inf" if value > 0 else "-.inf"
+        if math.isnan(value):
+            return ".nan"
         return repr(value)
     text = str(value)
     typed_literals = {"null", "true", "false", "yes", "no", "on", "off"}
@@ -1485,6 +1493,25 @@ def make_ntuple(cfg, args):
         print(f"Expected merged {sample_set} ntuples for {label} under {output_dir}")
 
 
+def fit_pt_bins(pt_bins, tagger_name):
+    """Convert configured pT bins into card values.
+
+    A null upper edge means the bin has no upper bound and becomes +inf, which
+    the calibration routine reads as "keep everything above the low edge".
+    """
+    out = []
+    last = len(pt_bins) - 1
+    for index, (lo, hi) in enumerate(pt_bins):
+        if hi is None:
+            if index != last:
+                raise SystemExit(
+                    f"Tagger {tagger_name} has an unbounded pt bin [{lo}, null] that is not the last one"
+                )
+            hi = float("inf")
+        out.append([lo, hi])
+    return out
+
+
 def score_bin_name(lo, hi):
     def fmt(x):
         return f"{float(x):.3g}".replace("-", "m").replace(".", "p")
@@ -1713,7 +1740,7 @@ def generated_card(cfg, samples, data_names, mc_groups, year, target, tagger_nam
             "span": [0.0, 1.0],
             "wps": score_bins,
         },
-        "fit_pt_bins": tagger_cfg["pt_bins"],
+        "fit_pt_bins": fit_pt_bins(tagger_cfg["pt_bins"], tagger_name),
     }
     fit_processes = ["tp3", "tp2", "tp1", "other"]
     template_processes = list(fit_processes)

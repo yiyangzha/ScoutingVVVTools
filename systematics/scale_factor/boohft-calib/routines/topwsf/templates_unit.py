@@ -50,6 +50,16 @@ def _axis_edges(axis):
     return np.asarray([axis.value(i) for i in range(axis.size + 1)], dtype=float)
 
 
+def _pt_edges_with_overflow(axis):
+    """Return pT edges plus the trailing overflow bin edge at +inf.
+
+    The pT axis range only sets the template granularity.  Jets above the axis
+    maximum are kept in the overflow bin so that a fit pT bin without an upper
+    bound covers the full tail.
+    """
+    return np.append(_axis_edges(axis), np.inf)
+
+
 def _validation_regions(global_cfg):
     """Build the named selections used by step-1 Data/MC validation plots."""
     regions = ["inclusive"]
@@ -64,7 +74,7 @@ def _template2d_payload(h):
     # when step 2 projects these arrays into Combine input histograms.
     payload = {
         "mass_edges": _axis_edges(h.axes["mass"]),
-        "pt_edges": _axis_edges(h.axes["pt"]),
+        "pt_edges": _pt_edges_with_overflow(h.axes["pt"]),
         "axes": {
             "wp": list(h.axes["wp"]),
             "process": list(h.axes["process"]),
@@ -81,9 +91,12 @@ def _template2d_payload(h):
                         continue
                     h2 = h[{"wp": wp, "process": process_name, "region": region, "variation": variation}].project("mass", "pt")
                     key = f"{wp}__{process_name}__{variation}__{region}"
+                    # Axis order is (mass, pt).  Drop both mass flow bins (the
+                    # mass window is a hard selection) and the pT underflow bin,
+                    # but keep the pT overflow bin as the last column.
                     payload["templates"][key] = {
-                        "value": np.asarray(h2.values(flow=False), dtype=float),
-                        "variance": np.asarray(h2.variances(flow=False), dtype=float),
+                        "value": np.asarray(h2.values(flow=True), dtype=float)[1:-1, 1:],
+                        "variance": np.asarray(h2.variances(flow=True), dtype=float)[1:-1, 1:],
                     }
     return payload
 
@@ -357,11 +370,12 @@ class TopWSFTemplatesCoffeaProcessor(processor.ProcessorABC):
         pt = events["fj_1_pt"]
         # Template phase space is applied to fit templates and validation plots,
         # while the base event selection above remains configurable in the card.
+        # There is no upper pT bound here: jets above the pT axis maximum land in
+        # the overflow bin, which an unbounded fit pT bin then picks up.
         template_phase_space = (
             (mass_nom >= float(self.global_cfg.template_mass_bins[1]))
             & (mass_nom < float(self.global_cfg.template_mass_bins[2]))
             & (pt >= float(self.global_cfg.template_pt_bins[1]))
-            & (pt < float(self.global_cfg.template_pt_bins[2]))
         )
 
         if is_data:
@@ -551,6 +565,12 @@ class TopWSFTemplatesUnit(ProcessingUnit):
         finite_values = values[np.isfinite(values)]
         if finite_values.size == 0 or not np.any(finite_values):
             return
+        pt_edges = np.asarray(pt_edges, dtype=float)
+        if not np.isfinite(pt_edges[-1]):
+            # pcolormesh cannot draw an infinite edge; show the pT overflow bin
+            # with the same width as the last regular bin.
+            pt_edges = pt_edges.copy()
+            pt_edges[-1] = 2.0 * pt_edges[-2] - pt_edges[-3]
         fig, ax = plt.subplots(figsize=(12, 10))
         # Start the color scale at white so empty mass-pT bins are visually quiet.
         cmap = mpl.colors.LinearSegmentedColormap.from_list(
@@ -723,7 +743,8 @@ class TopWSFTemplatesUnit(ProcessingUnit):
         web.add_text("On top of the producer selection, step 1 applies:\n")
         web.add_text(f"1. base selection: `{self.global_cfg.selection}`\n")
         web.add_text(f"2. custom selection: `{custom_selection}`\n")
-        web.add_text(f"3. template phase space: `(fj_1_sdmass >= {mass_low}) & (fj_1_sdmass < {mass_high}) & (fj_1_pt >= {pt_low}) & (fj_1_pt < {pt_high})`\n")
+        web.add_text(f"3. template phase space: `(fj_1_sdmass >= {mass_low}) & (fj_1_sdmass < {mass_high}) & (fj_1_pt >= {pt_low})`\n")
+        web.add_text(f"The template pT axis covers [{pt_low}, {pt_high}) GeV and jets above {pt_high} GeV are kept in the pT overflow bin, so a fit pT bin without an upper bound uses the full tail. The 1D validation plots only draw the axis range.\n")
         web.add_text()
 
     def make_webpage(self):
