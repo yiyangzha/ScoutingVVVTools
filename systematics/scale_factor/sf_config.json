@@ -52,7 +52,7 @@
       "fit_auto_mc_stats": 0
     },
     "fit_enabled_mc_groups": ["ttbar-powheg", "singletop", "diboson", "w"],
-    "include_qcd_in_fit": false,
+    "include_qcd_in_fit": true,
     "qcd_process_groups": ["qcd-mg"],
     "ak4_btag": {
       "enabled": true,
