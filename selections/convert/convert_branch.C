@@ -33,6 +33,7 @@
 #include <TTree.h>
 
 #include "../../src/simple_json.h"
+#include "correction.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -436,6 +437,30 @@ struct SampleRuleConfig {
     double lumi = -1.;
 };
 
+// Scouting->offline AK4/AK8 jet pt correction (correctionlib) plus an optional
+// JES/JER shape-systematic variation applied on top, for MC only. See
+// scoutingPUPPI_corrections.json.gz (nominal PUPPI->offline response SF) and
+// the standard JME-POG jet_jerc.json.gz / jer_smear.json.gz (JES uncertainty
+// source + JER resolution/scale-factor/smearing) referenced by this config.
+struct JetPtCorrectionConfig {
+    bool enabled = false;
+    string correctionsFile;      // scoutingPUPPI_corrections.json.gz
+    string jesJerFile;           // JME-POG jet_jerc.json.gz (JES unc + JER res/SF)
+    string jerSmearFile;         // JME-POG jer_smear.json.gz (JERSmear tool)
+    string jesUncName = "Summer24Prompt24_V1_MC_Total_AK4PFPuppi";
+    string jerResolutionName = "Summer23BPixPrompt23_RunD_JRV1_MC_PtResolution_AK4PFPuppi";
+    string jerScaleFactorName = "Summer23BPixPrompt23_RunD_JRV1_MC_ScaleFactor_AK4PFPuppi";
+    // No rho branch exists in scouting NanoAOD; JER's rho dependence is mild
+    // and this is only used consistently across nominal/up/down evaluations
+    // for a given event, so a fixed representative value is used instead.
+    double jerRhoFallback = 25.0;
+    double ak4TagThreshold = 0.5;
+    double ak8TagThreshold = 0.5;
+    // "nominal", "jes_up", "jes_down", "jer_up", "jer_down". Non-nominal
+    // variations are only ever applied to MC (see JetPtCorrector).
+    string variation = "nominal";
+};
+
 struct AppConfig {
     string treeName = "Events";
     string configPath;
@@ -451,6 +476,7 @@ struct AppConfig {
     bool updateRawEntries = true;
     vector<SampleRuleConfig> sampleRules;
     string puWeightPathPattern;
+    JetPtCorrectionConfig jetPtCorrection;
 };
 
 struct BatchRequest {
@@ -1142,6 +1168,32 @@ AppConfig loadAppConfig() {
 
     config.puWeightPathPattern = resolveConfiguredPathPattern(
         config.configPath, payload.getStringOr("pu_weight_path", ""));
+
+    if (payload.contains("jet_pt_correction")) {
+        const JsonValue& jc = payload.at("jet_pt_correction");
+        JetPtCorrectionConfig& jpc = config.jetPtCorrection;
+        jpc.enabled = jc.getBoolOr("enabled", true);
+        jpc.correctionsFile = resolveReferencedPath(config.configPath,
+                                                     jc.getStringOr("corrections_file", ""));
+        jpc.jesJerFile = resolveReferencedPath(config.configPath,
+                                                jc.getStringOr("jes_jer_file", ""));
+        jpc.jerSmearFile = resolveReferencedPath(config.configPath,
+                                                  jc.getStringOr("jer_smear_file", ""));
+        jpc.jesUncName = jc.getStringOr("jes_unc_name", jpc.jesUncName);
+        jpc.jerResolutionName = jc.getStringOr("jer_resolution_name", jpc.jerResolutionName);
+        jpc.jerScaleFactorName = jc.getStringOr("jer_scale_factor_name", jpc.jerScaleFactorName);
+        jpc.jerRhoFallback = static_cast<double>(jc.getNumberOr("jer_rho_fallback", jpc.jerRhoFallback));
+        jpc.ak4TagThreshold = static_cast<double>(jc.getNumberOr("ak4_tag_threshold", jpc.ak4TagThreshold));
+        jpc.ak8TagThreshold = static_cast<double>(jc.getNumberOr("ak8_tag_threshold", jpc.ak8TagThreshold));
+        jpc.variation = jc.getStringOr("variation", jpc.variation);
+        if (jpc.enabled && jpc.correctionsFile.empty()) {
+            throw runtime_error("jet_pt_correction.enabled is true but corrections_file is empty");
+        }
+        if (jpc.variation != "nominal" && (jpc.jesJerFile.empty() || jpc.jerSmearFile.empty())) {
+            throw runtime_error("jet_pt_correction.variation = '" + jpc.variation +
+                                "' requires jes_jer_file and jer_smear_file to be set");
+        }
+    }
     return config;
 }
 
@@ -4084,12 +4136,152 @@ unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
     throw runtime_error("Error opening input file " + inputFileName);
 }
 
+// Applies the scouting->offline PUPPI jet pt correction (and, for MC, an
+// optional JES/JER shape-systematic variation on top) in place to a jet
+// collection's raw pt/mass(/msoftdrop) buffers, right after TTree::GetEntry
+// and before any expression evaluates the collection -- see
+// JetPtCorrectionConfig. The same per-jet multiplicative scale factor is
+// applied to pt, mass, and (for AK8) msoftdrop, matching standard CMS JEC
+// convention of rescaling the whole 4-vector consistently; any residual
+// data/MC softdrop-mass mismodeling is handled separately by the existing
+// JMS/JMR correction (selections/jms_jmr/).
+class JetPtCorrector {
+public:
+    void initialize(const JetPtCorrectionConfig& cfg) {
+        cfg_ = cfg;
+        if (!cfg_.enabled) {
+            return;
+        }
+        puppiSet_ = correction::CorrectionSet::from_file(cfg_.correctionsFile);
+        ak4Mc_       = puppiSet_->at("AK4_plain_MC");
+        ak4DataCorr_ = puppiSet_->at("AK4_plain_Data2024");
+        ak8Mc_       = puppiSet_->at("AK8_MC");
+        ak8DataCorr_ = puppiSet_->at("AK8_Data2024");
+
+        if (!cfg_.jesJerFile.empty()) {
+            jesJerSet_ = correction::CorrectionSet::from_file(cfg_.jesJerFile);
+            jesUnc_ = jesJerSet_->at(cfg_.jesUncName);
+            jerRes_ = jesJerSet_->at(cfg_.jerResolutionName);
+            jerSf_  = jesJerSet_->at(cfg_.jerScaleFactorName);
+        }
+        if (!cfg_.jerSmearFile.empty()) {
+            jerSmearSet_ = correction::CorrectionSet::from_file(cfg_.jerSmearFile);
+            jerSmear_ = jerSmearSet_->at("JERSmear");
+        }
+    }
+
+    bool enabled() const { return cfg_.enabled; }
+
+    void correctCollection(InputCollectionConfig& collection,
+                           bool isAK8,
+                           bool isMC,
+                           int size,
+                           ULong64_t eventId) const {
+        if (!cfg_.enabled || size <= 0) {
+            return;
+        }
+
+        ArrayInputConfig& ptField = collection.fields[collection.ptIndex];
+        ArrayInputConfig* massField =
+            (collection.massIndex >= 0) ? &collection.fields[collection.massIndex] : nullptr;
+        ArrayInputConfig* softdropField =
+            isAK8 ? findField(collection, "ScoutingFatPFJetRecluster_msoftdrop") : nullptr;
+        const ArrayInputConfig& etaField = collection.fields[collection.etaIndex];
+
+        const ArrayInputConfig* flavourField = isMC
+            ? findField(collection, isAK8 ? "ScoutingFatPFJetRecluster_partonFlavour"
+                                          : "ScoutingPFJetRecluster2_partonFlavour")
+            : nullptr;
+        const ArrayInputConfig* tagField = (!isMC)
+            ? findField(collection, isAK8 ? "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xbb"
+                                          : "ScoutingPFJetRecluster2_scoutUParT_probb")
+            : nullptr;
+        const ArrayInputConfig* qcdField = (!isMC && isAK8)
+            ? findField(collection, "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_QCD")
+            : nullptr;
+
+        const correction::Correction::Ref& puppiCorr =
+            isMC ? (isAK8 ? ak8Mc_ : ak4Mc_) : (isAK8 ? ak8DataCorr_ : ak4DataCorr_);
+        const double tagThreshold = isAK8 ? cfg_.ak8TagThreshold : cfg_.ak4TagThreshold;
+
+        for (int i = 0; i < size; ++i) {
+            const float rawPt = ptField.valueAt(i);
+            if (rawPt <= 0.f) {
+                continue;
+            }
+            const double eta = static_cast<double>(etaField.valueAt(i));
+
+            string category = "inclusive";
+            if (isMC && flavourField != nullptr) {
+                category = (std::abs(flavourField->valueAt(i) - 5.f) < 0.5f) ? "b" : "light";
+            } else if (!isMC && tagField != nullptr) {
+                float score = tagField->valueAt(i);
+                if (isAK8 && qcdField != nullptr) {
+                    const float qcd = qcdField->valueAt(i);
+                    const float denom = score + qcd;
+                    score = (denom > 0.f) ? (score / denom) : 0.f;
+                }
+                category = (score >= static_cast<float>(tagThreshold)) ? "btag" : "nobtag";
+            }
+
+            double correctedPt = static_cast<double>(rawPt) *
+                puppiCorr->evaluate({category, eta, static_cast<double>(rawPt)});
+
+            if (isMC && cfg_.variation != "nominal") {
+                if (cfg_.variation == "jes_up" || cfg_.variation == "jes_down") {
+                    const double unc = jesUnc_->evaluate({eta, correctedPt});
+                    correctedPt *= (cfg_.variation == "jes_up") ? (1.0 + unc) : max(0.0, 1.0 - unc);
+                } else if (cfg_.variation == "jer_up" || cfg_.variation == "jer_down") {
+                    const string syst = (cfg_.variation == "jer_up") ? "up" : "down";
+                    const double jer = jerRes_->evaluate({eta, correctedPt, cfg_.jerRhoFallback});
+                    const double jerSf = jerSf_->evaluate({eta, correctedPt, syst});
+                    // JERSmear's EventID input is correctionlib-typed as int (entropy
+                    // seed only, not a physics quantity) -- mask into a valid int32
+                    // range rather than passing the full ULong64_t as a double, which
+                    // correctionlib rejects ("Input EventID has wrong type").
+                    const int eventIdSeed = static_cast<int>(eventId & 0x7FFFFFFFULL);
+                    const double smear = jerSmear_->evaluate({correctedPt, eta, -1.0, cfg_.jerRhoFallback,
+                                                              eventIdSeed, jer, jerSf});
+                    correctedPt *= smear;
+                }
+            }
+
+            const double scale = correctedPt / static_cast<double>(rawPt);
+            ptField.floatValues[i] = static_cast<Float_t>(correctedPt);
+            if (massField != nullptr) {
+                massField->floatValues[i] = static_cast<Float_t>(massField->valueAt(i) * scale);
+            }
+            if (softdropField != nullptr) {
+                softdropField->floatValues[i] = static_cast<Float_t>(softdropField->valueAt(i) * scale);
+            }
+        }
+    }
+
+private:
+    static ArrayInputConfig* findField(InputCollectionConfig& collection, const string& name) {
+        for (auto& field : collection.fields) {
+            if (field.name == name) {
+                return &field;
+            }
+        }
+        return nullptr;
+    }
+
+    JetPtCorrectionConfig cfg_;
+    std::unique_ptr<correction::CorrectionSet> puppiSet_;
+    std::unique_ptr<correction::CorrectionSet> jesJerSet_;
+    std::unique_ptr<correction::CorrectionSet> jerSmearSet_;
+    correction::Correction::Ref ak4Mc_, ak4DataCorr_, ak8Mc_, ak8DataCorr_;
+    correction::Correction::Ref jesUnc_, jerRes_, jerSf_, jerSmear_;
+};
+
 Long64_t processInputFile(const string& inputFileName,
                           const AppConfig& appConfig,
                           const SelectionConfig& selectionConfig,
                           const SampleMeta& sampleMeta,
                           const vector<PileupBin>& pileupWeights,
                           const LumiMask* lumiMask,
+                          const JetPtCorrector& jetCorrector,
                           BranchConfig& branchConfig,
                           vector<OutputTreeState>& outputTrees) {
     unique_ptr<TFile> inputFile;
@@ -4158,6 +4350,25 @@ Long64_t processInputFile(const string& inputFileName,
         const TheoryWeightBufs* theoryBufsPtr = sampleMeta.hasTheoryWeights ? &theoryInBuf : nullptr;
         unordered_map<string, long double> baseVars = buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
 
+        if (jetCorrector.enabled()) {
+            const auto eventIt = baseVars.find("event");
+            const ULong64_t eventId = (eventIt != baseVars.end())
+                ? static_cast<ULong64_t>(eventIt->second) : static_cast<ULong64_t>(entry);
+            for (auto& inputConfig : branchConfig.collections) {
+                const bool isAK8 = (inputConfig.name == "ScoutingFatPFJetRecluster");
+                const bool isAK4 = (inputConfig.name == "ScoutingPFJetRecluster2");
+                if (!isAK8 && !isAK4) {
+                    continue;
+                }
+                const auto sizeIt = baseVars.find(inputConfig.sizeName);
+                if (sizeIt == baseVars.end()) {
+                    continue;
+                }
+                const int size = min(static_cast<int>(sizeIt->second), inputConfig.maxSize);
+                jetCorrector.correctCollection(inputConfig, isAK8, sampleMeta.isMC, size, eventId);
+            }
+        }
+
         EvalContext preContext;
         preContext.vars = &baseVars;
         preContext.rawScalars = &rawScalarByName;
@@ -4212,6 +4423,7 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
                                            const SampleMeta& sampleMeta,
                                            const vector<PileupBin>& pileupWeights,
                                            const LumiMask* lumiMask,
+                                           const JetPtCorrector& jetCorrector,
                                            const BranchConfig& branchConfig,
                                            atomic<size_t>& processedFiles,
                                            size_t totalFiles,
@@ -4277,6 +4489,7 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
                                                               sampleMeta,
                                                               pileupWeights,
                                                               lumiMask,
+                                                              jetCorrector,
                                                               threadConfigs[tid],
                                                               threadResults[tid].outputTrees);
                 batchRawEntries.fetch_add(fileEntries);
@@ -4590,6 +4803,18 @@ int main(int argc, char** argv) {
         }
     }
 
+    JetPtCorrector jetCorrector;
+    if (appConfig.jetPtCorrection.enabled) {
+        try {
+            jetCorrector.initialize(appConfig.jetPtCorrection);
+            cout << "Loaded jet pt correction from: " << appConfig.jetPtCorrection.correctionsFile
+                 << " (variation = " << appConfig.jetPtCorrection.variation << ")" << endl;
+        } catch (const exception& ex) {
+            cerr << "Jet pt correction error: " << ex.what() << endl;
+            return 1;
+        }
+    }
+
 #ifdef _OPENMP
     if (threadCount > 1) {
         ROOT::EnableThreadSafety();
@@ -4663,6 +4888,7 @@ int main(int argc, char** argv) {
                                                                                  sampleMeta,
                                                                                  pileupWeights,
                                                                                  lumiMask.get(),
+                                                                                 jetCorrector,
                                                                                  branchConfig,
                                                                                  processedFiles,
                                                                                  inputFiles.size(),

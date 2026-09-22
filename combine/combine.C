@@ -144,6 +144,29 @@ struct PileupFracs {
     std::map<int, PileupFrac> regions;  // bin_index -> PileupFrac
 };
 
+// JES/JER shape-systematic fracs — same shape as Pileup (inclusive ratio +
+// per-SR ratios keyed by bin_index), but the ratio is between two
+// INDEPENDENT converted-ntuple sets (jes_syst.py/jer_syst.py), not an
+// alternate weight column of the same tree.
+struct JesFrac {
+    double nom_sum = 0.0;
+    double jes_up   = 1.0;
+    double jes_down = 1.0;
+};
+struct JesFracs {
+    JesFrac inclusive;
+    std::map<int, JesFrac> regions;
+};
+struct JerFrac {
+    double nom_sum = 0.0;
+    double jer_up   = 1.0;
+    double jer_down = 1.0;
+};
+struct JerFracs {
+    JerFrac inclusive;
+    std::map<int, JerFrac> regions;
+};
+
 // Per-systematic pair of (up_ratio, down_ratio) for a given process in one channel.
 struct TheoryLnN {
     double up   = 1.0;
@@ -177,6 +200,11 @@ struct AppConfig {
     // Optional path to pileup_syst_yields.json (output of mode 9).
     // {sample_name -> {channel_name -> PileupFracs}}
     std::map<std::string, std::map<std::string, PileupFracs>> pileup_fracs;
+    // Optional paths to jes_syst_yields.json / jer_syst_yields.json
+    // (output of selections/jes_syst/jes_syst.py, selections/jer_syst/jer_syst.py).
+    // {sample_name -> {channel_name -> Je{s,r}Fracs}}
+    std::map<std::string, std::map<std::string, JesFracs>> jes_fracs;
+    std::map<std::string, std::map<std::string, JerFracs>> jer_fracs;
     // Nuisance names to include in datacards.  Empty set = all enabled (default).
     std::set<std::string> enabled_nuisances;
 };
@@ -282,6 +310,78 @@ AppConfig loadAppConfig() {
         } else {
             logMessage("WARNING: pileup_syst_json not found at " + pu_path +
                        "; run mode 9 before combine to include pileup nuisance");
+        }
+    }
+
+    // Optional JES syst yields (produced by selections/jes_syst/jes_syst.py).
+    if (payload.contains("jes_syst_json")) {
+        const std::string jes_path = resolveReferencedPath(
+            abs, payload.at("jes_syst_json").asString());
+        if (fs::exists(jes_path)) {
+            const JsonValue jj = simple_json::parseFile(jes_path);
+            for (const auto& sample_kv : jj.asObject()) {
+                const std::string& sname = sample_kv.first;
+                for (const auto& tree_kv : sample_kv.second.asObject()) {
+                    const std::string& tname = tree_kv.first;
+                    const JsonValue& v = tree_kv.second;
+                    JesFracs jf;
+                    jf.inclusive.nom_sum  = static_cast<double>(v.getNumberOr("nom_sum",  0.L));
+                    jf.inclusive.jes_up   = static_cast<double>(v.getNumberOr("jes_up",   1.L));
+                    jf.inclusive.jes_down = static_cast<double>(v.getNumberOr("jes_down", 1.L));
+                    if (v.contains("regions")) {
+                        for (const auto& reg_kv : v.at("regions").asObject()) {
+                            const int bid = std::stoi(reg_kv.first);
+                            const JsonValue& rv = reg_kv.second;
+                            JesFrac jf_r;
+                            jf_r.nom_sum  = static_cast<double>(rv.getNumberOr("nom_sum",  0.L));
+                            jf_r.jes_up   = static_cast<double>(rv.getNumberOr("jes_up",   1.L));
+                            jf_r.jes_down = static_cast<double>(rv.getNumberOr("jes_down", 1.L));
+                            jf.regions[bid] = jf_r;
+                        }
+                    }
+                    cfg.jes_fracs[sname][tname] = std::move(jf);
+                }
+            }
+            logMessage("Loaded JES syst yields: " + jes_path);
+        } else {
+            logMessage("WARNING: jes_syst_json not found at " + jes_path +
+                       "; run selections/jes_syst/jes_syst.py before combine to include the jes nuisance");
+        }
+    }
+
+    // Optional JER syst yields (produced by selections/jer_syst/jer_syst.py).
+    if (payload.contains("jer_syst_json")) {
+        const std::string jer_path = resolveReferencedPath(
+            abs, payload.at("jer_syst_json").asString());
+        if (fs::exists(jer_path)) {
+            const JsonValue jj = simple_json::parseFile(jer_path);
+            for (const auto& sample_kv : jj.asObject()) {
+                const std::string& sname = sample_kv.first;
+                for (const auto& tree_kv : sample_kv.second.asObject()) {
+                    const std::string& tname = tree_kv.first;
+                    const JsonValue& v = tree_kv.second;
+                    JerFracs jf;
+                    jf.inclusive.nom_sum  = static_cast<double>(v.getNumberOr("nom_sum",  0.L));
+                    jf.inclusive.jer_up   = static_cast<double>(v.getNumberOr("jer_up",   1.L));
+                    jf.inclusive.jer_down = static_cast<double>(v.getNumberOr("jer_down", 1.L));
+                    if (v.contains("regions")) {
+                        for (const auto& reg_kv : v.at("regions").asObject()) {
+                            const int bid = std::stoi(reg_kv.first);
+                            const JsonValue& rv = reg_kv.second;
+                            JerFrac jf_r;
+                            jf_r.nom_sum  = static_cast<double>(rv.getNumberOr("nom_sum",  0.L));
+                            jf_r.jer_up   = static_cast<double>(rv.getNumberOr("jer_up",   1.L));
+                            jf_r.jer_down = static_cast<double>(rv.getNumberOr("jer_down", 1.L));
+                            jf.regions[bid] = jf_r;
+                        }
+                    }
+                    cfg.jer_fracs[sname][tname] = std::move(jf);
+                }
+            }
+            logMessage("Loaded JER syst yields: " + jer_path);
+        } else {
+            logMessage("WARNING: jer_syst_json not found at " + jer_path +
+                       "; run selections/jer_syst/jer_syst.py before combine to include the jer nuisance");
         }
     }
 
@@ -1523,6 +1623,261 @@ void writePuLnN(
     ofs << "\n";
 }
 
+// Compute nom_sum-weighted JES up/down ratio across all samples in a class.
+// sr_id >= 0: use per-SR data if available, fall back to inclusive.
+TheoryLnN classJesLnN(
+    const std::string& class_name,
+    const std::string& channel_name,
+    int sr_id,
+    const ClassRegistry& reg,
+    const std::map<std::string, std::map<std::string, JesFracs>>& fracs)
+{
+    auto class_it = reg.class_members.find(class_name);
+    if (class_it == reg.class_members.end()) return {};
+
+    double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+    for (const auto& sname : class_it->second) {
+        auto s_it = fracs.find(sname);
+        if (s_it == fracs.end()) continue;
+        auto t_it = s_it->second.find(channel_name);
+        if (t_it == s_it->second.end()) continue;
+        const JesFracs& jf = t_it->second;
+
+        const JesFrac* f = nullptr;
+        if (sr_id >= 0) {
+            auto r_it = jf.regions.find(sr_id);
+            if (r_it != jf.regions.end() && r_it->second.nom_sum > 0.0)
+                f = &r_it->second;
+        }
+        if (f == nullptr && jf.inclusive.nom_sum > 0.0)
+            f = &jf.inclusive;
+        if (f == nullptr) continue;
+
+        nom_total += f->nom_sum;
+        up_total  += f->nom_sum * f->jes_up;
+        dn_total  += f->nom_sum * f->jes_down;
+    }
+    if (nom_total <= 0.0) return {};
+    TheoryLnN r;
+    r.up     = up_total  / nom_total;
+    r.down   = dn_total  / nom_total;
+    r.active = true;
+    return r;
+}
+
+// Write the JES lnN row. Same per-SR/fallback-to-inclusive structure as
+// writePuLnN, just sourced from cfg.jes_fracs (jes_syst.py output) instead
+// of cfg.pileup_fracs.
+void writeJesLnN(
+    std::ofstream& ofs,
+    const AppConfig& cfg,
+    const PerChannelCard& pc,
+    const ClassRegistry& reg,
+    const Scenario& sc)
+{
+    if (cfg.jes_fracs.empty()) return;
+    if (!nuisanceEnabled(cfg.enabled_nuisances, "jes")) return;
+
+    std::vector<std::vector<TheoryLnN>> proc_lnN(
+        pc.n_sr, std::vector<TheoryLnN>(pc.processes.size()));
+    bool any_active = false;
+
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        const int sr_id = pc.sr_ids[sr];
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const std::string& pname = pc.processes[p].name;
+            std::string cls = processNameToClass(pname, reg, sc);
+            if (cls.empty()) continue;
+
+            if (cls == "*combined*") {
+                double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+                for (const auto& sig_cls : reg.class_order) {
+                    if (!reg.signal_classes.count(sig_cls)) continue;
+                    TheoryLnN r = classJesLnN(
+                        sig_cls, pc.name, sr_id, reg, cfg.jes_fracs);
+                    if (!r.active) continue;
+                    double cls_nom = 0.0;
+                    auto cls_it = reg.class_members.find(sig_cls);
+                    if (cls_it != reg.class_members.end()) {
+                        for (const auto& sname : cls_it->second) {
+                            auto s_it = cfg.jes_fracs.find(sname);
+                            if (s_it == cfg.jes_fracs.end()) continue;
+                            auto t_it = s_it->second.find(pc.name);
+                            if (t_it == s_it->second.end()) continue;
+                            const JesFracs& jf = t_it->second;
+                            auto r_it = jf.regions.find(sr_id);
+                            if (r_it != jf.regions.end() && r_it->second.nom_sum > 0.0)
+                                cls_nom += r_it->second.nom_sum;
+                            else
+                                cls_nom += jf.inclusive.nom_sum;
+                        }
+                    }
+                    nom_total += cls_nom;
+                    up_total  += cls_nom * r.up;
+                    dn_total  += cls_nom * r.down;
+                }
+                if (nom_total > 0.0) {
+                    proc_lnN[sr][p].up     = up_total  / nom_total;
+                    proc_lnN[sr][p].down   = dn_total  / nom_total;
+                    proc_lnN[sr][p].active = true;
+                    any_active = true;
+                }
+            } else {
+                TheoryLnN r = classJesLnN(cls, pc.name, sr_id, reg, cfg.jes_fracs);
+                if (r.active) {
+                    proc_lnN[sr][p] = r;
+                    any_active = true;
+                }
+            }
+        }
+    }
+
+    if (!any_active) return;
+
+    ofs << "jes lnN";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const TheoryLnN& lnN = proc_lnN[sr][p];
+            if (!lnN.active) {
+                ofs << " -";
+            } else {
+                std::ostringstream val;
+                val << std::setprecision(6) << std::fixed;
+                val << lnN.up << "/" << lnN.down;
+                ofs << " " << val.str();
+            }
+        }
+    }
+    ofs << "\n";
+}
+
+// Compute nom_sum-weighted JER up/down ratio across all samples in a class.
+// Mirrors classJesLnN exactly, sourced from JerFracs instead of JesFracs.
+TheoryLnN classJerLnN(
+    const std::string& class_name,
+    const std::string& channel_name,
+    int sr_id,
+    const ClassRegistry& reg,
+    const std::map<std::string, std::map<std::string, JerFracs>>& fracs)
+{
+    auto class_it = reg.class_members.find(class_name);
+    if (class_it == reg.class_members.end()) return {};
+
+    double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+    for (const auto& sname : class_it->second) {
+        auto s_it = fracs.find(sname);
+        if (s_it == fracs.end()) continue;
+        auto t_it = s_it->second.find(channel_name);
+        if (t_it == s_it->second.end()) continue;
+        const JerFracs& jf = t_it->second;
+
+        const JerFrac* f = nullptr;
+        if (sr_id >= 0) {
+            auto r_it = jf.regions.find(sr_id);
+            if (r_it != jf.regions.end() && r_it->second.nom_sum > 0.0)
+                f = &r_it->second;
+        }
+        if (f == nullptr && jf.inclusive.nom_sum > 0.0)
+            f = &jf.inclusive;
+        if (f == nullptr) continue;
+
+        nom_total += f->nom_sum;
+        up_total  += f->nom_sum * f->jer_up;
+        dn_total  += f->nom_sum * f->jer_down;
+    }
+    if (nom_total <= 0.0) return {};
+    TheoryLnN r;
+    r.up     = up_total  / nom_total;
+    r.down   = dn_total  / nom_total;
+    r.active = true;
+    return r;
+}
+
+// Write the JER lnN row. Mirrors writeJesLnN exactly, sourced from
+// cfg.jer_fracs (jer_syst.py output).
+void writeJerLnN(
+    std::ofstream& ofs,
+    const AppConfig& cfg,
+    const PerChannelCard& pc,
+    const ClassRegistry& reg,
+    const Scenario& sc)
+{
+    if (cfg.jer_fracs.empty()) return;
+    if (!nuisanceEnabled(cfg.enabled_nuisances, "jer")) return;
+
+    std::vector<std::vector<TheoryLnN>> proc_lnN(
+        pc.n_sr, std::vector<TheoryLnN>(pc.processes.size()));
+    bool any_active = false;
+
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        const int sr_id = pc.sr_ids[sr];
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const std::string& pname = pc.processes[p].name;
+            std::string cls = processNameToClass(pname, reg, sc);
+            if (cls.empty()) continue;
+
+            if (cls == "*combined*") {
+                double nom_total = 0.0, up_total = 0.0, dn_total = 0.0;
+                for (const auto& sig_cls : reg.class_order) {
+                    if (!reg.signal_classes.count(sig_cls)) continue;
+                    TheoryLnN r = classJerLnN(
+                        sig_cls, pc.name, sr_id, reg, cfg.jer_fracs);
+                    if (!r.active) continue;
+                    double cls_nom = 0.0;
+                    auto cls_it = reg.class_members.find(sig_cls);
+                    if (cls_it != reg.class_members.end()) {
+                        for (const auto& sname : cls_it->second) {
+                            auto s_it = cfg.jer_fracs.find(sname);
+                            if (s_it == cfg.jer_fracs.end()) continue;
+                            auto t_it = s_it->second.find(pc.name);
+                            if (t_it == s_it->second.end()) continue;
+                            const JerFracs& jf = t_it->second;
+                            auto r_it = jf.regions.find(sr_id);
+                            if (r_it != jf.regions.end() && r_it->second.nom_sum > 0.0)
+                                cls_nom += r_it->second.nom_sum;
+                            else
+                                cls_nom += jf.inclusive.nom_sum;
+                        }
+                    }
+                    nom_total += cls_nom;
+                    up_total  += cls_nom * r.up;
+                    dn_total  += cls_nom * r.down;
+                }
+                if (nom_total > 0.0) {
+                    proc_lnN[sr][p].up     = up_total  / nom_total;
+                    proc_lnN[sr][p].down   = dn_total  / nom_total;
+                    proc_lnN[sr][p].active = true;
+                    any_active = true;
+                }
+            } else {
+                TheoryLnN r = classJerLnN(cls, pc.name, sr_id, reg, cfg.jer_fracs);
+                if (r.active) {
+                    proc_lnN[sr][p] = r;
+                    any_active = true;
+                }
+            }
+        }
+    }
+
+    if (!any_active) return;
+
+    ofs << "jer lnN";
+    for (int sr = 0; sr < pc.n_sr; ++sr) {
+        for (size_t p = 0; p < pc.processes.size(); ++p) {
+            const TheoryLnN& lnN = proc_lnN[sr][p];
+            if (!lnN.active) {
+                ofs << " -";
+            } else {
+                std::ostringstream val;
+                val << std::setprecision(6) << std::fixed;
+                val << lnN.up << "/" << lnN.down;
+                ofs << " " << val.str();
+            }
+        }
+    }
+    ofs << "\n";
+}
+
 void writeChannelDatacard(const AppConfig& cfg, const PerChannelCard& pc,
                           const std::string& shape_file,
                           const ClassRegistry& reg, const Scenario& sc) {
@@ -1610,6 +1965,8 @@ void writeChannelDatacard(const AppConfig& cfg, const PerChannelCard& pc,
 
     writeTheoryLnN(ofs, cfg, pc, reg, sc);
     writePuLnN(ofs, cfg, pc, reg, sc);
+    writeJesLnN(ofs, cfg, pc, reg, sc);
+    writeJerLnN(ofs, cfg, pc, reg, sc);
 
     // Luminosity lnN — correlated across all channels (same row name "lumi").
     // Applied to every MC process; bkg_qcd is data-driven (ABCD) so excluded.
