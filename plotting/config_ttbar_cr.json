@@ -8,7 +8,7 @@
   "output_root": "./ttbar_cr/{tree_name}",
   "output_root_nosel": "./ttbar_cr_nosel/{tree_name}",
   "data_samples": [
-    "data_2024"
+    "2024G_UParT_v6"
   ],
   "_note_class_groups": "CR stack: Top=ttbar, VT=single-top tW, VV=diboson, Wlnu=W->lnu, DY=Drell-Yan, QCD=all HT bins merged. 6 classes == 6 colors in the CMS palette, so every process gets a distinct color.",
   "class_groups": {

@@ -1315,7 +1315,16 @@ def write_root_output(
     pred_total_cov: np.ndarray,
     true_total_vals: np.ndarray,
     true_total_vars: np.ndarray,
+    mc_vars: Dict[str, np.ndarray],
+    abcd_closure: Dict[str, float],
 ) -> None:
+    """Write the combine inputs. Besides the Poisson-convention stat_error /
+    scale_error / covariance_total, every SR of every bundle has mc_stat_error
+    = sqrt(sum w^2) of the test-split MC (for the ABCD prediction: the per-SR
+    part from the A-region fractions), qcd_predict / total_predict also
+    mc_scale_error (the SR-correlated part from the B/C/D statistics), and
+    metadata/abcd_closure holds the ABCD scale factors. mc_vars maps each
+    bundle prefix to its MC variances (and "<prefix>:scale" to the scale part)."""
     sr_ids = np.asarray(signal_region_ids, dtype=np.int32)
     if sr_ids.ndim != 1 or len(sr_ids) == 0:
         raise RuntimeError("Signal region ids must be a non-empty one-dimensional list")
@@ -1330,6 +1339,10 @@ def write_root_output(
         scale_vars: np.ndarray | None = None,
         covariance_total: np.ndarray | None = None,
     ) -> None:
+        mc_stat_err = np.sqrt(np.maximum(np.asarray(mc_vars[prefix], dtype=float), 0.0))
+        mc_scale_vars = mc_vars.get(f"{prefix}:scale")
+        mc_scale_err = (None if mc_scale_vars is None
+                        else np.sqrt(np.maximum(np.asarray(mc_scale_vars, dtype=float), 0.0)))
         vals = np.asarray(values, dtype=float)
         stat_vars = np.asarray(stat_vars, dtype=float)
         if scale_vars is None:
@@ -1348,6 +1361,8 @@ def write_root_output(
             raise RuntimeError(f"Uncertainty size mismatch for ROOT bundle '{prefix}'")
         if covariance_total.shape != (n_sr, n_sr):
             raise RuntimeError(f"Covariance size mismatch for ROOT bundle '{prefix}'")
+        if mc_stat_err.shape != vals.shape or (mc_scale_err is not None and mc_scale_err.shape != vals.shape):
+            raise RuntimeError(f"MC-statistics size mismatch for ROOT bundle '{prefix}'")
 
         one_bin_edges = np.array([0.0, 1.0], dtype=float)
         stat_err = np.sqrt(np.maximum(stat_vars, 0.0))
@@ -1363,10 +1378,22 @@ def write_root_output(
                 np.array([scale_err[idx]], dtype=float),
                 one_bin_edges,
             )
+            root_file[f"{sr_prefix}/mc_stat_error"] = (
+                np.array([mc_stat_err[idx]], dtype=float),
+                one_bin_edges,
+            )
+            if mc_scale_err is not None:
+                root_file[f"{sr_prefix}/mc_scale_error"] = (
+                    np.array([mc_scale_err[idx]], dtype=float),
+                    one_bin_edges,
+                )
         root_file[f"{prefix}/covariance_total"] = (covariance_total, edges, edges)
 
     with uproot.recreate(root_path) as root_file:
         root_file["metadata/signal_regions"] = {"bin_index": sr_ids}
+        root_file["metadata/abcd_closure"] = {
+            key: np.array([float(value)], dtype=float) for key, value in abcd_closure.items()
+        }
 
         for sample_name in sorted(sample_yields):
             _write_bundle(
@@ -1884,6 +1911,36 @@ def main() -> None:
         abcd_group_vars,
     )
 
+    # MC statistics of the test split (sum w^2) for combine's autoMCStats, and the
+    # ABCD scale factors for its non-closure and scale-statistics nuisances.
+    mc_vars = {f"samples/{sample}": values for sample, values in sample_vars.items()}
+    mc_vars.update({f"groups/{_slugify(group)}": values for group, values in group_vars.items()})
+    mc_vars.update({
+        "qcd_predict": pred_qcd_stat_vars,
+        "qcd_predict:scale": pred_qcd_scale_vars,
+        "qcd_true": true_qcd_vars,
+        "total_predict": pred_total_stat_vars,
+        "total_predict:scale": pred_total_scale_vars,
+        "total_true": true_total_vars,
+    })
+    abcd_closure = {
+        "raw_scale": raw_qcd_scale,
+        "raw_scale_error": raw_qcd_scale_sigma,
+        "multiplier": QCD_PREDICT_SCALE_MULTIPLIER,
+        "final_scale": qcd_scale,
+        "final_scale_error": qcd_scale_sigma,
+        "pred_union": pred_qcd_union,
+        "pred_union_error": pred_qcd_union_sigma,
+        "qcd_a_union": qcd_a_total,
+        "qcd_a_union_error": math.sqrt(max(qcd_a_var, 0.0)),
+        "qcd_b": qcd_b_total,
+        "qcd_b_error": math.sqrt(max(qcd_b_var, 0.0)),
+        "qcd_c": qcd_c_total,
+        "qcd_c_error": math.sqrt(max(qcd_c_var, 0.0)),
+        "qcd_d": qcd_d_total,
+        "qcd_d_error": math.sqrt(max(qcd_d_var, 0.0)),
+    }
+
     root_path = os.path.join(OUTPUT_DIR, ROOT_FILE_NAME)
     log_message("Writing summary ROOT file")
     write_root_output(
@@ -1906,6 +1963,8 @@ def main() -> None:
         pred_total_root_cov,
         true_total_vals,
         true_total_root_vars,
+        mc_vars,
+        abcd_closure,
     )
 
     log_message("Plotting ABCD summary")

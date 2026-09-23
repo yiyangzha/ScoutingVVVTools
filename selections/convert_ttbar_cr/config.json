@@ -2,7 +2,7 @@
   "tree_name": "Events",
   "run_sample": "ttbar_semilep",
   "submit_samples": [
-    "data_2024",
+    "2024G_UParT_v6",
     "ttbar_semilep",
     "ttbar_had",
     "ttbar_2l2nu",
@@ -45,9 +45,25 @@
   "max_threads": 18,
   "max_output_file_size_gb": 0,
   "resume_successful_batches": true,
-  "lumi_mask": "../../Cert_Collisions2024_378981_386951_Golden.json",
+  "lumi_mask": "../convert/Cert_Collisions2024_378981_386951_Golden.json",
   "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
   "output_root": "../../dataset_cr",
   "output_pattern": "{output_root}/{sample_group}/{sample}.root",
-  "sample_config": "../../src/sample.json"
+  "sample_config": "../../src/sample.json",
+  "jet_pt_correction": {
+    "enabled": true,
+    "nominal_correction": "hlt_jec",
+    "jec_ak4_file": "../convert/jec/Run3Winter24/jetHLT_jerc.json.gz",
+    "jec_ak8_file": "../convert/jec/Run3Winter24/fatJetHLT_jerc.json.gz",
+    "jec_ak4_name": "Winter24HLT_V1_MC_L1L2L3Res_AK4PFHLT",
+    "jec_ak8_name": "Winter24HLT_V1_MC_L1L2L3Res_AK8PFHLT",
+    "jec_ak4_l1_name": "Winter24HLT_V1_MC_L1FastJet_AK4PFHLT",
+    "jec_ak8_l1_name": "Winter24HLT_V1_MC_L1FastJet_AK8PFHLT",
+    "jes_jer_file": "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/JME/2024_Summer24/jet_jerc.json.gz",
+    "jer_smear_file": "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/JME/jer_smear.json.gz",
+    "jer_resolution_name": "Summer23BPixPrompt23_RunD_JRV1_MC_PtResolution_AK4PFPuppi",
+    "jer_scale_factor_name": "Summer23BPixPrompt23_RunD_JRV1_MC_ScaleFactor_AK4PFPuppi",
+    "apply_jms_jmr": false,
+    "variations": []
+  }
 }

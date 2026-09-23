@@ -45,9 +45,17 @@ MODES = {
             script="pileup_syst.py", config_env="PILEUP_SYST_CONFIG_PATH"),
     10: dict(label="class_shapes", subdir="plotting",
              script="class_shapes.py", config_env="PLOT_CONFIG_PATH"),
+    11: dict(label="jes_syst", subdir="selections/jes_syst",
+             script="jes_syst.py", config_env="JES_SYST_CONFIG_PATH"),
+    12: dict(label="jer_syst", subdir="selections/jer_syst",
+             script="jer_syst.py", config_env="JER_SYST_CONFIG_PATH"),
+    13: dict(label="jms_syst", subdir="selections/jms_syst",
+             script="jms_syst.py", config_env="JMS_SYST_CONFIG_PATH"),
+    14: dict(label="jmr_syst", subdir="selections/jmr_syst",
+             script="jmr_syst.py", config_env="JMR_SYST_CONFIG_PATH"),
 }
 
-PYTHON_MODES = frozenset({2, 3, 4, 5, 8, 9, 10})
+PYTHON_MODES = frozenset({2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14})
 SAMPLE_MODES = frozenset({0, 1, 6})
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -87,6 +95,10 @@ Modes:
   8  selections/theory_weights/theory_syst.py  (no samples)
   9  selections/pileup_syst/pileup_syst.py  (no samples)
   10 plotting/class_shapes.py            (no samples)
+  11 selections/jes_syst/jes_syst.py      (no samples)
+  12 selections/jer_syst/jer_syst.py      (no samples)
+  13 selections/jms_syst/jms_syst.py      (no samples)
+  14 selections/jmr_syst/jmr_syst.py      (no samples)
 
 Sample selection for modes 0, 1, 6:
   1. CLI sample names (highest priority)
@@ -95,7 +107,7 @@ Sample selection for modes 0, 1, 6:
 """,
     )
     p.add_argument("mode", type=int, choices=MODES, metavar="MODE",
-                   help="Execution mode 0-10")
+                   help="Execution mode 0-14")
     p.add_argument("rest", nargs="*", metavar="ARG",
                    help="Optional: [config.json] [sample1 sample2 ...]")
     p.add_argument("--slurm", action="store_true",
@@ -285,6 +297,27 @@ def detect_openmp():
 # Compilation
 # ---------------------------------------------------------------------------
 
+def detect_correctionlib():
+    """Return (cflags, ldflags, libdir) for correctionlib's C++ API, or
+    ('', '', '') if the package isn't importable. Located dynamically (rather
+    than a hardcoded cvmfs path) via `python3 -c "import correctionlib"` so
+    this keeps working across correctionlib version bumps. The library directory
+    is also embedded as an rpath, so the binary finds libcorrectionlib.so
+    without LD_LIBRARY_PATH (local runs, the mode-0 batch-count query)."""
+    try:
+        pkg_dir = subprocess.check_output(
+            ["python3", "-c", "import correctionlib, os; print(os.path.dirname(correctionlib.__file__))"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "", "", ""
+    incdir = os.path.join(pkg_dir, "include")
+    libdir = os.path.join(pkg_dir, "lib")
+    if not os.path.isfile(os.path.join(incdir, "correction.h")):
+        return "", "", ""
+    return f"-I{incdir}", f"-L{libdir} -Wl,-rpath,{libdir} -lcorrectionlib", libdir
+
+
 def compile_binary(work_dir, source, bin_path, omp_cflags, omp_ldflags):
     for tool in ("c++", "root-config"):
         if not shutil.which(tool):
@@ -293,13 +326,16 @@ def compile_binary(work_dir, source, bin_path, omp_cflags, omp_ldflags):
     root_cflags  = subprocess.check_output(["root-config", "--cflags"],  text=True).strip()
     root_libs    = subprocess.check_output(["root-config", "--libs"],    text=True).strip()
     root_libdir  = subprocess.check_output(["root-config", "--libdir"],  text=True).strip()
+    corrlib_cflags, corrlib_ldflags, corrlib_libdir = detect_correctionlib()
 
     cmd = (
         ["c++", "-O3", "-DNDEBUG", "-std=c++17"]
         + root_cflags.split()
+        + (corrlib_cflags.split() if corrlib_cflags else [])
         + (omp_cflags.split() if omp_cflags else [])
         + [f"./{source}", "-o", str(bin_path)]
         + root_libs.split()
+        + (corrlib_ldflags.split() if corrlib_ldflags else [])
         + (omp_ldflags.split() if omp_ldflags else [])
     )
     log(f"compile: {' '.join(cmd)}")
@@ -307,7 +343,8 @@ def compile_binary(work_dir, source, bin_path, omp_cflags, omp_ldflags):
     if r.returncode != 0:
         sys.exit(f"compilation failed (status {r.returncode})")
     log("compile finished")
-    return root_libdir
+    libdir = f"{root_libdir}:{corrlib_libdir}" if corrlib_libdir else root_libdir
+    return libdir
 
 
 # ---------------------------------------------------------------------------

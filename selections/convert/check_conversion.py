@@ -85,6 +85,19 @@ def expected_trees(branch_cfg):
     return [t["name"] for t in branch_cfg.get("output", {}).get("trees", [])]
 
 
+def expected_variation_trees(cfg):
+    """{<tree>__<variation>: branches} that convert_branch writes for MC samples:
+    one tree per jet_pt_correction variation and nominal tree, keeping the
+    variation_branches list of that tree."""
+    jpc = cfg.get("jet_pt_correction")
+    if not jpc or not jpc.get("enabled", True) \
+            or jpc.get("debug_nominal_configuration", "nominal") != "nominal":
+        return {}
+    return {f"{tree}__{var}": list(branches)
+            for tree, branches in jpc.get("variation_branches", {}).items()
+            for var in jpc.get("variations", [])}
+
+
 def expected_branches(branch_cfg, tree_name, is_mc):
     """Branch names convert_branch writes for one tree (slot-expanded, onlyMC-aware)."""
     out, seen = [], set()
@@ -107,8 +120,9 @@ def expected_branches(branch_cfg, tree_name, is_mc):
 
 # ------------------------------------------------------------------- ROOT inspection
 def root_health(path, trees):
-    """Return (ok, info) for a merged/temp ROOT file. info has per-tree entries + branch set."""
-    info = {"entries": {}, "branches": set(), "error": None}
+    """Return (ok, info) for a merged/temp ROOT file. info has per-tree entries, the
+    branch set of each tree, and their union."""
+    info = {"entries": {}, "branches": set(), "tree_branches": {}, "error": None}
     try:
         with uproot.open(path) as uf:
             keys = set(k.split(";")[0] for k in uf.keys())
@@ -118,7 +132,8 @@ def root_health(path, trees):
                     return False, info
                 t = uf[tn]
                 info["entries"][tn] = int(t.num_entries)
-                info["branches"].update(t.keys())
+                info["tree_branches"][tn] = set(t.keys())
+                info["branches"].update(info["tree_branches"][tn])
         return True, info
     except Exception as exc:  # zombie / unreadable / no keys
         info["error"] = f"{type(exc).__name__}: {str(exc)[:80]}"
@@ -219,10 +234,12 @@ def root_libdir():
 
 
 # ----------------------------------------------------------------------- per sample
-def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, trees, batch_count_fallback,
-                   files_per_job=None, allow_partial=True):
+def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, nominal_trees, variation_trees,
+                   batch_count_fallback, files_per_job=None, allow_partial=True):
     info = sample_cfg_map[name]
     is_mc = bool(info.get("is_MC", True))
+    # MC outputs also hold the jet-variation trees (data: nominal trees only).
+    trees = list(nominal_trees) + (list(variation_trees) if is_mc else [])
     group = sample_group(info)
     out_dir = os.path.join(cfg["_output_root_abs"], group)
     tmp_dir = os.path.join(cfg["_output_root_abs"], f"{group}_tmp")
@@ -252,7 +269,7 @@ def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, trees, batch_count_fal
     split = sorted(glob.glob(os.path.join(out_dir, f"{name}_[0-9]*.root")))
     merged_paths = ([base] if os.path.exists(base) else []) + split
     r["merged_files"] = merged_paths
-    exp_branches = {tn: set(expected_branches(branch_cfg, tn, is_mc)) for tn in trees}
+    exp_branches = {tn: set(expected_branches(branch_cfg, tn, is_mc)) for tn in nominal_trees}
     merged_ok = bool(merged_paths)
     schema_ok = True
     if not merged_paths:
@@ -266,6 +283,9 @@ def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, trees, batch_count_fal
         for tn, ent in hinfo["entries"].items():
             r["merged_entries"][tn] = r["merged_entries"].get(tn, 0) + ent
         miss = sorted(set().union(*exp_branches.values()) - hinfo["branches"])
+        if is_mc:
+            for tn, branches in variation_trees.items():
+                miss += [f"{tn}:{b}" for b in branches if b not in hinfo["tree_branches"][tn]]
         if miss:
             schema_ok = False
             r["missing_branches"] = miss[:12]
@@ -482,6 +502,7 @@ def main():
     cfg, branch_cfg, sample_cfg = load_configs()
     sample_map = {s["name"]: s for s in sample_cfg["sample"]}
     trees = expected_trees(branch_cfg)
+    variation_trees = expected_variation_trees(cfg)
 
     samples = [s["name"] for s in sample_cfg["sample"]]
     if args.data_only:
@@ -498,7 +519,8 @@ def main():
         print("[WARN] max_output_file_size_gb=0 in config.json: large-sample merges may crash "
               "(single huge file). Recommend a split size (e.g. 5) before recovering big samples.\n")
 
-    results = [inspect_sample(s, cfg, branch_cfg, sample_map, trees, args.batch_count_fallback,
+    results = [inspect_sample(s, cfg, branch_cfg, sample_map, trees, variation_trees,
+                              args.batch_count_fallback,
                               files_per_job=args.files_per_job,
                               allow_partial=not args.no_partial)
                for s in samples]
@@ -509,7 +531,8 @@ def main():
     counts = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-        ent = ", ".join(f"{tn}={r['merged_entries'][tn]}" for tn in r["merged_entries"]) or "-"
+        # Nominal trees only; the variation trees' entries are in the --json report.
+        ent = ", ".join(f"{tn}={n}" for tn, n in r["merged_entries"].items() if tn in trees) or "-"
         nb = "-" if r["n_batches"] is None else f"{r['valid_temps']}/{r['n_batches']}"
         notes = "; ".join(r["detail"])
         if r["missing_branches"]:

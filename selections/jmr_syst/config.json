@@ -17,7 +17,9 @@
     "boosted2_leptonic_1lep": "../signal_region/output/boosted2_leptonic_1lep_hist/signal_region.csv",
     "boosted2_leptonic_2lep": "../signal_region/output/boosted2_leptonic_2lep_hist/signal_region.csv"
   },
+  "weight_branch": "weight_pu",
   "min_region_events": 10,
   "output_dir": "./output",
-  "chunk_size": "200 MB"
+  "chunk_size": "200 MB",
+  "submit_samples": []
 }

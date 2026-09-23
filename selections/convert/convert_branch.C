@@ -3,8 +3,10 @@
 #include <atomic>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -33,6 +35,7 @@
 #include <TTree.h>
 
 #include "../../src/simple_json.h"
+#include "correction.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -72,6 +75,31 @@ const char* kGoldenJsonEnvVar = "CONVERT_GOLDEN_JSON";
 const char* kDefaultSampleConfigPath = "../../src/sample.json";
 const int kRemoteInputOpenRetries = 5;
 const unsigned int kRemoteInputRetrySleepSeconds = 5;
+
+// Jet/MET corrections (see JetPtCorrector).
+const char* kAk4JetCollection = "ScoutingPFJetRecluster2";
+const char* kAk8JetCollection = "ScoutingFatPFJetRecluster";
+const char* kMetPtScalar = "ScoutingMET_pt";
+const char* kMetPhiScalar = "ScoutingMET_phi";
+const double kTwoPi = 6.28318530717958647692;
+// Type-1 MET propagates AK4 jets whose muon-subtracted, fully corrected pT is
+// above this threshold and whose EM energy fraction is below the maximum.
+const double kType1JetPtThreshold = 15.0;
+const double kType1MaxEmFraction = 0.9;
+// The JER PtResolution Rho axis ends at 52.05 and returns 1.0 (100% resolution)
+// outside it, so rho is clamped below that edge for the resolution lookup.
+const double kJerRhoUpperEdge = 52.05;
+// Event rho recovered from the AK4 production JEC (JetPtCorrector::recoverRho).
+const double kRhoRecoveryMax = 70.0;              // L1FastJet clamps rho to [0, 70]
+const double kRhoRecoveryTolerance = 0.5;         // GeV, allowed spread between jets
+const double kRhoRecoveryMinFactor = 1e-3;        // jets at the L1FastJet floor carry no rho
+const double kRhoRecoveryMinSensitivity = 1e-4;   // min relative JEC change over the rho range
+const double kRhoSolverTolerance = 1e-10;         // |JEC - stored factor| at the rho solution
+const int kRhoSolverMaxIterations = 60;
+const double kJecBinEdgeProbe = 1e-3;             // eta/phi shift that reaches a neighbouring JEC bin
+const double kJecBinProbeRho = 30.0;              // GeV, rho at which neighbouring bins are compared
+const vector<string> kJetVariationNames = {"jes_up", "jes_down", "jer_up", "jer_down",
+                                           "jms_up", "jms_down", "jmr_up", "jmr_down"};
 
 enum class DataType {
     Float,
@@ -346,6 +374,14 @@ struct TreeConfig {
     string selection;
     vector<OutputScalarConfig> regularScalars;
     vector<OutputScalarConfig> extremaScalars;
+    // Jet-correction variation filled into this tree: empty for the nominal
+    // trees, otherwise the systematic of the <tree>__<variation> tree.
+    string variation;
+    // Output branches booked for a variation tree; empty books every branch.
+    unordered_set<string> keptBranches;
+    // Scalar outputs a variation tree evaluates: the ones its kept branches
+    // read, directly or through other scalars (nominal trees evaluate all).
+    unordered_set<string> neededScalars;
 };
 
 struct BranchConfig {
@@ -436,6 +472,53 @@ struct SampleRuleConfig {
     double lumi = -1.;
 };
 
+// AK4/AK8 jet energy corrections, Type-1 MET, and the jet systematic
+// variations (correctionlib), configured by the convert config's
+// jet_pt_correction block; see JetPtCorrector for the correction chain.
+struct JetPtCorrectionConfig {
+    bool enabled = false;
+    // "hlt_jec": official Winter24HLT MC-truth JEC on the raw jets (default).
+    // "scouting_to_offline": legacy ad-hoc scouting->offline response SF from
+    // corrections_file on the stored jets.
+    string nominalCorrection = "hlt_jec";
+    string jecAk4File;           // Winter24HLT jetHLT_jerc.json.gz (AK4PFHLT)
+    string jecAk8File;           // Winter24HLT fatJetHLT_jerc.json.gz (AK8PFHLT)
+    string jecAk4Name = "Winter24HLT_V1_MC_L1L2L3Res_AK4PFHLT";
+    string jecAk8Name = "Winter24HLT_V1_MC_L1L2L3Res_AK8PFHLT";
+    string jecAk4L1Name = "Winter24HLT_V1_MC_L1FastJet_AK4PFHLT";
+    string jecAk8L1Name = "Winter24HLT_V1_MC_L1FastJet_AK8PFHLT";
+    string correctionsFile;      // scoutingPUPPI_corrections.json.gz (scouting_to_offline)
+    double ak4TagThreshold = 0.5;
+    double ak8TagThreshold = 0.5;
+    string jesJerFile;           // JME-POG jet_jerc.json.gz (JER resolution + SF)
+    string jerSmearFile;         // JME-POG jer_smear.json.gz (JERSmear tool)
+    string jerResolutionName = "Summer23BPixPrompt23_RunD_JRV1_MC_PtResolution_AK4PFPuppi";
+    string jerScaleFactorName = "Summer23BPixPrompt23_RunD_JRV1_MC_ScaleFactor_AK4PFPuppi";
+    // Flat per-jet JES uncertainty (fraction) of jes_up/jes_down.
+    double jesShift = 0.10;
+    // JMS/JMR of the MC AK8 soft-drop mass from selections/jms_jmr/.
+    bool applyJmsJmr = false;
+    string jmsJmrResultsFile;
+    // Systematic variations written as <tree>__<variation> trees (MC only),
+    // each keeping the per-tree branch list of variationBranches.
+    vector<string> variations;
+    unordered_map<string, vector<string>> variationBranches;
+    // Validation only: fill the nominal trees with this configuration.
+    string debugNominalConfiguration = "nominal";
+};
+
+// Parameters of one correction configuration (the nominal corrections or one
+// systematic variation of them); every configuration is evaluated per event.
+struct CorrectionConfiguration {
+    // Variation written by this configuration: empty for the nominal trees,
+    // otherwise the <tree>__<variation> suffix.
+    string variation;
+    double jesFactor = 1.;
+    int jerSfIndex = 0;          // JER scale factor: 0 nom, 1 up, 2 down
+    double jms = 1.;
+    double jmr = 1.;
+};
+
 struct AppConfig {
     string treeName = "Events";
     string configPath;
@@ -451,6 +534,7 @@ struct AppConfig {
     bool updateRawEntries = true;
     vector<SampleRuleConfig> sampleRules;
     string puWeightPathPattern;
+    JetPtCorrectionConfig jetPtCorrection;
 };
 
 struct BatchRequest {
@@ -1105,6 +1189,50 @@ SortRule parseSortRule(const string& text) {
     return rule;
 }
 
+void validateJetPtCorrectionConfig(const JetPtCorrectionConfig& jpc) {
+    const bool hltJec = (jpc.nominalCorrection == "hlt_jec");
+    if (!hltJec && jpc.nominalCorrection != "scouting_to_offline") {
+        throw runtime_error("jet_pt_correction.nominal_correction must be 'hlt_jec' or "
+                            "'scouting_to_offline', got '" + jpc.nominalCorrection + "'");
+    }
+    // The AK4 production JEC provides the event rho in both modes.
+    if (jpc.jecAk4File.empty()) {
+        throw runtime_error("jet_pt_correction.jec_ak4_file is required");
+    }
+    if (hltJec && jpc.jecAk8File.empty()) {
+        throw runtime_error("jet_pt_correction.jec_ak8_file is required for nominal_correction = hlt_jec");
+    }
+    if (!hltJec && jpc.correctionsFile.empty()) {
+        throw runtime_error("jet_pt_correction.corrections_file is required for "
+                            "nominal_correction = scouting_to_offline");
+    }
+    if (jpc.jesJerFile.empty() || jpc.jerSmearFile.empty()) {
+        throw runtime_error("jet_pt_correction.jes_jer_file and jer_smear_file are required "
+                            "(JER smearing of the MC jets)");
+    }
+    if (jpc.applyJmsJmr && jpc.jmsJmrResultsFile.empty()) {
+        throw runtime_error("jet_pt_correction.apply_jms_jmr requires jms_jmr_results_file");
+    }
+    const auto checkVariation = [&](const string& name, const string& key) {
+        if (find(kJetVariationNames.begin(), kJetVariationNames.end(), name) == kJetVariationNames.end()) {
+            throw runtime_error(key + " has unknown variation '" + name + "'");
+        }
+        if (!jpc.applyJmsJmr && (startsWith(name, "jms_") || startsWith(name, "jmr_"))) {
+            throw runtime_error(key + " variation '" + name + "' requires apply_jms_jmr = true");
+        }
+    };
+    unordered_set<string> seen;
+    for (const auto& variation : jpc.variations) {
+        checkVariation(variation, "jet_pt_correction.variations");
+        if (!seen.insert(variation).second) {
+            throw runtime_error("jet_pt_correction.variations lists '" + variation + "' twice");
+        }
+    }
+    if (jpc.debugNominalConfiguration != "nominal") {
+        checkVariation(jpc.debugNominalConfiguration, "jet_pt_correction.debug_nominal_configuration");
+    }
+}
+
 AppConfig loadAppConfig() {
     const string appConfigPath = resolveConfigPath(kAppConfigPath, kAppConfigEnvVar);
     const JsonValue payload = simple_json::parseFile(appConfigPath);
@@ -1142,6 +1270,56 @@ AppConfig loadAppConfig() {
 
     config.puWeightPathPattern = resolveConfiguredPathPattern(
         config.configPath, payload.getStringOr("pu_weight_path", ""));
+
+    if (payload.contains("jet_pt_correction")) {
+        const JsonValue& jc = payload.at("jet_pt_correction");
+        // Keys of the removed one-variation-per-conversion scheme.
+        for (const char* removedKey : {"variation", "jes_unc_name", "jer_rho_fallback"}) {
+            if (jc.contains(removedKey)) {
+                throw runtime_error(string("jet_pt_correction.") + removedKey +
+                                    " was removed: one conversion now writes every variation "
+                                    "(jet_pt_correction.variations, see README)");
+            }
+        }
+        JetPtCorrectionConfig& jpc = config.jetPtCorrection;
+        jpc.enabled = jc.getBoolOr("enabled", true);
+        jpc.nominalCorrection = jc.getStringOr("nominal_correction", jpc.nominalCorrection);
+        jpc.jecAk4File = resolveReferencedPath(config.configPath,
+                                                jc.getStringOr("jec_ak4_file", ""));
+        jpc.jecAk8File = resolveReferencedPath(config.configPath,
+                                                jc.getStringOr("jec_ak8_file", ""));
+        jpc.jecAk4Name = jc.getStringOr("jec_ak4_name", jpc.jecAk4Name);
+        jpc.jecAk8Name = jc.getStringOr("jec_ak8_name", jpc.jecAk8Name);
+        jpc.jecAk4L1Name = jc.getStringOr("jec_ak4_l1_name", jpc.jecAk4L1Name);
+        jpc.jecAk8L1Name = jc.getStringOr("jec_ak8_l1_name", jpc.jecAk8L1Name);
+        jpc.correctionsFile = resolveReferencedPath(config.configPath,
+                                                     jc.getStringOr("corrections_file", ""));
+        jpc.ak4TagThreshold = static_cast<double>(jc.getNumberOr("ak4_tag_threshold", jpc.ak4TagThreshold));
+        jpc.ak8TagThreshold = static_cast<double>(jc.getNumberOr("ak8_tag_threshold", jpc.ak8TagThreshold));
+        jpc.jesJerFile = resolveReferencedPath(config.configPath,
+                                                jc.getStringOr("jes_jer_file", ""));
+        jpc.jerSmearFile = resolveReferencedPath(config.configPath,
+                                                  jc.getStringOr("jer_smear_file", ""));
+        jpc.jerResolutionName = jc.getStringOr("jer_resolution_name", jpc.jerResolutionName);
+        jpc.jerScaleFactorName = jc.getStringOr("jer_scale_factor_name", jpc.jerScaleFactorName);
+        jpc.jesShift = static_cast<double>(jc.getNumberOr("jes_shift", jpc.jesShift));
+        jpc.applyJmsJmr = jc.getBoolOr("apply_jms_jmr", jpc.applyJmsJmr);
+        jpc.jmsJmrResultsFile = resolveReferencedPath(config.configPath,
+                                                       jc.getStringOr("jms_jmr_results_file", ""));
+        if (jc.contains("variations")) {
+            jpc.variations = jc.at("variations").toStringArray();
+        }
+        if (jc.contains("variation_branches")) {
+            for (const auto& item : jc.at("variation_branches").asObject()) {
+                jpc.variationBranches[item.first] = item.second.toStringArray();
+            }
+        }
+        jpc.debugNominalConfiguration = jc.getStringOr("debug_nominal_configuration",
+                                                       jpc.debugNominalConfiguration);
+        if (jpc.enabled) {
+            validateJetPtCorrectionConfig(jpc);
+        }
+    }
     return config;
 }
 
@@ -3520,15 +3698,22 @@ void appendOutputBranch(OutputTreeState& treeState,
 void bookOutputGroup(OutputTreeState& treeState,
                      const vector<OutputScalarConfig>& configs,
                      bool isMC) {
+    const unordered_set<string>& kept = treeState.config.keptBranches;
+    const auto isKept = [&](const string& branchName) {
+        return kept.empty() || kept.count(branchName) > 0;
+    };
     for (const auto& config : configs) {
         if (config.onlyMC && !isMC) {
             continue;
         }
         if (!config.collection.empty()) {
             for (int slot = 0; slot < config.slots; ++slot) {
-                appendOutputBranch(treeState, config, config.name + "_" + to_string(slot + 1), slot);
+                const string branchName = config.name + "_" + to_string(slot + 1);
+                if (isKept(branchName)) {
+                    appendOutputBranch(treeState, config, branchName, slot);
+                }
             }
-        } else {
+        } else if (isKept(config.name)) {
             appendOutputBranch(treeState, config, config.name, -1);
         }
     }
@@ -3710,19 +3895,25 @@ void fillOutputGroup(const vector<OutputScalarConfig>& configs,
             context.inputCollections = &inputCollections;
             context.rawScalars = &rawScalars;
 
-            const auto branchIt = treeState.branchIndexByName.find(config.name);
-            if (branchIt == treeState.branchIndexByName.end()) {
+            // A variation tree evaluates only the scalars its kept branches read;
+            // a needed scalar that is not kept is evaluated but not booked.
+            if (!treeState.config.keptBranches.empty() && treeState.config.neededScalars.count(config.name) == 0) {
                 continue;
             }
-
-            OutputBranchRuntime& branch = treeState.branches[branchIt->second];
+            const auto branchIt = treeState.branchIndexByName.find(config.name);
+            OutputBranchRuntime* branch = (branchIt != treeState.branchIndexByName.end())
+                ? &treeState.branches[branchIt->second] : nullptr;
             const ScalarInputConfig* scalar = nullptr;
             if (isRawScalarIdentity(config.formula, rawScalars, scalar) && scalar != nullptr) {
-                assignExactScalar(branch, *scalar);
+                if (branch != nullptr) {
+                    assignExactScalar(*branch, *scalar);
+                }
                 vars[config.name] = scalar->numericValue();
             } else {
                 const long double value = evalNumber(config.formula, context);
-                assignNumericValue(branch, value);
+                if (branch != nullptr) {
+                    assignNumericValue(*branch, value);
+                }
                 vars[config.name] = value;
             }
             continue;
@@ -4084,12 +4275,920 @@ unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
     throw runtime_error("Error opening input file " + inputFileName);
 }
 
+// Jet energy corrections, Type-1 MET, and the systematic configurations of the
+// single-pass conversion. For each configuration the corrected jets are written
+// into the AK4/AK8 input buffers and the corrected MET into the MET input
+// scalars, before the selections and outputs of that configuration read them.
+//
+// Nominal chain (nominal_correction = hlt_jec):
+//  - The AK4 ScoutingPFJetRecluster2 inputs are stored with the production
+//    Winter24HLT_V1 L1L2L3Res JEC (AK4PFHLT, true event rho) applied; raw =
+//    stored * (1 - rawFactor) for pT and mass. The stored AK4 pT and mass are the
+//    nominal JEC result.
+//  - The event rho is not stored. recoverRho recovers it from the AK4 production
+//    JEC and checks that every AK4 jet reproduces its stored factor with it.
+//  - The AK8 ScoutingFatPFJetRecluster inputs are stored raw and get the official
+//    Winter24HLT_V1 L1L2L3Res JEC (AK8PFHLT) with the recovered rho.
+//  - MC jets, AK4 and AK8, are smeared with the offline AK4PFPuppi JER proxy
+//    (stochastic JERSmear, GenPt = -1).
+//  - The AK8 soft-drop mass takes every factor of the jet pT except L1FastJet
+//    (grooming removes most of the pileup) and, for MC with apply_jms_jmr, the
+//    JMS scale and the stochastic JMR smearing.
+//  - MET is Type-1 corrected with the AK4 jets: the corrected minus the
+//    L1FastJet-only muon-subtracted pT of the jets whose corrected (unsmeared)
+//    muon-subtracted pT is above 15 GeV and whose EM fraction is below 0.9.
+// Data get the JEC and the Type-1 MET only.
+//
+// Each systematic configuration (MC) changes one ingredient:
+//  - jes_up/down scale every jet pT, mass, and soft-drop mass by 1 +- jes_shift
+//    after the JER smearing, and the MET through Type-1;
+//  - jer_up/down smear with the JER scale factor up/down and the same random
+//    numbers (JERSmear hashes JetPt, JetEta, Rho, and EventID, which are the
+//    same in every configuration);
+//  - jms_up/down and jmr_up/down move JMS and JMR by their uncertainties.
+struct JetCorrectionInputs {
+    InputCollectionConfig* ak4 = nullptr;
+    InputCollectionConfig* ak8 = nullptr;
+    ArrayInputConfig* ak4Pt = nullptr;
+    ArrayInputConfig* ak4Eta = nullptr;
+    ArrayInputConfig* ak4Phi = nullptr;
+    ArrayInputConfig* ak4Mass = nullptr;
+    ArrayInputConfig* ak4Area = nullptr;
+    ArrayInputConfig* ak4RawFactor = nullptr;
+    ArrayInputConfig* ak4MuEF = nullptr;
+    ArrayInputConfig* ak4ChEmEF = nullptr;
+    ArrayInputConfig* ak4NeEmEF = nullptr;
+    ArrayInputConfig* ak8Pt = nullptr;
+    ArrayInputConfig* ak8Eta = nullptr;
+    ArrayInputConfig* ak8Phi = nullptr;
+    ArrayInputConfig* ak8Mass = nullptr;
+    ArrayInputConfig* ak8Msoftdrop = nullptr;
+    ArrayInputConfig* ak8Area = nullptr;
+    // scouting_to_offline categories: parton flavour for MC, tagger scores for data.
+    const ArrayInputConfig* ak4Flavour = nullptr;
+    const ArrayInputConfig* ak4Tag = nullptr;
+    const ArrayInputConfig* ak8Flavour = nullptr;
+    const ArrayInputConfig* ak8TagXbb = nullptr;
+    const ArrayInputConfig* ak8TagQcd = nullptr;
+    ScalarInputConfig* metPt = nullptr;
+    ScalarInputConfig* metPhi = nullptr;
+    const ScalarInputConfig* run = nullptr;
+    const ScalarInputConfig* luminosityBlock = nullptr;
+    const ScalarInputConfig* event = nullptr;
+};
+
+// Configuration-independent quantities of one jet in one event.
+struct CorrectedJet {
+    double rawPt = 0.;
+    double rawMass = 0.;
+    double rawMsoftdrop = 0.;           // AK8
+    double eta = 0.;
+    double phi = 0.;
+    double area = 0.;
+    double storedFactor = 1.;           // stored / raw pT: the AK4 production JEC
+    double jecFactor = 1.;              // nominal jet energy correction
+    double l1Factor = 1.;               // L1FastJet part of the official JEC
+    double msoftdropFactor = 1.;        // nominal soft-drop mass correction (AK8)
+    double jerSmear[3] = {1., 1., 1.};  // JER smearing for scale factor nom / up / down
+    double jmrRandom = 0.;              // standard-normal number of the JMR smearing (AK8)
+    double rawPtNoMuon = 0.;            // raw pT without the muon energy (AK4)
+    bool type1 = false;                 // AK4 jet propagated to the Type-1 MET
+};
+
+struct JetCorrectionEventState {
+    vector<CorrectedJet> ak4;
+    vector<CorrectedJet> ak8;
+    double rho = 0.;
+    double rawMetPx = 0.;
+    double rawMetPy = 0.;
+};
+
+uint64_t splitMix64(uint64_t value) {
+    value += 0x9E3779B97F4A7C15ULL;
+    value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
+    return value ^ (value >> 31);
+}
+
+uint64_t floatBits(float value) {
+    uint32_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+// Standard-normal number fixed by the event and the stored jet, so every
+// configuration of an event smears the jet with the same random number.
+double jetGaussian(ULong64_t eventId, float pt, float eta, float phi) {
+    uint64_t hash = splitMix64(static_cast<uint64_t>(eventId));
+    hash = splitMix64(hash ^ floatBits(pt));
+    hash = splitMix64(hash ^ ((floatBits(eta) << 32) | floatBits(phi)));
+    const uint64_t hash2 = splitMix64(hash);
+    const double kInverse2Pow53 = 1.0 / 9007199254740992.0;
+    const double u1 = (static_cast<double>(hash >> 11) + 0.5) * kInverse2Pow53;
+    const double u2 = (static_cast<double>(hash2 >> 11) + 0.5) * kInverse2Pow53;
+    return sqrt(-2.0 * log(u1)) * cos(kTwoPi * u2);
+}
+
+double medianOf(vector<double> values) {
+    sort(values.begin(), values.end());
+    const size_t middle = values.size() / 2;
+    return (values.size() % 2 == 1) ? values[middle] : 0.5 * (values[middle - 1] + values[middle]);
+}
+
+void requireCorrectionInputs(const vector<correction::Variable>& inputs,
+                             const vector<string>& expected,
+                             const string& name) {
+    bool matches = (inputs.size() == expected.size());
+    for (size_t index = 0; matches && index < inputs.size(); ++index) {
+        matches = (inputs[index].name() == expected[index]);
+    }
+    if (!matches) {
+        ostringstream ss;
+        ss << "Correction " << name << " does not have the expected inputs (";
+        for (size_t index = 0; index < expected.size(); ++index) {
+            ss << (index == 0 ? "" : ", ") << expected[index];
+        }
+        ss << ")";
+        throw runtime_error(ss.str());
+    }
+}
+
+ArrayInputConfig* findCollectionField(InputCollectionConfig& collection, const string& suffix) {
+    const string name = collection.name + "_" + suffix;
+    for (auto& field : collection.fields) {
+        if (field.name == name) {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+ArrayInputConfig& requireFloatField(InputCollectionConfig& collection, const string& suffix) {
+    ArrayInputConfig* field = findCollectionField(collection, suffix);
+    if (field == nullptr || field->type != DataType::Float || field->onlyMC || field->optional) {
+        throw runtime_error("jet_pt_correction requires the float input field " + collection.name + "_" +
+                            suffix + " (neither onlyMC nor optional) in branch.json");
+    }
+    return *field;
+}
+
+ScalarInputConfig& requireInputScalar(BranchConfig& branchConfig, const string& name, DataType type) {
+    for (auto& scalar : branchConfig.scalars) {
+        if (scalar.name == name && scalar.type == type && !scalar.onlyMC && !scalar.optional) {
+            return scalar;
+        }
+    }
+    throw runtime_error("jet_pt_correction requires the input scalar " + name +
+                        " with its NanoAOD type (neither onlyMC nor optional) in branch.json");
+}
+
+int correctedCollectionSize(const InputCollectionConfig& collection,
+                            const unordered_map<string, long double>& vars) {
+    const auto sizeIt = vars.find(collection.sizeName);
+    if (sizeIt == vars.end()) {
+        throw runtime_error("Input collection size not found: " + collection.sizeName);
+    }
+    return max(0, min(static_cast<int>(sizeIt->second), collection.maxSize));
+}
+
+bool referencesIdentifier(const ExprPtr& expr, const string& name) {
+    if (!expr) {
+        return false;
+    }
+    if (expr->kind == ExprKind::Identifier && expr->text == name) {
+        return true;
+    }
+    if (referencesIdentifier(expr->lhs, name) || referencesIdentifier(expr->rhs, name)) {
+        return true;
+    }
+    for (const auto& arg : expr->args) {
+        if (referencesIdentifier(arg, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class JetPtCorrector {
+public:
+    void initialize(const JetPtCorrectionConfig& cfg) {
+        cfg_ = cfg;
+        hltJec_ = (cfg_.nominalCorrection == "hlt_jec");
+        mcConfigurations_.assign(1, CorrectionConfiguration());
+        dataConfigurations_.assign(1, CorrectionConfiguration());
+        if (!cfg_.enabled) {
+            return;
+        }
+
+        const vector<string> jecInputs = {"JetA", "JetEta", "JetPhi", "JetPt", "Rho"};
+        jecAk4Set_ = correction::CorrectionSet::from_file(cfg_.jecAk4File);
+        jecAk4_ = jecAk4Set_->compound().at(cfg_.jecAk4Name);
+        jecAk4L1_ = jecAk4Set_->at(cfg_.jecAk4L1Name);
+        requireCorrectionInputs(jecAk4_->inputs(), jecInputs, cfg_.jecAk4Name);
+        requireCorrectionInputs(jecAk4L1_->inputs(), jecInputs, cfg_.jecAk4L1Name);
+        if (hltJec_) {
+            jecAk8Set_ = correction::CorrectionSet::from_file(cfg_.jecAk8File);
+            jecAk8_ = jecAk8Set_->compound().at(cfg_.jecAk8Name);
+            jecAk8L1_ = jecAk8Set_->at(cfg_.jecAk8L1Name);
+            requireCorrectionInputs(jecAk8_->inputs(), jecInputs, cfg_.jecAk8Name);
+            requireCorrectionInputs(jecAk8L1_->inputs(), jecInputs, cfg_.jecAk8L1Name);
+        } else {
+            offlineSet_ = correction::CorrectionSet::from_file(cfg_.correctionsFile);
+            ak4OfflineMc_ = offlineSet_->at("AK4_plain_MC");
+            ak4OfflineData_ = offlineSet_->at("AK4_plain_Data2024");
+            ak8OfflineMc_ = offlineSet_->at("AK8_MC");
+            ak8OfflineData_ = offlineSet_->at("AK8_Data2024");
+        }
+
+        jesJerSet_ = correction::CorrectionSet::from_file(cfg_.jesJerFile);
+        jerResolution_ = jesJerSet_->at(cfg_.jerResolutionName);
+        jerScaleFactor_ = jesJerSet_->at(cfg_.jerScaleFactorName);
+        requireCorrectionInputs(jerResolution_->inputs(), {"JetEta", "JetPt", "Rho"}, cfg_.jerResolutionName);
+        requireCorrectionInputs(jerScaleFactor_->inputs(), {"JetEta", "JetPt", "systematic"},
+                                cfg_.jerScaleFactorName);
+        jerSmearSet_ = correction::CorrectionSet::from_file(cfg_.jerSmearFile);
+        jerSmear_ = jerSmearSet_->at("JERSmear");
+        requireCorrectionInputs(jerSmear_->inputs(),
+                                {"JetPt", "JetEta", "GenPt", "Rho", "EventID", "JER", "JERSF"}, "JERSmear");
+
+        if (cfg_.applyJmsJmr) {
+            const JsonValue results = loadJsonPath(cfg_.jmsJmrResultsFile);
+            jms_ = static_cast<double>(results.at("JMS").asNumber());
+            jmsErr_ = static_cast<double>(results.at("JMS_err").asNumber());
+            jmr_ = static_cast<double>(results.at("JMR").asNumber());
+            jmrErr_ = static_cast<double>(results.at("JMR_err").asNumber());
+            // Relative soft-drop mass resolution of the MC W peak of the JMS/JMR fit.
+            const JsonValue& mcPeak = results.at("pass").at("mc");
+            jmrRelResolution_ = static_cast<double>(mcPeak.at("sigma").asNumber() / mcPeak.at("mu").asNumber());
+        }
+
+        mcConfigurations_.assign(1, makeConfiguration(cfg_.debugNominalConfiguration));
+        mcConfigurations_.front().variation.clear();
+        if (cfg_.debugNominalConfiguration == "nominal") {
+            for (const auto& variation : cfg_.variations) {
+                mcConfigurations_.push_back(makeConfiguration(variation));
+            }
+        }
+    }
+
+    bool enabled() const { return cfg_.enabled; }
+
+    // The first configuration fills the nominal trees; each further one fills the
+    // <tree>__<variation> trees of its variation.
+    const vector<CorrectionConfiguration>& configurations(bool isMC) const {
+        return isMC ? mcConfigurations_ : dataConfigurations_;
+    }
+
+    string describe(bool isMC) const {
+        ostringstream ss;
+        ss << "nominal_correction = " << cfg_.nominalCorrection << ", configurations =";
+        for (const auto& configuration : configurations(isMC)) {
+            ss << ' ' << (configuration.variation.empty() ? "nominal" : configuration.variation);
+        }
+        if (isMC && cfg_.debugNominalConfiguration != "nominal") {
+            ss << " (validation: nominal trees filled with " << cfg_.debugNominalConfiguration << ")";
+        }
+        if (isMC) {
+            ss << ", JES shift = " << cfg_.jesShift;
+        }
+        if (isMC && cfg_.applyJmsJmr) {
+            ss << ", JMS = " << jms_ << " +- " << jmsErr_ << ", JMR = " << jmr_ << " +- " << jmrErr_
+               << " (relative msoftdrop resolution " << jmrRelResolution_ << ")";
+        }
+        return ss.str();
+    }
+
+    JetCorrectionInputs resolveInputs(BranchConfig& branchConfig) const {
+        JetCorrectionInputs in;
+        for (auto& collection : branchConfig.collections) {
+            if (collection.name == kAk4JetCollection) {
+                in.ak4 = &collection;
+            } else if (collection.name == kAk8JetCollection) {
+                in.ak8 = &collection;
+            }
+        }
+        if (in.ak4 == nullptr || in.ak8 == nullptr) {
+            throw runtime_error(string("jet_pt_correction requires the input collections ") +
+                                kAk4JetCollection + " and " + kAk8JetCollection + " in branch.json");
+        }
+        in.ak4Pt = &requireFloatField(*in.ak4, "pt");
+        in.ak4Eta = &requireFloatField(*in.ak4, "eta");
+        in.ak4Phi = &requireFloatField(*in.ak4, "phi");
+        in.ak4Mass = &requireFloatField(*in.ak4, "mass");
+        in.ak4Area = &requireFloatField(*in.ak4, "area");
+        in.ak4RawFactor = &requireFloatField(*in.ak4, "rawFactor");
+        in.ak4MuEF = &requireFloatField(*in.ak4, "muEF");
+        in.ak4ChEmEF = &requireFloatField(*in.ak4, "chEmEF");
+        in.ak4NeEmEF = &requireFloatField(*in.ak4, "neEmEF");
+        in.ak8Pt = &requireFloatField(*in.ak8, "pt");
+        in.ak8Eta = &requireFloatField(*in.ak8, "eta");
+        in.ak8Phi = &requireFloatField(*in.ak8, "phi");
+        in.ak8Mass = &requireFloatField(*in.ak8, "mass");
+        in.ak8Msoftdrop = &requireFloatField(*in.ak8, "msoftdrop");
+        in.ak8Area = &requireFloatField(*in.ak8, "area");
+        if (!hltJec_) {
+            in.ak4Flavour = findCollectionField(*in.ak4, "partonFlavour");
+            in.ak4Tag = findCollectionField(*in.ak4, "scoutUParT_probb");
+            in.ak8Flavour = findCollectionField(*in.ak8, "partonFlavour");
+            in.ak8TagXbb = findCollectionField(*in.ak8, "scoutGlobalParT_prob_Xbb");
+            in.ak8TagQcd = findCollectionField(*in.ak8, "scoutGlobalParT_prob_QCD");
+        }
+        in.metPt = &requireInputScalar(branchConfig, kMetPtScalar, DataType::Float);
+        in.metPhi = &requireInputScalar(branchConfig, kMetPhiScalar, DataType::Float);
+        in.run = &requireInputScalar(branchConfig, "run", DataType::UInt);
+        in.luminosityBlock = &requireInputScalar(branchConfig, "luminosityBlock", DataType::UInt);
+        in.event = &requireInputScalar(branchConfig, "event", DataType::ULong64);
+        return in;
+    }
+
+    // Reads the stored values of the current entry, before any configuration
+    // overwrites them, and evaluates everything the configurations share.
+    void prepareEvent(const JetCorrectionInputs& in,
+                      const unordered_map<string, long double>& vars,
+                      bool isMC,
+                      JetCorrectionEventState& state) const {
+        const int nAk4 = correctedCollectionSize(*in.ak4, vars);
+        const int nAk8 = correctedCollectionSize(*in.ak8, vars);
+        state.ak4.assign(nAk4, CorrectedJet());
+        state.ak8.assign(nAk8, CorrectedJet());
+        for (int i = 0; i < nAk4; ++i) {
+            CorrectedJet& jet = state.ak4[i];
+            const double rawScale = 1. - in.ak4RawFactor->floatValues[i];
+            jet.rawPt = in.ak4Pt->floatValues[i] * rawScale;
+            jet.rawMass = in.ak4Mass->floatValues[i] * rawScale;
+            jet.eta = in.ak4Eta->floatValues[i];
+            jet.phi = in.ak4Phi->floatValues[i];
+            jet.area = in.ak4Area->floatValues[i];
+            jet.storedFactor = 1. / rawScale;
+        }
+        for (int i = 0; i < nAk8; ++i) {
+            CorrectedJet& jet = state.ak8[i];
+            jet.rawPt = in.ak8Pt->floatValues[i];
+            jet.rawMass = in.ak8Mass->floatValues[i];
+            jet.rawMsoftdrop = in.ak8Msoftdrop->floatValues[i];
+            jet.eta = in.ak8Eta->floatValues[i];
+            jet.phi = in.ak8Phi->floatValues[i];
+            jet.area = in.ak8Area->floatValues[i];
+        }
+
+        // rho enters only through the jets.
+        state.rho = (nAk4 + nAk8 > 0) ? recoverRho(in, state.ak4) : 0.;
+        const double jerRho = min(state.rho, nextafter(kJerRhoUpperEdge, 0.));
+        const ULong64_t eventId = in.event->ulong64Value;
+        // JERSmear's EventID input is an int (entropy of its hash only).
+        const int eventSeed = static_cast<int>(eventId & 0x7FFFFFFFULL);
+
+        for (int i = 0; i < nAk4; ++i) {
+            CorrectedJet& jet = state.ak4[i];
+            if (!(jet.rawPt > 0.)) {
+                continue;
+            }
+            jet.l1Factor = jecAk4L1_->evaluate({jet.area, jet.eta, jet.phi, jet.rawPt, state.rho});
+            jet.jecFactor = hltJec_ ? jet.storedFactor
+                                    : offlineResponseFactor(in, false, isMC, i) * jet.storedFactor;
+            jet.rawPtNoMuon = jet.rawPt * (1. - in.ak4MuEF->floatValues[i]);
+            const double emFraction = in.ak4ChEmEF->floatValues[i] + in.ak4NeEmEF->floatValues[i];
+            jet.type1 = (jet.rawPtNoMuon * jet.jecFactor > kType1JetPtThreshold) &&
+                        (emFraction < kType1MaxEmFraction);
+            if (isMC) {
+                fillJerSmear(jet, state.rho, jerRho, eventSeed);
+            }
+        }
+
+        for (int i = 0; i < nAk8; ++i) {
+            CorrectedJet& jet = state.ak8[i];
+            if (!(jet.rawPt > 0.)) {
+                continue;
+            }
+            if (hltJec_) {
+                const vector<correction::Variable::Type> jecArgs = {jet.area, jet.eta, jet.phi, jet.rawPt, state.rho};
+                jet.jecFactor = jecAk8_->evaluate(jecArgs);
+                jet.l1Factor = jecAk8L1_->evaluate(jecArgs);
+                jet.msoftdropFactor = jet.jecFactor / jet.l1Factor;
+            } else {
+                jet.jecFactor = offlineResponseFactor(in, true, isMC, i);
+                jet.msoftdropFactor = jet.jecFactor;
+            }
+            if (isMC) {
+                fillJerSmear(jet, state.rho, jerRho, eventSeed);
+                jet.jmrRandom = jetGaussian(eventId, in.ak8Pt->floatValues[i], in.ak8Eta->floatValues[i],
+                                            in.ak8Phi->floatValues[i]);
+            }
+        }
+
+        const double rawMetPt = in.metPt->floatValue;
+        const double rawMetPhi = in.metPhi->floatValue;
+        state.rawMetPx = rawMetPt * cos(rawMetPhi);
+        state.rawMetPy = rawMetPt * sin(rawMetPhi);
+    }
+
+    // Writes the jets and the MET of one configuration into the input buffers,
+    // the MET input scalars, and vars.
+    void applyConfiguration(const JetCorrectionInputs& in,
+                            const JetCorrectionEventState& state,
+                            const CorrectionConfiguration& configuration,
+                            bool isMC,
+                            unordered_map<string, long double>& vars) const {
+        double type1Px = 0.;
+        double type1Py = 0.;
+        for (size_t i = 0; i < state.ak4.size(); ++i) {
+            const CorrectedJet& jet = state.ak4[i];
+            const double factor = jet.jecFactor * variationFactor(jet, configuration, isMC);
+            in.ak4Pt->floatValues[i] = static_cast<Float_t>(jet.rawPt * factor);
+            in.ak4Mass->floatValues[i] = static_cast<Float_t>(jet.rawMass * factor);
+            if (jet.type1) {
+                const double shift = jet.rawPtNoMuon * (factor - jet.l1Factor);
+                type1Px += shift * cos(jet.phi);
+                type1Py += shift * sin(jet.phi);
+            }
+        }
+        for (size_t i = 0; i < state.ak8.size(); ++i) {
+            const CorrectedJet& jet = state.ak8[i];
+            const double variation = variationFactor(jet, configuration, isMC);
+            double msoftdropScale = jet.msoftdropFactor * variation;
+            if (isMC && cfg_.applyJmsJmr) {
+                const double jmrWidth =
+                    sqrt(max(configuration.jmr * configuration.jmr - 1., 0.)) * jmrRelResolution_;
+                msoftdropScale *= configuration.jms * (1. + jet.jmrRandom * jmrWidth);
+            }
+            in.ak8Pt->floatValues[i] = static_cast<Float_t>(jet.rawPt * jet.jecFactor * variation);
+            in.ak8Mass->floatValues[i] = static_cast<Float_t>(jet.rawMass * jet.jecFactor * variation);
+            in.ak8Msoftdrop->floatValues[i] = static_cast<Float_t>(jet.rawMsoftdrop * msoftdropScale);
+        }
+        const double metPx = state.rawMetPx - type1Px;
+        const double metPy = state.rawMetPy - type1Py;
+        in.metPt->floatValue = static_cast<Float_t>(hypot(metPx, metPy));
+        in.metPhi->floatValue = static_cast<Float_t>(atan2(metPy, metPx));
+        vars[kMetPtScalar] = in.metPt->floatValue;
+        vars[kMetPhiScalar] = in.metPhi->floatValue;
+    }
+
+private:
+    CorrectionConfiguration makeConfiguration(const string& name) const {
+        CorrectionConfiguration configuration;
+        configuration.variation = (name == "nominal") ? "" : name;
+        if (cfg_.applyJmsJmr) {
+            configuration.jms = jms_;
+            configuration.jmr = jmr_;
+        }
+        if (name == "jes_up") {
+            configuration.jesFactor = 1. + cfg_.jesShift;
+        } else if (name == "jes_down") {
+            configuration.jesFactor = 1. - cfg_.jesShift;
+        } else if (name == "jer_up") {
+            configuration.jerSfIndex = 1;
+        } else if (name == "jer_down") {
+            configuration.jerSfIndex = 2;
+        } else if (name == "jms_up") {
+            configuration.jms = jms_ + jmsErr_;
+        } else if (name == "jms_down") {
+            configuration.jms = jms_ - jmsErr_;
+        } else if (name == "jmr_up") {
+            configuration.jmr = jmr_ + jmrErr_;
+        } else if (name == "jmr_down") {
+            configuration.jmr = jmr_ - jmrErr_;
+        }
+        return configuration;
+    }
+
+    static double variationFactor(const CorrectedJet& jet,
+                                  const CorrectionConfiguration& configuration,
+                                  bool isMC) {
+        return isMC ? jet.jerSmear[configuration.jerSfIndex] * configuration.jesFactor : 1.;
+    }
+
+    void fillJerSmear(CorrectedJet& jet, double rho, double jerRho, int eventSeed) const {
+        const double pt = jet.rawPt * jet.jecFactor;
+        const double resolution = jerResolution_->evaluate({jet.eta, pt, jerRho});
+        const char* const systematics[3] = {"nom", "up", "down"};
+        for (int k = 0; k < 3; ++k) {
+            const double scaleFactor = jerScaleFactor_->evaluate({jet.eta, pt, string(systematics[k])});
+            jet.jerSmear[k] = jerSmear_->evaluate({pt, jet.eta, -1.0, rho, eventSeed, resolution, scaleFactor});
+        }
+    }
+
+    // Legacy scouting->offline response SF (scouting_to_offline) of the stored
+    // jet, with a b/light (MC) or btag/nobtag (data) category.
+    double offlineResponseFactor(const JetCorrectionInputs& in, bool isAK8, bool isMC, int index) const {
+        const ArrayInputConfig& ptField = isAK8 ? *in.ak8Pt : *in.ak4Pt;
+        const ArrayInputConfig& etaField = isAK8 ? *in.ak8Eta : *in.ak4Eta;
+        const ArrayInputConfig* flavourField = isAK8 ? in.ak8Flavour : in.ak4Flavour;
+        const ArrayInputConfig* tagField = isAK8 ? in.ak8TagXbb : in.ak4Tag;
+        string category = "inclusive";
+        if (isMC && flavourField != nullptr) {
+            category = (std::abs(flavourField->valueAt(index) - 5.f) < 0.5f) ? "b" : "light";
+        } else if (!isMC && tagField != nullptr) {
+            float score = tagField->valueAt(index);
+            if (isAK8 && in.ak8TagQcd != nullptr) {
+                const float qcd = in.ak8TagQcd->valueAt(index);
+                const float denom = score + qcd;
+                score = (denom > 0.f) ? (score / denom) : 0.f;
+            }
+            const double tagThreshold = isAK8 ? cfg_.ak8TagThreshold : cfg_.ak4TagThreshold;
+            category = (score >= static_cast<float>(tagThreshold)) ? "btag" : "nobtag";
+        }
+        const correction::Correction::Ref& correction =
+            isMC ? (isAK8 ? ak8OfflineMc_ : ak4OfflineMc_) : (isAK8 ? ak8OfflineData_ : ak4OfflineData_);
+        return correction->evaluate({category, static_cast<double>(etaField.valueAt(index)),
+                                     static_cast<double>(ptField.valueAt(index))});
+    }
+
+    double ak4Jec(const CorrectedJet& jet, double eta, double phi, double rho) const {
+        return jecAk4_->evaluate({jet.area, eta, phi, jet.rawPt, rho});
+    }
+
+    // The AK4 JEC as a function of rho, continued beyond the L1FastJet clamp
+    // [0, kRhoRecoveryMax] by point reflection at the clamp edges: a stored factor
+    // that the input precision puts just outside the clamped range then has a
+    // solution at a distance from the edge instead of none.
+    double extendedAk4Jec(const CorrectedJet& jet, double eta, double phi, double rho) const {
+        if (rho > kRhoRecoveryMax) {
+            return 2. * ak4Jec(jet, eta, phi, kRhoRecoveryMax) - ak4Jec(jet, eta, phi, 2. * kRhoRecoveryMax - rho);
+        }
+        if (rho < 0.) {
+            return 2. * ak4Jec(jet, eta, phi, 0.) - ak4Jec(jet, eta, phi, -rho);
+        }
+        return ak4Jec(jet, eta, phi, rho);
+    }
+
+    // True when the JEC of the jet changes with rho by more than
+    // kRhoRecoveryMinSensitivity across the clamp range, i.e. the stored factor
+    // determines rho.
+    bool carriesRho(const CorrectedJet& jet, double eta, double phi) const {
+        return ak4Jec(jet, eta, phi, 0.) - ak4Jec(jet, eta, phi, kRhoRecoveryMax) >
+               kRhoRecoveryMinSensitivity * jet.storedFactor;
+    }
+
+    // Solves JEC(rho) = stored factor, the JEC falling with rho, with the Illinois
+    // (modified regula falsi) method on the clamp range widened by
+    // kRhoRecoveryTolerance; the solution is clamped to [0, kRhoRecoveryMax].
+    bool solveRho(const CorrectedJet& jet, double eta, double phi, double& rho) const {
+        const auto residual = [&](double value) {
+            return extendedAk4Jec(jet, eta, phi, value) - jet.storedFactor;
+        };
+        double low = -kRhoRecoveryTolerance;
+        double high = kRhoRecoveryMax + kRhoRecoveryTolerance;
+        double fLow = residual(low);
+        double fHigh = residual(high);
+        if (!(fLow >= 0. && fHigh <= 0. && fLow > fHigh)) {
+            return false;
+        }
+        int side = 0;
+        for (int iteration = 0; iteration < kRhoSolverMaxIterations; ++iteration) {
+            rho = (low * fHigh - high * fLow) / (fHigh - fLow);
+            const double fRho = residual(rho);
+            if (fabs(fRho) <= kRhoSolverTolerance) {
+                break;
+            }
+            if (fRho > 0.) {
+                low = rho;
+                fLow = fRho;
+                if (side == 1) {
+                    fHigh *= 0.5;
+                }
+                side = 1;
+            } else {
+                high = rho;
+                fHigh = fRho;
+                if (side == -1) {
+                    fLow *= 0.5;
+                }
+                side = -1;
+            }
+        }
+        rho = min(max(rho, 0.), kRhoRecoveryMax);
+        return true;
+    }
+
+    // True when the jet's rho solution lies within kRhoRecoveryTolerance of rho:
+    // its stored factor lies between the JEC at rho + tolerance and at rho -
+    // tolerance. A jet that does not carry rho agrees with every rho.
+    bool agreesWithRho(const CorrectedJet& jet, double rho) const {
+        if (jet.storedFactor >= extendedAk4Jec(jet, jet.eta, jet.phi, rho + kRhoRecoveryTolerance) &&
+            jet.storedFactor <= extendedAk4Jec(jet, jet.eta, jet.phi, rho - kRhoRecoveryTolerance)) {
+            return true;
+        }
+        return !carriesRho(jet, jet.eta, jet.phi);
+    }
+
+    // Event rho from the AK4 production JEC: stored / raw = C(JetA, JetEta,
+    // JetPhi, raw pT, rho) of the official compound. The first jet with a rho
+    // solution gives the event rho when every other jet agrees with it;
+    // otherwise consensusRho resolves the event from all jets.
+    double recoverRho(const JetCorrectionInputs& in, const vector<CorrectedJet>& ak4) const {
+        vector<const CorrectedJet*> usable;
+        for (const auto& jet : ak4) {
+            if (jet.rawPt > 0. && jet.storedFactor > kRhoRecoveryMinFactor) {
+                usable.push_back(&jet);
+            }
+        }
+        for (const CorrectedJet* jet : usable) {
+            double rho = 0.;
+            if (!carriesRho(*jet, jet->eta, jet->phi) || !solveRho(*jet, jet->eta, jet->phi, rho)) {
+                continue;
+            }
+            const bool agree = all_of(usable.begin(), usable.end(), [&](const CorrectedJet* other) {
+                return agreesWithRho(*other, rho);
+            });
+            if (agree) {
+                return rho;
+            }
+            break;
+        }
+        return consensusRho(in, usable);
+    }
+
+    // Resolves the event rho when the first solution disagrees. A stored eta or
+    // phi on a JEC bin edge can select a neighbouring bin of the production value,
+    // so each jet that carries rho gives the solutions of its own bin and of the
+    // bins a shift by kJecBinEdgeProbe in eta or phi reaches. The event rho is the
+    // median of one solution per jet with all of them within
+    // kRhoRecoveryTolerance of it.
+    double consensusRho(const JetCorrectionInputs& in, const vector<const CorrectedJet*>& usable) const {
+        const double shifts[5][2] = {{0., 0.},
+                                     {kJecBinEdgeProbe, 0.},
+                                     {-kJecBinEdgeProbe, 0.},
+                                     {0., kJecBinEdgeProbe},
+                                     {0., -kJecBinEdgeProbe}};
+        vector<vector<double>> solutions;
+        for (const CorrectedJet* jet : usable) {
+            const double ownBin = ak4Jec(*jet, jet->eta, jet->phi, kJecBinProbeRho);
+            vector<double> jetSolutions;
+            bool carries = false;
+            for (const auto& shift : shifts) {
+                const double eta = jet->eta + shift[0];
+                const double phi = jet->phi + shift[1];
+                const bool ownPosition = (shift[0] == 0. && shift[1] == 0.);
+                if (!ownPosition && ak4Jec(*jet, eta, phi, kJecBinProbeRho) == ownBin) {
+                    continue;
+                }
+                if (!carriesRho(*jet, eta, phi)) {
+                    continue;
+                }
+                carries = true;
+                double rho = 0.;
+                if (solveRho(*jet, eta, phi, rho)) {
+                    jetSolutions.push_back(rho);
+                }
+            }
+            if (!carries) {
+                continue;
+            }
+            if (jetSolutions.empty()) {
+                throw runtime_error("AK4 jet (pt = " + to_string(jet->rawPt * jet->storedFactor) +
+                                    ", eta = " + to_string(jet->eta) + ", phi = " + to_string(jet->phi) +
+                                    ") in event " + eventLabel(in) + " reproduces its stored JEC with no rho; "
+                                    "the inputs were not corrected with " + cfg_.jecAk4Name);
+            }
+            solutions.push_back(std::move(jetSolutions));
+        }
+        if (solutions.empty()) {
+            throw runtime_error("Cannot recover rho in event " + eventLabel(in) +
+                                ": no AK4 jet carries the event rho in its production JEC");
+        }
+        vector<double> chosen(solutions.size());
+        for (const auto& anchorSolutions : solutions) {
+            for (const double anchor : anchorSolutions) {
+                for (size_t j = 0; j < solutions.size(); ++j) {
+                    chosen[j] = *min_element(solutions[j].begin(), solutions[j].end(),
+                                             [&](double lhs, double rhs) {
+                                                 return fabs(lhs - anchor) < fabs(rhs - anchor);
+                                             });
+                }
+                const double rho = medianOf(chosen);
+                if (all_of(chosen.begin(), chosen.end(),
+                           [&](double value) { return fabs(value - rho) <= kRhoRecoveryTolerance; })) {
+                    return rho;
+                }
+            }
+        }
+        throw runtime_error("AK4 jets disagree on the rho of their production JEC in event " + eventLabel(in) +
+                            "; the inputs were not corrected with " + cfg_.jecAk4Name);
+    }
+
+    static string eventLabel(const JetCorrectionInputs& in) {
+        return to_string(in.run->uintValue) + ":" + to_string(in.luminosityBlock->uintValue) + ":" +
+               to_string(in.event->ulong64Value);
+    }
+
+    JetPtCorrectionConfig cfg_;
+    bool hltJec_ = true;
+    vector<CorrectionConfiguration> mcConfigurations_;
+    vector<CorrectionConfiguration> dataConfigurations_;
+    std::unique_ptr<correction::CorrectionSet> jecAk4Set_;
+    std::unique_ptr<correction::CorrectionSet> jecAk8Set_;
+    std::unique_ptr<correction::CorrectionSet> offlineSet_;
+    std::unique_ptr<correction::CorrectionSet> jesJerSet_;
+    std::unique_ptr<correction::CorrectionSet> jerSmearSet_;
+    correction::CompoundCorrection::Ref jecAk4_, jecAk8_;
+    correction::Correction::Ref jecAk4L1_, jecAk8L1_;
+    correction::Correction::Ref ak4OfflineMc_, ak4OfflineData_, ak8OfflineMc_, ak8OfflineData_;
+    correction::Correction::Ref jerResolution_, jerScaleFactor_, jerSmear_;
+    double jms_ = 1.;
+    double jmsErr_ = 0.;
+    double jmr_ = 1.;
+    double jmrErr_ = 0.;
+    double jmrRelResolution_ = 0.;
+};
+
+void collectIdentifiers(const ExprPtr& expr, vector<string>& names) {
+    if (!expr) {
+        return;
+    }
+    if (expr->kind == ExprKind::Identifier) {
+        names.push_back(expr->text);
+    }
+    collectIdentifiers(expr->lhs, names);
+    collectIdentifiers(expr->rhs, names);
+    for (const auto& arg : expr->args) {
+        collectIdentifiers(arg, names);
+    }
+}
+
+// The scalar outputs that the kept branches of a variation tree read: the kept
+// scalars and every output scalar their formulas (and the formulas of kept
+// collection slots) refer to through vars, transitively.
+unordered_set<string> neededScalarOutputs(const TreeConfig& tree, const unordered_set<string>& kept) {
+    unordered_map<string, const OutputScalarConfig*> scalarByName;
+    for (const auto* group : {&tree.regularScalars, &tree.extremaScalars}) {
+        for (const auto& config : *group) {
+            if (config.collection.empty()) {
+                scalarByName[config.name] = &config;
+            }
+        }
+    }
+    unordered_set<string> needed;
+    vector<const OutputScalarConfig*> pending;
+    const auto require = [&](const string& name) {
+        const auto it = scalarByName.find(name);
+        if (it != scalarByName.end() && needed.insert(name).second) {
+            pending.push_back(it->second);
+        }
+    };
+    const auto requireReferences = [&](const OutputScalarConfig& config) {
+        vector<string> names;
+        collectIdentifiers(config.formula, names);
+        for (const auto& name : names) {
+            require(name);
+        }
+    };
+    for (const auto* group : {&tree.regularScalars, &tree.extremaScalars}) {
+        for (const auto& config : *group) {
+            if (config.collection.empty()) {
+                if (kept.count(config.name) > 0) {
+                    require(config.name);
+                }
+                continue;
+            }
+            for (int slot = 0; slot < config.slots; ++slot) {
+                if (kept.count(config.name + "_" + to_string(slot + 1)) > 0) {
+                    requireReferences(config);
+                    break;
+                }
+            }
+        }
+    }
+    while (!pending.empty()) {
+        const OutputScalarConfig* config = pending.back();
+        pending.pop_back();
+        requireReferences(*config);
+    }
+    return needed;
+}
+
+unordered_set<string> outputBranchNames(const TreeConfig& tree, bool isMC) {
+    unordered_set<string> names;
+    for (const auto* group : {&tree.regularScalars, &tree.extremaScalars}) {
+        for (const auto& config : *group) {
+            if (config.onlyMC && !isMC) {
+                continue;
+            }
+            if (config.collection.empty()) {
+                names.insert(config.name);
+                continue;
+            }
+            for (int slot = 0; slot < config.slots; ++slot) {
+                names.insert(config.name + "_" + to_string(slot + 1));
+            }
+        }
+    }
+    return names;
+}
+
+// For MC, appends one <tree>__<variation> output tree per nominal tree and
+// configured variation; each books only the branches listed for its nominal
+// tree in jet_pt_correction.variation_branches.
+void addVariationTrees(BranchConfig& branchConfig, const JetPtCorrectionConfig& cfg, bool isMC) {
+    if (!cfg.enabled || !isMC || cfg.variations.empty() || cfg.debugNominalConfiguration != "nominal") {
+        return;
+    }
+    unordered_set<string> nominalNames;
+    for (const auto& tree : branchConfig.trees) {
+        nominalNames.insert(tree.name);
+    }
+    for (const auto& item : cfg.variationBranches) {
+        if (nominalNames.count(item.first) == 0) {
+            throw runtime_error("jet_pt_correction.variation_branches names unknown output tree " + item.first);
+        }
+    }
+    vector<TreeConfig> variationTrees;
+    for (const auto& nominal : branchConfig.trees) {
+        const auto listIt = cfg.variationBranches.find(nominal.name);
+        if (listIt == cfg.variationBranches.end()) {
+            throw runtime_error("jet_pt_correction.variation_branches has no branch list for tree " + nominal.name);
+        }
+        if (listIt->second.empty()) {
+            throw runtime_error("jet_pt_correction.variation_branches[" + nominal.name + "] is empty");
+        }
+        const unordered_set<string> available = outputBranchNames(nominal, true);
+        unordered_set<string> kept;
+        for (const auto& name : listIt->second) {
+            if (available.count(name) == 0) {
+                throw runtime_error("jet_pt_correction.variation_branches[" + nominal.name + "] lists " + name +
+                                    ", which is not an output branch of that tree");
+            }
+            kept.insert(name);
+        }
+        const unordered_set<string> needed = neededScalarOutputs(nominal, kept);
+        for (const auto& variation : cfg.variations) {
+            TreeConfig tree = nominal;
+            tree.name = nominal.name + "__" + variation;
+            tree.title = nominal.title + " [" + variation + "]";
+            tree.variation = variation;
+            tree.keptBranches = kept;
+            tree.neededScalars = needed;
+            variationTrees.push_back(std::move(tree));
+        }
+    }
+    for (auto& tree : variationTrees) {
+        branchConfig.trees.push_back(std::move(tree));
+    }
+}
+
+// Runtime collections whose content depends on the jet corrections: a jet input
+// source, a jet-dependent merge or deduplication partner, or an expression that
+// reads a jet collection or field, a jet-dependent collection, or a corrected
+// MET scalar. The other collections are built once per event and shared by
+// every jet-correction configuration.
+unordered_set<string> jetDependentCollections(const SelectionConfig& selectionConfig) {
+    const string ak4Prefix = string(kAk4JetCollection) + "_";
+    const string ak8Prefix = string(kAk8JetCollection) + "_";
+    unordered_set<string> dependent;
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const auto& name : selectionConfig.collectionOrder) {
+            if (dependent.count(name) > 0) {
+                continue;
+            }
+            const RuntimeCollectionConfig& config = selectionConfig.collections.at(name);
+            bool jetDependent = (config.source == kAk4JetCollection || config.source == kAk8JetCollection) ||
+                                (!config.dedupCollection.empty() && dependent.count(config.dedupCollection) > 0);
+            for (const auto& child : config.merge) {
+                jetDependent = jetDependent || dependent.count(child) > 0;
+            }
+            vector<string> identifiers;
+            collectIdentifiers(config.selectionExpr, identifiers);
+            collectIdentifiers(config.dedupExpr, identifiers);
+            collectIdentifiers(config.sortRule.expr, identifiers);
+            for (const auto& identifier : identifiers) {
+                jetDependent = jetDependent || dependent.count(identifier) > 0 ||
+                               identifier == kAk4JetCollection || identifier == kAk8JetCollection ||
+                               startsWith(identifier, ak4Prefix) || startsWith(identifier, ak8Prefix) ||
+                               identifier == kMetPtScalar || identifier == kMetPhiScalar;
+            }
+            if (jetDependent) {
+                dependent.insert(name);
+                changed = true;
+            }
+        }
+    }
+    return dependent;
+}
+
+// The event preselection is evaluated once per event on the input scalars,
+// before the jet corrections, so it must not read the MET scalars they change.
+void requirePreselectionWithoutCorrectedInputs(const SelectionConfig& selectionConfig,
+                                               const JetPtCorrectionConfig& cfg) {
+    if (!cfg.enabled) {
+        return;
+    }
+    for (const char* name : {kMetPtScalar, kMetPhiScalar}) {
+        if (referencesIdentifier(selectionConfig.eventPreselection, name)) {
+            throw runtime_error(string("event_preselection reads ") + name +
+                                ", which the jet corrections change (Type-1 MET); cut on it in "
+                                "tree_selection instead");
+        }
+    }
+}
+
 Long64_t processInputFile(const string& inputFileName,
                           const AppConfig& appConfig,
                           const SelectionConfig& selectionConfig,
                           const SampleMeta& sampleMeta,
                           const vector<PileupBin>& pileupWeights,
                           const LumiMask* lumiMask,
+                          const JetPtCorrector& jetCorrector,
                           BranchConfig& branchConfig,
                           vector<OutputTreeState>& outputTrees) {
     unique_ptr<TFile> inputFile;
@@ -4139,6 +5238,26 @@ Long64_t processInputFile(const string& inputFileName,
         }
     }
 
+    // Output trees filled by each jet-correction configuration.
+    const vector<CorrectionConfiguration>& configurations = jetCorrector.configurations(sampleMeta.isMC);
+    vector<vector<OutputTreeState*>> treesByConfiguration(configurations.size());
+    for (auto& treeState : outputTrees) {
+        const auto configurationIt = find_if(configurations.begin(), configurations.end(),
+                                             [&](const CorrectionConfiguration& configuration) {
+                                                 return configuration.variation == treeState.config.variation;
+                                             });
+        if (configurationIt == configurations.end()) {
+            throw runtime_error("No jet correction configuration fills output tree " + treeState.config.name);
+        }
+        treesByConfiguration[configurationIt - configurations.begin()].push_back(&treeState);
+    }
+    JetCorrectionInputs correctionInputs;
+    if (jetCorrector.enabled()) {
+        correctionInputs = jetCorrector.resolveInputs(branchConfig);
+    }
+    JetCorrectionEventState correctionState;
+    const unordered_set<string> jetDependent = jetDependentCollections(selectionConfig);
+
     Long64_t rawEntries = applyLumiMask ? 0 : nEntries;
     for (Long64_t entry = 0; entry < nEntries; ++entry) {
         if (applyLumiMask) {
@@ -4156,8 +5275,11 @@ Long64_t processInputFile(const string& inputFileName,
         tree->GetEntry(entry);
 
         const TheoryWeightBufs* theoryBufsPtr = sampleMeta.hasTheoryWeights ? &theoryInBuf : nullptr;
-        unordered_map<string, long double> baseVars = buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
+        const unordered_map<string, long double> baseVars =
+            buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
 
+        // The event preselection reads input scalars only, none of which the jet
+        // corrections change (see requirePreselectionWithoutCorrectedInputs).
         EvalContext preContext;
         preContext.vars = &baseVars;
         preContext.rawScalars = &rawScalarByName;
@@ -4170,34 +5292,59 @@ Long64_t processInputFile(const string& inputFileName,
         for (const auto& inputConfig : branchConfig.collections) {
             inputCollections[inputConfig.name] = buildInputCollection(inputConfig, baseVars);
         }
-
-        unordered_map<string, RuntimeCollection> runtimeCollections;
-        runtimeCollections.reserve(selectionConfig.collectionOrder.size());
-        unordered_set<string> activeCollections;
-        activeCollections.reserve(selectionConfig.collectionOrder.size());
-        for (const auto& name : selectionConfig.collectionOrder) {
-            buildRuntimeCollection(name, selectionConfig, inputCollections, runtimeCollections, activeCollections, baseVars, rawScalarByName);
+        if (jetCorrector.enabled()) {
+            jetCorrector.prepareEvent(correctionInputs, baseVars, sampleMeta.isMC, correctionState);
+        }
+        unordered_map<string, RuntimeCollection> sharedCollections;
+        {
+            unordered_set<string> activeCollections;
+            for (const auto& name : selectionConfig.collectionOrder) {
+                if (jetDependent.count(name) == 0) {
+                    buildRuntimeCollection(name, selectionConfig, inputCollections, sharedCollections,
+                                           activeCollections, baseVars, rawScalarByName);
+                }
+            }
         }
 
-        for (auto& treeState : outputTrees) {
-            const auto cutIt = selectionConfig.treeSelections.find(treeState.config.selection);
-            if (cutIt == selectionConfig.treeSelections.end()) {
-                throw runtime_error("Missing tree selection: " + treeState.config.selection);
+        for (size_t configurationIndex = 0; configurationIndex < configurations.size(); ++configurationIndex) {
+            unordered_map<string, long double> vars = baseVars;
+            if (jetCorrector.enabled()) {
+                jetCorrector.applyConfiguration(correctionInputs, correctionState,
+                                                configurations[configurationIndex], sampleMeta.isMC, vars);
+                inputCollections[kAk4JetCollection] = buildInputCollection(*correctionInputs.ak4, vars);
+                inputCollections[kAk8JetCollection] = buildInputCollection(*correctionInputs.ak8, vars);
             }
 
-            EvalContext treeContext;
-            treeContext.vars = &baseVars;
-            treeContext.collections = &runtimeCollections;
-            treeContext.inputCollections = &inputCollections;
-            treeContext.rawScalars = &rawScalarByName;
-            if (!evaluateCondition(cutIt->second, treeContext)) {
-                continue;
+            unordered_map<string, RuntimeCollection> runtimeCollections = sharedCollections;
+            runtimeCollections.reserve(selectionConfig.collectionOrder.size());
+            unordered_set<string> activeCollections;
+            activeCollections.reserve(selectionConfig.collectionOrder.size());
+            for (const auto& name : selectionConfig.collectionOrder) {
+                buildRuntimeCollection(name, selectionConfig, inputCollections, runtimeCollections,
+                                       activeCollections, vars, rawScalarByName);
             }
 
-            if (treeState.hasTheoryBranches) {
-                copyTheoryWeights(theoryInBuf, treeState.theoryOutBuf);
+            for (OutputTreeState* treeState : treesByConfiguration[configurationIndex]) {
+                const auto cutIt = selectionConfig.treeSelections.find(treeState->config.selection);
+                if (cutIt == selectionConfig.treeSelections.end()) {
+                    throw runtime_error("Missing tree selection: " + treeState->config.selection);
+                }
+
+                EvalContext treeContext;
+                treeContext.vars = &vars;
+                treeContext.collections = &runtimeCollections;
+                treeContext.inputCollections = &inputCollections;
+                treeContext.rawScalars = &rawScalarByName;
+                if (!evaluateCondition(cutIt->second, treeContext)) {
+                    continue;
+                }
+
+                if (treeState->hasTheoryBranches) {
+                    copyTheoryWeights(theoryInBuf, treeState->theoryOutBuf);
+                }
+                fillOutputTree(*treeState, runtimeCollections, inputCollections, vars, rawScalarByName,
+                               sampleMeta.isMC);
             }
-            fillOutputTree(treeState, runtimeCollections, inputCollections, baseVars, rawScalarByName, sampleMeta.isMC);
         }
     }
     return rawEntries;
@@ -4212,6 +5359,7 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
                                            const SampleMeta& sampleMeta,
                                            const vector<PileupBin>& pileupWeights,
                                            const LumiMask* lumiMask,
+                                           const JetPtCorrector& jetCorrector,
                                            const BranchConfig& branchConfig,
                                            atomic<size_t>& processedFiles,
                                            size_t totalFiles,
@@ -4246,7 +5394,10 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
     if (sampleMeta.hasTheoryWeights) {
         for (auto& result : threadResults) {
             for (auto& treeState : result.outputTrees) {
-                setupTheoryOutputBranches(treeState);
+                // Variation trees keep only their listed branches.
+                if (treeState.config.variation.empty()) {
+                    setupTheoryOutputBranches(treeState);
+                }
             }
         }
     }
@@ -4277,6 +5428,7 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
                                                               sampleMeta,
                                                               pileupWeights,
                                                               lumiMask,
+                                                              jetCorrector,
                                                               threadConfigs[tid],
                                                               threadResults[tid].outputTrees);
                 batchRawEntries.fetch_add(fileEntries);
@@ -4468,6 +5620,7 @@ int main(int argc, char** argv) {
         appConfig = loadAppConfig();
         branchConfig = loadBranchConfig(appConfig);
         selectionConfig = loadSelectionConfig(appConfig);
+        requirePreselectionWithoutCorrectedInputs(selectionConfig, appConfig.jetPtCorrection);
     } catch (const exception& ex) {
         cerr << "Configuration error: " << ex.what() << endl;
         return 1;
@@ -4494,6 +5647,15 @@ int main(int argc, char** argv) {
         sampleMeta = resolveSampleMeta(sample, appConfig);
     } catch (const exception& ex) {
         cerr << "Sample resolution error: " << ex.what() << endl;
+        return 1;
+    }
+
+    // The variation trees are part of the output layout of an MC sample, for the
+    // batch outputs and for the final merge alike.
+    try {
+        addVariationTrees(branchConfig, appConfig.jetPtCorrection, sampleMeta.isMC);
+    } catch (const exception& ex) {
+        cerr << "Configuration error: " << ex.what() << endl;
         return 1;
     }
 
@@ -4590,6 +5752,26 @@ int main(int argc, char** argv) {
         }
     }
 
+    JetPtCorrector jetCorrector;
+    try {
+        jetCorrector.initialize(appConfig.jetPtCorrection);
+        if (jetCorrector.enabled()) {
+            jetCorrector.resolveInputs(branchConfig);
+            cout << "Jet corrections: " << jetCorrector.describe(sampleMeta.isMC) << endl;
+            const unordered_set<string> jetDependent = jetDependentCollections(selectionConfig);
+            cout << "Runtime collections built once per event (independent of the jet corrections):";
+            for (const auto& name : selectionConfig.collectionOrder) {
+                if (jetDependent.count(name) == 0) {
+                    cout << ' ' << name;
+                }
+            }
+            cout << endl;
+        }
+    } catch (const exception& ex) {
+        cerr << "Jet pt correction error: " << ex.what() << endl;
+        return 1;
+    }
+
 #ifdef _OPENMP
     if (threadCount > 1) {
         ROOT::EnableThreadSafety();
@@ -4663,6 +5845,7 @@ int main(int argc, char** argv) {
                                                                                  sampleMeta,
                                                                                  pileupWeights,
                                                                                  lumiMask.get(),
+                                                                                 jetCorrector,
                                                                                  branchConfig,
                                                                                  processedFiles,
                                                                                  inputFiles.size(),

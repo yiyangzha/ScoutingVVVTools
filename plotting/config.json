@@ -7,7 +7,7 @@
   "output_root_nosel": "./no-selection_btagged/{tree_name}",
   "output_shapes": "./class-shapes/{tree_name}",
   "output_shapes_nosel": "./class-shapes_nosel/{tree_name}",
-  "data_samples": ["data_2024"],
+  "data_samples": ["2024G_UParT_v6"],
   "default_bins": 50,
   "event_reweight_branches": {
     "boosted3": ["weight_pu"],

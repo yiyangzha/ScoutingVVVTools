@@ -1,0 +1,26 @@
+{
+  "tree_name": "Events",
+  "run_sample": "www",
+  "submit_samples": [],
+  "max_threads": 18,
+  "max_output_file_size_gb": 5,
+  "resume_successful_batches": true,
+  "lumi_mask": "Cert_Collisions2024_378981_386951_Golden.json",
+  "pu_weight_path": "../weight/pileup/pileup_{sample}.csv",
+  "output_root": "../../dataset_hybrid_leptonic_jer_up",
+  "output_pattern": "{output_root}/{sample_group}/{sample}.root",
+  "sample_config": "../../src/sample.json",
+  "jet_pt_correction": {
+    "enabled": true,
+    "corrections_file": "../../scoutingPUPPI_corrections.json.gz",
+    "jes_jer_file": "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/JME/2024_Summer24/jet_jerc.json.gz",
+    "jer_smear_file": "/cvmfs/cms.cern.ch/rsync/cms-nanoAOD/jsonpog-integration/POG/JME/jer_smear.json.gz",
+    "jes_unc_name": "Summer24Prompt24_V1_MC_Total_AK4PFPuppi",
+    "jer_resolution_name": "Summer23BPixPrompt23_RunD_JRV1_MC_PtResolution_AK4PFPuppi",
+    "jer_scale_factor_name": "Summer23BPixPrompt23_RunD_JRV1_MC_ScaleFactor_AK4PFPuppi",
+    "jer_rho_fallback": 25.0,
+    "ak4_tag_threshold": 0.5,
+    "ak8_tag_threshold": 0.5,
+    "variation": "jer_up"
+  }
+}
