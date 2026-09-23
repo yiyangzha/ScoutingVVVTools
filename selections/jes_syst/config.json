@@ -2,8 +2,6 @@
   "submit_trees": ["boosted3", "boosted2_resolved", "boosted2_unresolved", "boosted2_leptonic_1lep", "boosted2_leptonic_2lep"],
   "sample_config": "../../src/sample.json",
   "input_root": "../../dataset_hybrid_leptonic",
-  "input_root_up": "../../dataset_hybrid_leptonic_jes_up",
-  "input_root_down": "../../dataset_hybrid_leptonic_jes_down",
   "input_pattern": "{input_root}/{sample_group}/{sample}.root",
   "bdt_root": {
     "boosted3": "../BDT/boosted3",
@@ -20,7 +18,7 @@
     "boosted2_leptonic_2lep": "../signal_region/output/boosted2_leptonic_2lep_hist/signal_region.csv"
   },
   "weight_branch": "weight_pu",
-  "min_region_events": 1,
+  "min_region_events": 10,
   "output_dir": "./output",
   "chunk_size": "200 MB",
   "submit_samples": []

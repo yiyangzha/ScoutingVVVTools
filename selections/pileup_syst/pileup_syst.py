@@ -16,10 +16,12 @@ For each (sample, tree) reports:
   pu_down = sum(weight_pu_down) / sum(weight_pu)
 
 Region assignment uses the same BDT model + per-class rectangle definition
-as qcd_est.py (via selections/BDT/model_io.py), so the SR bins match the
-ABCD method exactly.  Trees without a configured signal_region_csv fall back
-to inclusive-only (graceful degradation — fat3 has no SR CSV yet).
-Low-stat regions fall back to the inclusive ratio (min_region_events config).
+as qcd_est.py (via selections/BDT/model_io.py), and the BDT thresholds
+(the ABCD window included) with qcd_est.py's semantics (sentinel values
+fail), so each SR is the ABCD A region.  Trees without a configured
+signal_region_csv report the inclusive ratios only; a configured but missing
+input is an error.  Regions with fewer than min_region_events nominal MC
+events take the inclusive ratios.
 
 Outputs (written to output_dir):
   pileup_syst_yields.json  -- {sample: {tree: {nom_sum, n_events, pu_up, pu_down,
@@ -213,7 +215,7 @@ def _load_thresholds(bdt_dir, tree_name):
         return {}
     sel_path = os.path.join(bdt_dir, "selection.json")
     if not os.path.exists(sel_path):
-        return {}
+        raise FileNotFoundError(f"bdt_root has no selection.json: {sel_path}")
     sel = _load_json(sel_path)
     return sel.get(tree_name, {}).get("thresholds", {})
 
@@ -227,17 +229,13 @@ def _build_tree_context(tree):
     if bdt_dir is None or sr_csv is None:
         log(f"  [{tree}] no signal_region_csv/bdt_root configured -> inclusive only")
         return ctx
-    if not os.path.exists(sr_csv):
-        log(f"  [{tree}] signal_region CSV not found ({sr_csv}) -> inclusive only")
-        return ctx
 
     bcfg_path = os.path.join(bdt_dir, "config.json")
     brj_path  = os.path.join(bdt_dir, "branch.json")
     sel_path  = os.path.join(bdt_dir, "selection.json")
-    for p in (bcfg_path, brj_path, sel_path):
+    for p in (sr_csv, bcfg_path, brj_path, sel_path):
         if not os.path.exists(p):
-            log(f"  [{tree}] missing {os.path.basename(p)} in bdt_root -> inclusive only")
-            return ctx
+            raise FileNotFoundError(f"[{tree}] configured input not found: {p}")
 
     bcfg = _load_json(bcfg_path)
     brj  = _load_json(brj_path)
@@ -255,12 +253,10 @@ def _build_tree_context(tree):
 
     sr_df = pd.read_csv(sr_csv)
     if sr_df.empty:
-        log(f"  [{tree}] signal_region CSV is empty -> inclusive only")
-        return ctx
+        raise ValueError(f"[{tree}] signal_region CSV is empty: {sr_csv}")
     axes = _detect_signal_region_axes(sr_df, class_names)
     if not axes:
-        log(f"  [{tree}] no per-class axes detected in CSV -> inclusive only")
-        return ctx
+        raise ValueError(f"[{tree}] no per-class axes in signal_region CSV: {sr_csv}")
     bin_ids = [int(round(float(v))) for v in sr_df["bin_index"].tolist()]
 
     ctx.update(
@@ -279,25 +275,51 @@ def _build_tree_context(tree):
 # Inference helpers
 # ---------------------------------------------------------------------------
 
+def _mask_from_cond(values, cond):
+    """qcd_est.py's _mask_from_cond on a numpy array: a number is a lower cut,
+    [low, high] a window (None = open), a list of conditions their OR, and a
+    {"&"/"and"/"|"/"or": [...]} dict their AND/OR."""
+    if cond is None:
+        return np.ones(values.shape[0], dtype=bool)
+    if isinstance(cond, (int, float)):
+        return values > float(cond)
+    if isinstance(cond, (list, tuple)) and len(cond) == 2 and not isinstance(cond[0], (list, dict, tuple)):
+        low, high = cond
+        mask = np.ones(values.shape[0], dtype=bool)
+        if low is not None:
+            mask &= values > low
+        if high is not None:
+            mask &= values < high
+        return mask
+    if isinstance(cond, (list, tuple)):
+        mask = np.zeros(values.shape[0], dtype=bool)
+        for item in cond:
+            mask |= _mask_from_cond(values, item)
+        return mask
+    if isinstance(cond, dict):
+        for key, is_and in (("&", True), ("and", True), ("|", False), ("or", False)):
+            if key not in cond:
+                continue
+            mask = np.full(values.shape[0], is_and, dtype=bool)
+            for item in cond[key]:
+                sub = _mask_from_cond(values, item)
+                mask = (mask & sub) if is_and else (mask | sub)
+            return mask
+        raise ValueError(f"Unsupported dict condition keys: {cond}")
+    raise TypeError(f"Unsupported condition type: {type(cond)}")
+
+
 def _threshold_mask(data_np, thresholds):
-    if not thresholds:
-        n = len(next(iter(data_np.values()))) if data_np else 0
-        return np.ones(n, dtype=bool)
+    """Events passing every threshold, with qcd_est.py's semantics: a sentinel
+    value (< -990) fails, otherwise the condition decides."""
     n = len(next(iter(data_np.values())))
     mask = np.ones(n, dtype=bool)
     for branch, cond in thresholds.items():
         if branch not in data_np:
-            continue
-        arr = np.asarray(data_np[branch], dtype=float)
-        lo = hi = None
-        if isinstance(cond, (list, tuple)) and len(cond) == 2:
-            lo, hi = cond[0], cond[1]
-        elif isinstance(cond, (int, float)):
-            lo = cond
-        if lo is not None:
-            mask &= arr > float(lo)
-        if hi is not None:
-            mask &= arr < float(hi)
+            raise KeyError(f"Threshold branch {branch!r} was not loaded from the input tree")
+        values = np.asarray(data_np[branch], dtype=float)
+        mask &= ~(values < -990)
+        mask &= _mask_from_cond(values, cond)
     return mask
 
 
@@ -326,13 +348,15 @@ def _infer_proba(chunk, mask, ctx):
 def _compute_ratios(sample_name, ctx):
     """Accumulate inclusive (slot 0) and per-region (slots 1..N) PU weight sums.
 
-    Returns {"inclusive": dict_or_None, "regions": {bin_id: dict_or_None}}
-    or None if no files found or PU branches missing.
+    Returns {"inclusive": dict_or_None, "regions": {bin_id: dict_or_None}};
+    a slot is None when it has no nominal events.
     """
     files = _input_files(sample_name)
     if not files:
-        log(f"    no input files for {sample_name}, skipping")
-        return None
+        raise FileNotFoundError(
+            f"No converted files for MC sample {sample_name} under {INPUT_ROOT} "
+            f"(pattern {INPUT_PATTERN}); convert it or leave it out of submit_samples"
+        )
 
     thresholds = ctx["thresholds"]
     enabled    = ctx["regions_enabled"]
@@ -341,64 +365,50 @@ def _compute_ratios(sample_name, ctx):
     load_set = {"weight_pu", "weight_pu_up", "weight_pu_down", *thresholds.keys()}
     if enabled:
         load_set.update(ctx["feature_cols"])
-    load_list = list(load_set)
+    load_list = sorted(load_set)
 
     sum_w    = np.zeros(n_slots, dtype=np.float64)
     sum_w_up = np.zeros(n_slots, dtype=np.float64)
     sum_w_dn = np.zeros(n_slots, dtype=np.float64)
     n_events = np.zeros(n_slots, dtype=np.int64)
-    found_pu = False
 
     for fpath in files:
-        try:
-            with uproot.open(fpath) as uf:
-                if ctx["_tree"] not in uf:
+        with uproot.open(fpath) as uf:
+            if ctx["_tree"] not in uf:
+                raise KeyError(f"{fpath} has no tree {ctx['_tree']!r}; re-run mode 0 (convert)")
+            tree = uf[ctx["_tree"]]
+            missing = [b for b in load_list if b not in set(tree.keys())]
+            if missing:
+                raise KeyError(f"{fpath}:{ctx['_tree']} lacks the branches {missing} "
+                               f"(PU weights come from mode 1, weight.C)")
+
+            for chunk in tree.iterate(expressions=load_list, step_size=CHUNK_SIZE,
+                                      library="np"):
+                mask = _threshold_mask(chunk, thresholds)
+                if not mask.any():
                     continue
-                tree = uf[ctx["_tree"]]
-                avail = set(tree.keys())
-                missing = [b for b in ("weight_pu", "weight_pu_up", "weight_pu_down")
-                           if b not in avail]
-                if missing:
-                    log(f"    WARNING: {os.path.basename(fpath)} missing {missing} "
-                        f"— re-run mode 1 (weight.C)")
-                    continue
-                found_pu = True
-                actual = [b for b in load_list if b in avail]
 
-                for chunk in tree.iterate(expressions=actual, step_size=CHUNK_SIZE,
-                                          library="np"):
-                    mask = _threshold_mask(chunk, thresholds)
-                    if not mask.any():
-                        continue
+                w    = np.asarray(chunk["weight_pu"],      dtype=np.float64)[mask]
+                w_up = np.asarray(chunk["weight_pu_up"],   dtype=np.float64)[mask]
+                w_dn = np.asarray(chunk["weight_pu_down"], dtype=np.float64)[mask]
 
-                    w    = np.asarray(chunk["weight_pu"],      dtype=np.float64)[mask]
-                    w_up = np.asarray(chunk["weight_pu_up"],   dtype=np.float64)[mask]
-                    w_dn = np.asarray(chunk["weight_pu_down"], dtype=np.float64)[mask]
+                sum_w[0]    += float(w.sum())
+                sum_w_up[0] += float(w_up.sum())
+                sum_w_dn[0] += float(w_dn.sum())
+                n_events[0] += int(mask.sum())
 
-                    sum_w[0]    += float(w.sum())
-                    sum_w_up[0] += float(w_up.sum())
-                    sum_w_dn[0] += float(w_dn.sum())
-                    n_events[0] += int(mask.sum())
-
-                    if enabled:
-                        proba = _infer_proba(chunk, mask, ctx)
-                        for j in range(len(ctx["bin_ids"])):
-                            rmask = _region_mask(
-                                proba, ctx["sr_df"].iloc[j], ctx["axes"],
-                                ctx["class_names"]
-                            )
-                            if rmask.any():
-                                sum_w[j + 1]    += float(w[rmask].sum())
-                                sum_w_up[j + 1] += float(w_up[rmask].sum())
-                                sum_w_dn[j + 1] += float(w_dn[rmask].sum())
-                                n_events[j + 1] += int(rmask.sum())
-        except Exception as exc:
-            log(f"    error reading {fpath}: {exc}")
-            continue
-
-    if not found_pu:
-        log(f"    [{sample_name}] PU branches missing in all files")
-        return None
+                if enabled:
+                    proba = _infer_proba(chunk, mask, ctx)
+                    for j in range(len(ctx["bin_ids"])):
+                        rmask = _region_mask(
+                            proba, ctx["sr_df"].iloc[j], ctx["axes"],
+                            ctx["class_names"]
+                        )
+                        if rmask.any():
+                            sum_w[j + 1]    += float(w[rmask].sum())
+                            sum_w_up[j + 1] += float(w_up[rmask].sum())
+                            sum_w_dn[j + 1] += float(w_dn[rmask].sum())
+                            n_events[j + 1] += int(rmask.sum())
 
     def _slot_ratios(slot):
         w = sum_w[slot]
@@ -450,11 +460,9 @@ def main():
         for sample_name in MC_SAMPLES:
             log(f"  {sample_name} ...")
             res = _compute_ratios(sample_name, ctx)
-            if res is None:
-                continue
             incl = res["inclusive"]
             if incl is None:
-                log(f"    [{sample_name}/{tree_name}] nominal weight sum is zero, skipping")
+                log(f"    [{sample_name}/{tree_name}] no nominal events after the thresholds -> no entry")
                 continue
 
             entry = dict(incl)   # inclusive ratios at top level (back-compatible)
@@ -467,8 +475,12 @@ def main():
                     if rr is None or rr["n_events"] < MIN_REGION_EVENTS:
                         n_have = 0 if rr is None else rr["n_events"]
                         log(f"    SR{bid}: only {n_have} events "
-                            f"(< {MIN_REGION_EVENTS}); falling back to inclusive ratio")
-                        region_out[str(bid)] = {**incl, "fallback_to_inclusive": True}
+                            f"(< {MIN_REGION_EVENTS}); taking the inclusive ratios")
+                        region_out[str(bid)] = {
+                            "nom_sum": 0.0 if rr is None else rr["nom_sum"], "n_events": n_have,
+                            "pu_up": incl["pu_up"], "pu_down": incl["pu_down"],
+                            "fallback_to_inclusive": True,
+                        }
                     else:
                         region_out[str(bid)] = rr
                         log(f"    SR{bid}: n={rr['n_events']}"

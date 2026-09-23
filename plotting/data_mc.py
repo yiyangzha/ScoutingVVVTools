@@ -582,8 +582,9 @@ def _theory_shape_band(member_hist):
     scale_up = np.clip(scale.max(axis=1) - central, 0.0, None)
     scale_dn = np.clip(central - scale.min(axis=1), 0.0, None)
 
-    isr = member_hist[:, [_TH_OFF_PS + 0, _TH_OFF_PS + 1]]
-    fsr = member_hist[:, [_TH_OFF_PS + 2, _TH_OFF_PS + 3]]
+    # PSWeight: [0] isr.murfac=2.0; [1] fsr.murfac=2.0; [2] isr.murfac=0.5; [3] fsr.murfac=0.5.
+    isr = member_hist[:, [_TH_OFF_PS + 0, _TH_OFF_PS + 2]]
+    fsr = member_hist[:, [_TH_OFF_PS + 1, _TH_OFF_PS + 3]]
     isr_up = np.clip(isr.max(axis=1) - central, 0.0, None)
     isr_dn = np.clip(central - isr.min(axis=1), 0.0, None)
     fsr_up = np.clip(fsr.max(axis=1) - central, 0.0, None)

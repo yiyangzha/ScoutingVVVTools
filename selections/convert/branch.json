@@ -426,6 +426,11 @@
             "onlyMC": false
           },
           {
+            "name": "ScoutingFatPFJetRecluster_area",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
             "name": "ScoutingFatPFJetRecluster_scoutGlobalParT_prob_Xud",
             "type": "F",
             "onlyMC": false
@@ -507,6 +512,16 @@
             "onlyMC": false
           },
           {
+            "name": "ScoutingPFJetRecluster2_area",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_rawFactor",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
             "name": "ScoutingPFJetRecluster2_nConstituents",
             "type": "I",
             "onlyMC": false
@@ -518,6 +533,11 @@
           },
           {
             "name": "ScoutingPFJetRecluster2_neEmEF",
+            "type": "F",
+            "onlyMC": false
+          },
+          {
+            "name": "ScoutingPFJetRecluster2_chEmEF",
             "type": "F",
             "onlyMC": false
           },
