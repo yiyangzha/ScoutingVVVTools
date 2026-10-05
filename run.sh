@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAX_CONCURRENT_JOBS=1
 USE_SLURM=false
-SLURM_PARTITION="cms-express"
+SLURM_ACCOUNT="cms-express"
+SLURM_PARTITION=""
 SLURM_TIME="24:00:00"
 SLURM_MEM="4G"
 SLURM_CPUS=12
@@ -121,6 +122,7 @@ esac
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --slurm)            USE_SLURM=true;           shift ;;
+    --slurm-account)    SLURM_ACCOUNT="$2";       shift 2 ;;
     --slurm-partition)  SLURM_PARTITION="$2";     shift 2 ;;
     --slurm-time)       SLURM_TIME="$2";          shift 2 ;;
     --slurm-mem)        SLURM_MEM="$2";           shift 2 ;;
@@ -129,6 +131,13 @@ while [[ "$#" -gt 0 ]]; do
     *)                  break ;;
   esac
 done
+
+if $USE_SLURM && [ "${MODE}" = "0" ]; then
+  # run.sh would submit the whole sample as one unbatched job; run.py submits one job per
+  # batch plus a dependent merge job and keeps the binary queued jobs use.
+  echo "mode=0 with --slurm is not supported by run.sh; use: python3 run.py 0 [config.json] [samples...] --slurm" >&2
+  exit 1
+fi
 
 if $USE_SLURM; then
   if [ ! -f "${X509_SRC}" ]; then
@@ -536,7 +545,8 @@ reap_finished_jobs_slurm() {
 
   RUNNING_PIDS=("${new_pids[@]}")
   RUNNING_SAMPLES=("${new_samples[@]}")
-  return "${finished_any}"
+  # Success (0) when at least one job finished, so callers sleep only when none did.
+  [ "${finished_any}" -eq 1 ]
 }
 
 reap_finished_jobs_local() {
@@ -568,7 +578,8 @@ reap_finished_jobs_local() {
 
   RUNNING_PIDS=("${new_pids[@]}")
   RUNNING_SAMPLES=("${new_samples[@]}")
-  return "${finished_any}"
+  # Success (0) when at least one job finished, so callers sleep only when none did.
+  [ "${finished_any}" -eq 1 ]
 }
 
 launch_job() {
@@ -586,7 +597,8 @@ launch_job() {
       --mem="${SLURM_MEM}"
       --time="${SLURM_TIME}"
     )
-    [ -n "${SLURM_PARTITION}" ] && sbatch_args+=(--account="${SLURM_PARTITION}")
+    [ -n "${SLURM_ACCOUNT}" ]   && sbatch_args+=(--account="${SLURM_ACCOUNT}")
+    [ -n "${SLURM_PARTITION}" ] && sbatch_args+=(--partition="${SLURM_PARTITION}")
     [ -n "${SLURM_EXTRA}" ]     && sbatch_args+=($SLURM_EXTRA)
 
     local job_id
@@ -602,7 +614,8 @@ launch_job() {
     if [ "${MODE}" = "0" ]; then
       (
         set -e
-        batch_count="$(env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" "${BIN_PATH}" "${sample}" --batch-count)"
+        # A new run re-queries DAS and rewrites the file-list snapshot all batches then share.
+        batch_count="$(env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" CONVERT_REFRESH_FILE_LIST=1 "${BIN_PATH}" "${sample}" --batch-count | tail -n 1)"
         if [[ ! "${batch_count}" =~ ^[0-9]+$ ]] || [ "${batch_count}" -le 0 ]; then
           echo "Invalid convert batch count for sample=${sample}: ${batch_count}" >&2
           exit 1
@@ -630,11 +643,12 @@ launch_job() {
           fi
         done
         if [ "${batch_failures}" -gt 0 ]; then
-          echo "[$(timestamp)] warning: sample=${sample} completed with ${batch_failures}/${batch_count} failed batch(es); final output uses successful batches only"
+          # Merging only the successful batches would silently drop events (and data luminosity).
+          echo "[$(timestamp)] error: sample=${sample} has ${batch_failures}/${batch_count} failed batch(es); not merging -- rerun to retry the failed batches"
+          exit 1
         fi
-        echo "[$(timestamp)] running sample=${sample} final merge from successful batches"
+        echo "[$(timestamp)] running sample=${sample} final merge"
         env "${CONFIG_ENV_VAR}=${CONFIG_PATH}" \
-          "CONVERT_SUCCESSFUL_BATCHES=${successful_batches}" \
           "${BIN_PATH}" "${sample}" --merge-successful-batches
       ) &
     else

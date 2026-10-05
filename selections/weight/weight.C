@@ -498,13 +498,28 @@ void writeCsv(const string& outputPath,
 
     fout << "bin_low,bin_max,weight,weight_low,weight_high\n";
     fout << fixed << setprecision(10);
+    // Data probability that falls into bins without MC events gets weight 0 (it cannot be
+    // represented by the MC); report it so a sizeable loss is not silent.
+    double lostNominal = 0.;
+    double lostLow = 0.;
+    double lostHigh = 0.;
     for (int bin = 1; bin <= reference->GetNbinsX(); ++bin) {
         const WeightTriplet weights = computeWeights(dataNominal, dataLow, dataHigh, mc, bin);
+        if (mc->GetBinContent(bin) <= 0.) {
+            lostNominal += dataNominal->GetBinContent(bin);
+            lostLow += dataLow->GetBinContent(bin);
+            lostHigh += dataHigh->GetBinContent(bin);
+        }
         fout << reference->GetXaxis()->GetBinLowEdge(bin) << ","
              << reference->GetXaxis()->GetBinUpEdge(bin) << ","
              << weights.nominal << ","
              << weights.low << ","
              << weights.high << "\n";
+    }
+    if (lostNominal > 1e-6 || lostLow > 1e-6 || lostHigh > 1e-6) {
+        cerr << "Warning: " << outputPath << ": data pileup probability in bins without MC events"
+             << " (weight 0): nominal=" << lostNominal << ", low=" << lostLow
+             << ", high=" << lostHigh << endl;
     }
 }
 

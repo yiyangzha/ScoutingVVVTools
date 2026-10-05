@@ -15,7 +15,9 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -23,11 +25,13 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include <TBranch.h>
-#include <TChain.h>
 #include <TFile.h>
+#include <TFileMerger.h>
 #include <TH1.h>
 #include <TList.h>
 #include <TLorentzVector.h>
@@ -75,6 +79,12 @@ const char* kGoldenJsonEnvVar = "CONVERT_GOLDEN_JSON";
 const char* kDefaultSampleConfigPath = "../../src/sample.json";
 const int kRemoteInputOpenRetries = 5;
 const unsigned int kRemoteInputRetrySleepSeconds = 5;
+// Set to 1 (run.py does this for a new mode-0 submission) to re-query DAS and overwrite the
+// per-sample input file-list snapshot; otherwise an existing snapshot is reused.
+const char* kRefreshFileListEnvVar = "CONVERT_REFRESH_FILE_LIST";
+// ZSTD level 5 for every ROOT file convert writes (thread temps, batch and final outputs),
+// so the batch and final merges can copy the compressed baskets unchanged (fast merge).
+const int kOutputCompression = 505;
 
 // Jet/MET corrections (see JetPtCorrector).
 const char* kAk4JetCollection = "ScoutingPFJetRecluster2";
@@ -125,14 +135,88 @@ enum class ExprKind {
     Member,
 };
 
+// Operator / function / reserved-identifier code, resolved once from Expression::text at parse
+// time so evaluation dispatches on an enum instead of comparing strings for every node.
+enum class Op {
+    None,
+    Plus, Minus, Not, Mul, Div, Lt, Le, Gt, Ge, Eq, Ne, And, Or,
+    True, False, Self, Other,
+    Abs, Sqrt, Cos, Sin, Pow, Min, Max, SafeDiv, FirstValid, Size,
+    Sum, MaxValue, MinValue, Sphericity, Aplanarity, Planarity,
+    NthMaxValue, ValueAtMax, ValueAtNthMax, ValueAt,
+    FirstAncestorIndex, FirstNonQgAncestorIndex, FirstBosonAncestorIndex,
+    CountHadronicTauFromWz, CountLeptonicTauFromWz,
+    PairP4MinDr, PairP4ClosestWzMass, PairIndexMinDr, PairIndexClosestWzMass,
+    PairP4CombinedWzDr, PairIndexCombinedWzDr, PairP4SfosZMass, PairIndexSfosZMass,
+    Mass, Pt, Eta, Phi, DeltaR, DeltaPhi, RelPtDiff,
+    PairMinDeltaR, PairMaxDeltaR, PairMinDeltaPhi, PairMaxDeltaPhi,
+    ClosestDeltaR, MinDeltaR, MaxRatioWithinDr, DeltaPhiAtMinDeltaR,
+};
+
 struct Expression {
     ExprKind kind = ExprKind::Number;
+    Op op = Op::None;
     long double number = 0.;
     string text;
     ExprPtr lhs;
     ExprPtr rhs;
     vector<ExprPtr> args;
+    // Identifier nodes, filled once by resolveEngineSymbols: the event-variable slot, the
+    // runtime/input collection slots (-1: no such name) and, per ObjectSchema::id, the field index
+    // (-1: not a field of that schema).
+    bool resolved = false;
+    int varSlot = -1;
+    int runtimeSlot = -1;
+    int inputSlot = -1;
+    vector<int> fieldIndex;
 };
+
+Op operatorOp(const string& text) {
+    static const unordered_map<string, Op> ops = {
+        {"+", Op::Plus}, {"-", Op::Minus}, {"!", Op::Not}, {"*", Op::Mul}, {"/", Op::Div},
+        {"<", Op::Lt}, {"<=", Op::Le}, {">", Op::Gt}, {">=", Op::Ge}, {"==", Op::Eq},
+        {"!=", Op::Ne}, {"&&", Op::And}, {"||", Op::Or},
+    };
+    const auto it = ops.find(text);
+    return (it != ops.end()) ? it->second : Op::None;
+}
+
+Op identifierOp(const string& text) {
+    if (text == "true") return Op::True;
+    if (text == "false") return Op::False;
+    if (text == "self") return Op::Self;
+    if (text == "other") return Op::Other;
+    return Op::None;
+}
+
+// Unknown names map to Op::None, which evalCall rejects as an unsupported function.
+Op functionOp(const string& text) {
+    static const unordered_map<string, Op> ops = {
+        {"abs", Op::Abs}, {"sqrt", Op::Sqrt}, {"cos", Op::Cos}, {"sin", Op::Sin}, {"pow", Op::Pow},
+        {"min", Op::Min}, {"max", Op::Max}, {"safe_div", Op::SafeDiv}, {"first_valid", Op::FirstValid},
+        {"size", Op::Size}, {"sum", Op::Sum}, {"max_value", Op::MaxValue}, {"min_value", Op::MinValue},
+        {"sphericity", Op::Sphericity}, {"aplanarity", Op::Aplanarity}, {"planarity", Op::Planarity},
+        {"nth_max_value", Op::NthMaxValue}, {"value_at_max", Op::ValueAtMax},
+        {"value_at_nth_max", Op::ValueAtNthMax}, {"value_at", Op::ValueAt},
+        {"first_ancestor_index", Op::FirstAncestorIndex},
+        {"first_nonqg_ancestor_index", Op::FirstNonQgAncestorIndex},
+        {"first_boson_ancestor_index", Op::FirstBosonAncestorIndex},
+        {"count_hadronic_tau_from_wz", Op::CountHadronicTauFromWz},
+        {"count_leptonic_tau_from_wz", Op::CountLeptonicTauFromWz},
+        {"pair_p4_min_dr", Op::PairP4MinDr}, {"pair_p4_closest_wz_mass", Op::PairP4ClosestWzMass},
+        {"pair_index_min_dr", Op::PairIndexMinDr}, {"pair_index_closest_wz_mass", Op::PairIndexClosestWzMass},
+        {"pair_p4_combined_wz_dr", Op::PairP4CombinedWzDr}, {"pair_index_combined_wz_dr", Op::PairIndexCombinedWzDr},
+        {"pair_p4_sfos_z_mass", Op::PairP4SfosZMass}, {"pair_index_sfos_z_mass", Op::PairIndexSfosZMass},
+        {"mass", Op::Mass}, {"pt", Op::Pt}, {"eta", Op::Eta}, {"phi", Op::Phi},
+        {"deltaR", Op::DeltaR}, {"deltaPhi", Op::DeltaPhi}, {"relPtDiff", Op::RelPtDiff},
+        {"pair_min_deltaR", Op::PairMinDeltaR}, {"pair_max_deltaR", Op::PairMaxDeltaR},
+        {"pair_min_deltaPhi", Op::PairMinDeltaPhi}, {"pair_max_deltaPhi", Op::PairMaxDeltaPhi},
+        {"closest_deltaR", Op::ClosestDeltaR}, {"min_deltaR", Op::MinDeltaR},
+        {"max_ratio_within_dr", Op::MaxRatioWithinDr}, {"deltaPhi_at_min_deltaR", Op::DeltaPhiAtMinDeltaR},
+    };
+    const auto it = ops.find(text);
+    return (it != ops.end()) ? it->second : Op::None;
+}
 
 struct SortRule {
     string text;
@@ -140,10 +224,21 @@ struct SortRule {
     bool descending = true;
 };
 
+struct ObjectSchema;
+
 struct RuntimeCollectionConfig {
     string name;
     string source;
     vector<string> merge;
+    // Merge collections only (resolveEngineSymbols): the merged field schema and, per merged
+    // child, the child field index of every merged field (-1: the child lacks it -> def).
+    shared_ptr<const ObjectSchema> mergedSchema;
+    vector<vector<int>> mergeFieldMaps;
+    // Resolved slots (resolveEngineSymbols): input collection of `source`, runtime collections
+    // of `merge` and of `deduplicate_against` (-1: unset).
+    int sourceSlot = -1;
+    vector<int> mergeSlots;
+    int dedupSlot = -1;
     string selectionText = "1";
     ExprPtr selectionExpr;
     string dedupCollection;
@@ -157,7 +252,10 @@ struct SelectionConfig {
     string eventPreselectionText = "1";
     ExprPtr eventPreselection;
     vector<string> collectionOrder;
-    unordered_map<string, RuntimeCollectionConfig> collections;
+    // Indexed by runtime collection slot; a repeated name replaces the earlier definition.
+    vector<RuntimeCollectionConfig> collections;
+    unordered_map<string, int> collectionSlotByName;
+    vector<int> buildOrder;  // slots of collectionOrder
     unordered_map<string, string> treeSelectionText;
     unordered_map<string, ExprPtr> treeSelections;
 };
@@ -169,6 +267,7 @@ struct ScalarInputConfig {
     bool onlyMC = false;
     bool optional = false;
     bool bound = false;
+    int varSlot = -1;
     Short_t shortValue = 0;
     Int_t intValue = 0;
     UInt_t uintValue = 0;
@@ -356,6 +455,10 @@ struct InputCollectionConfig {
     int phiIndex = -1;
     int massIndex = -1;
     vector<ArrayInputConfig> fields;
+    // Set by resolveEngineSymbols: the field schema shared by every event's collection and the
+    // event-variable slot of sizeName.
+    shared_ptr<const ObjectSchema> schema;
+    int sizeSlot = -1;
 };
 
 struct OutputScalarConfig {
@@ -366,6 +469,13 @@ struct OutputScalarConfig {
     ExprPtr formula;
     string collection;
     int slots = 0;
+    // Set by resolveEngineSymbols: scalar outputs store their value in event-variable varSlot
+    // (later formulas of the tree can read it); a formula that is just an input scalar's name is
+    // copied exactly from branchConfig.scalars[exactScalarIndex]; collectionSlot is the runtime
+    // collection of slot outputs (-1: unknown).
+    int varSlot = -1;
+    int exactScalarIndex = -1;
+    int collectionSlot = -1;
 };
 
 struct TreeConfig {
@@ -384,13 +494,33 @@ struct TreeConfig {
     unordered_set<string> neededScalars;
 };
 
+// Slot of every name an expression can read as an event variable (input scalars, sample
+// metadata, MC weights, scalar output names), built by resolveEngineSymbols; -1: not a variable.
+struct EventVarLayout {
+    unordered_map<string, int> slotByName;
+    int sampleId = -1;
+    int isMC = -1;
+    int isSignal = -1;
+    int xsection = -1;
+    int lumi = -1;
+    int weightPu = -1;
+    int weightPuDown = -1;
+    int weightPuUp = -1;
+    int genWeight = -1;
+    int puTrueInt = -1;
+    int run = -1;
+    int luminosityBlock = -1;
+};
+
 struct BranchConfig {
     vector<ScalarInputConfig> scalars;
     vector<InputCollectionConfig> collections;
     vector<TreeConfig> trees;
+    EventVarLayout varLayout;
 };
 
 struct ObjectSchema {
+    int id = -1;  // index into Expression::fieldIndex
     vector<string> fields;
     unordered_map<string, size_t> indexByName;
 };
@@ -402,8 +532,38 @@ struct RuntimeObject {
 
 struct RuntimeCollection {
     string name;
-    ObjectSchema schema;
+    // Shared, immutable: the schema depends only on the configuration, not on the event.
+    shared_ptr<const ObjectSchema> schema;
     vector<RuntimeObject> objects;
+};
+
+// The event variables, indexed by EventVarLayout slot. defined[slot] == 0: the name has no value
+// (yet), e.g. a scalar output not computed so far in the current tree.
+struct EventVars {
+    vector<long double> values;
+    vector<unsigned char> defined;
+
+    void reset(size_t size) {
+        values.assign(size, 0.L);
+        defined.assign(size, 0);
+    }
+    void set(int slot, long double value) {
+        values[slot] = value;
+        defined[slot] = 1;
+    }
+    bool has(int slot) const {
+        return slot >= 0 && defined[slot] != 0;
+    }
+};
+
+// The event's collections: input collections by input slot (branch.json order) and runtime
+// collections by runtime slot; built/active mark the runtime collections built so far / in
+// progress (dependency-cycle check).
+struct EventCollections {
+    vector<RuntimeCollection> inputs;
+    vector<RuntimeCollection> runtime;
+    vector<unsigned char> built;
+    vector<unsigned char> active;
 };
 
 struct OutputBranchRuntime {
@@ -419,18 +579,16 @@ struct OutputBranchRuntime {
     ULong64_t ulong64Value = 0;
 };
 
-// Input buffers for reading LHE/PS theory weight branches from NANOAOD.
+// Input buffers for genWeight (all MC) and the LHE/PS theory weight arrays (theory samples).
+// The array buffers are sized per file from the largest stored count before binding.
 struct TheoryWeightBufs {
-    static constexpr int kMaxPdf   = 200;
-    static constexpr int kMaxScale =  20;
-    static constexpr int kMaxPS    =  10;
     float genWeight              = 1.f;
     int   nLHEPdfWeight          = 0;
-    float LHEPdfWeight[kMaxPdf]  = {};
+    vector<float> LHEPdfWeight;
     int   nLHEScaleWeight        = 0;
-    float LHEScaleWeight[kMaxScale] = {};
+    vector<float> LHEScaleWeight;
     int   nPSWeight              = 0;
-    float PSWeight[kMaxPS]       = {};
+    vector<float> PSWeight;
 };
 
 // Fixed-size output arrays written as branches to the converted ROOT trees.
@@ -439,6 +597,11 @@ struct TheoryOutBufs {
     static constexpr int kNAlphaS  =   2;
     static constexpr int kNScale   =   9;
     static constexpr int kNPS      =   4;
+    // Number of weights stored in the source NanoAOD (provenance, e.g. 101 = no alpha_s
+    // members, 8 = scale set without the nominal entry).
+    Int_t nLHEPdfWeight                  = 0;
+    Int_t nLHEScaleWeight                = 0;
+    Int_t nPSWeight                      = 0;
     float genWeight                      = 1.f;
     float LHEPdfWeight[kNPdf]            = {};
     float LHEPdfWeightAlphaS[kNAlphaS]   = {1.f, 1.f};
@@ -446,11 +609,18 @@ struct TheoryOutBufs {
     float PSWeight[kNPS]                 = {};
 };
 
+// Branch index of an output a variation tree does not book.
+const size_t kNoBranch = numeric_limits<size_t>::max();
+
 struct OutputTreeState {
     TreeConfig config;
     TTree* tree = nullptr;
     vector<OutputBranchRuntime> branches;
     unordered_map<string, size_t> branchIndexByName;
+    // Index in branches of every (config, slot), parallel to config.regularScalars /
+    // config.extremaScalars (empty for configs not booked).
+    vector<vector<size_t>> regularBranches;
+    vector<vector<size_t>> extremaBranches;
     TheoryOutBufs theoryOutBuf;
     bool hasTheoryBranches = false;
 };
@@ -540,6 +710,7 @@ struct AppConfig {
 struct BatchRequest {
     bool printBatchCount = false;
     bool mergeSuccessfulBatches = false;
+    bool updateGenWeightMean = false;
     bool singleBatch = false;
     size_t batchIndex = 0;
 };
@@ -547,6 +718,11 @@ struct BatchRequest {
 struct BatchTempCollection {
     vector<string> paths;
     Long64_t rawEntries = 0;
+    long double sumWeightPu = 0.L;
+    long double sumWeightPuUp = 0.L;
+    long double sumWeightPuDown = 0.L;
+    vector<string> skippedFiles;
+    set<pair<UInt_t, UInt_t>> lumis;
 };
 
 struct PileupBin {
@@ -613,10 +789,8 @@ struct LumiMask {
 };
 
 struct EvalContext {
-    const unordered_map<string, long double>* vars = nullptr;
-    const unordered_map<string, RuntimeCollection>* collections = nullptr;
-    const unordered_map<string, RuntimeCollection>* inputCollections = nullptr;
-    const unordered_map<string, const ScalarInputConfig*>* rawScalars = nullptr;
+    const EventVars* vars = nullptr;
+    const EventCollections* collections = nullptr;
     const RuntimeCollection* currentCollection = nullptr;
     const RuntimeObject* currentObject = nullptr;
     const RuntimeCollection* otherCollection = nullptr;
@@ -635,7 +809,9 @@ struct Value {
     long double number = 0.;
     const RuntimeCollection* collection = nullptr;
     const RuntimeObject* object = nullptr;
-    TLorentzVector p4;
+    // Kind::P4 only. TLorentzVector is a TObject; holding one inline made every (mostly numeric)
+    // Value large and expensive to construct, which was a measurable part of the event loop.
+    shared_ptr<const TLorentzVector> p4;
 };
 
 vector<string> getStringListOrScalar(const JsonValue& node, const string& key);
@@ -689,6 +865,7 @@ private:
     ExprPtr makeIdentifier(const string& name) {
         auto node = make_shared<Expression>();
         node->kind = ExprKind::Identifier;
+        node->op = identifierOp(name);
         node->text = name;
         return node;
     }
@@ -696,6 +873,7 @@ private:
     ExprPtr makeUnary(const string& op, ExprPtr arg) {
         auto node = make_shared<Expression>();
         node->kind = ExprKind::Unary;
+        node->op = operatorOp(op);
         node->text = op;
         node->lhs = std::move(arg);
         return node;
@@ -704,6 +882,7 @@ private:
     ExprPtr makeBinary(const string& op, ExprPtr lhs, ExprPtr rhs) {
         auto node = make_shared<Expression>();
         node->kind = ExprKind::Binary;
+        node->op = operatorOp(op);
         node->text = op;
         node->lhs = std::move(lhs);
         node->rhs = std::move(rhs);
@@ -713,6 +892,7 @@ private:
     ExprPtr makeCall(const string& name, vector<ExprPtr> args) {
         auto node = make_shared<Expression>();
         node->kind = ExprKind::Call;
+        node->op = functionOp(name);
         node->text = name;
         node->args = std::move(args);
         return node;
@@ -1270,7 +1450,6 @@ AppConfig loadAppConfig() {
 
     config.puWeightPathPattern = resolveConfiguredPathPattern(
         config.configPath, payload.getStringOr("pu_weight_path", ""));
-
     if (payload.contains("jet_pt_correction")) {
         const JsonValue& jc = payload.at("jet_pt_correction");
         // Keys of the removed one-variation-per-conversion scheme.
@@ -1323,92 +1502,118 @@ AppConfig loadAppConfig() {
     return config;
 }
 
+// Set a numeric field of one sample object in sample.json: replace the value when the
+// key exists, otherwise insert it on a new line after "raw_entries" (same indentation).
+// Holds an exclusive flock on <sample.json>.lock and writes through a per-process
+// temporary file, so concurrent per-sample jobs cannot lose each other's updates.
+void writeSampleNumericField(const string& sampleConfigPath,
+                             const string& sampleName,
+                             const string& key,
+                             const string& valueText) {
+    const string lockPath = sampleConfigPath + ".lock";
+    const int lockFd = open(lockPath.c_str(), O_CREAT | O_RDWR, 0644);
+    if (lockFd < 0 || flock(lockFd, LOCK_EX) != 0) {
+        if (lockFd >= 0) {
+            close(lockFd);
+        }
+        throw runtime_error("Cannot lock sample config via " + lockPath);
+    }
+    try {
+        ifstream fin(sampleConfigPath);
+        if (!fin) {
+            throw runtime_error("Cannot open sample config for " + key + " update: " + sampleConfigPath);
+        }
+        const string content((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
+        fin.close();
+
+        const size_t sampleKeyPos = content.find("\"sample\"");
+        const size_t colonPos = (sampleKeyPos == string::npos) ? string::npos : content.find(':', sampleKeyPos);
+        const size_t arrayPos = (colonPos == string::npos) ? string::npos : skipWhitespace(content, colonPos + 1);
+        if (arrayPos == string::npos || arrayPos >= content.size() || content[arrayPos] != '[') {
+            throw runtime_error("Cannot find 'sample' array in sample config: " + sampleConfigPath);
+        }
+        const size_t arrayEnd = findMatchingJsonDelimiter(content, arrayPos, '[', ']');
+        const regex namePattern("\"name\"\\s*:\\s*\"([^\"]+)\"");
+        const regex keyPattern("\"" + key + "\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?)");
+        const regex rawEntriesPattern("\"raw_entries\"\\s*:\\s*-?[0-9]+(?:\\.[0-9]+)?");
+        string updated = content;
+        bool foundSample = false;
+
+        size_t pos = arrayPos + 1;
+        while (pos < arrayEnd) {
+            pos = skipWhitespace(content, pos);
+            if (pos >= arrayEnd) {
+                break;
+            }
+            if (content[pos] == ',') {
+                ++pos;
+                continue;
+            }
+            if (content[pos] != '{') {
+                throw runtime_error("Expected sample object in sample config: " + sampleConfigPath);
+            }
+            const size_t objectEnd = findMatchingJsonDelimiter(content, pos, '{', '}');
+            const string objectText = content.substr(pos, objectEnd - pos + 1);
+            smatch nameMatch;
+            if (regex_search(objectText, nameMatch, namePattern) && nameMatch.size() >= 2 &&
+                nameMatch[1].str() == sampleName) {
+                smatch keyMatch;
+                smatch rawMatch;
+                if (regex_search(objectText, keyMatch, keyPattern) && keyMatch.size() >= 2) {
+                    updated.replace(pos + static_cast<size_t>(keyMatch.position(1)), keyMatch.length(1), valueText);
+                } else if (regex_search(objectText, rawMatch, rawEntriesPattern)) {
+                    const size_t keyStart = pos + static_cast<size_t>(rawMatch.position(0));
+                    const size_t lineStart = content.rfind('\n', keyStart);
+                    const string indent = (lineStart == string::npos)
+                        ? string() : content.substr(lineStart + 1, keyStart - lineStart - 1);
+                    const size_t insertPos = keyStart + static_cast<size_t>(rawMatch.length(0));
+                    updated.insert(insertPos, ",\n" + indent + "\"" + key + "\": " + valueText);
+                } else {
+                    throw runtime_error("Cannot find raw_entries for sample '" + sampleName +
+                                        "' in sample config: " + sampleConfigPath);
+                }
+                foundSample = true;
+                break;
+            }
+            pos = objectEnd + 1;
+        }
+        if (!foundSample) {
+            throw runtime_error("Cannot find sample '" + sampleName + "' in sample config: " + sampleConfigPath);
+        }
+
+        const fs::path targetPath(sampleConfigPath);
+        const fs::path tempPath = targetPath.string() + ".tmp." + to_string(static_cast<long long>(getpid()));
+        ofstream fout(tempPath);
+        if (!fout) {
+            throw runtime_error("Cannot write temporary sample config file: " + tempPath.string());
+        }
+        fout << updated;
+        fout.close();
+        if (!fout) {
+            throw runtime_error("Failed writing sample config file: " + tempPath.string());
+        }
+        std::error_code ec;
+        fs::rename(tempPath, targetPath, ec);
+        if (ec) {
+            throw runtime_error("Failed to replace sample config file '" + targetPath.string() +
+                                "': " + ec.message());
+        }
+    } catch (...) {
+        flock(lockFd, LOCK_UN);
+        close(lockFd);
+        throw;
+    }
+    flock(lockFd, LOCK_UN);
+    close(lockFd);
+}
+
+// raw_entries goes through the same locked writer, so concurrent merges (and
+// --update-genweight-mean jobs) cannot lose each other's sample.json updates.
 void writeSampleRawEntries(const string& sampleConfigPath,
                            const string& sampleName,
                            Long64_t rawEntries) {
-    ifstream fin(sampleConfigPath);
-    if (!fin) {
-        throw runtime_error("Cannot open sample config for raw_entries update: " + sampleConfigPath);
-    }
-
-    const string content((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
-    const size_t sampleKeyPos = content.find("\"sample\"");
-    if (sampleKeyPos == string::npos) {
-        throw runtime_error("Cannot find 'sample' array in sample config: " + sampleConfigPath);
-    }
-
-    const size_t colonPos = content.find(':', sampleKeyPos);
-    if (colonPos == string::npos) {
-        throw runtime_error("Malformed 'sample' entry in sample config: " + sampleConfigPath);
-    }
-
-    const size_t arrayPos = skipWhitespace(content, colonPos + 1);
-    if (arrayPos >= content.size() || content[arrayPos] != '[') {
-        throw runtime_error("Expected sample array in sample config: " + sampleConfigPath);
-    }
-
-    const size_t arrayEnd = findMatchingJsonDelimiter(content, arrayPos, '[', ']');
-    const regex namePattern("\"name\"\\s*:\\s*\"([^\"]+)\"");
-    const regex rawEntriesPattern("\"raw_entries\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)");
-    string updated = content;
-    bool foundSample = false;
-
-    size_t pos = arrayPos + 1;
-    while (pos < arrayEnd) {
-        pos = skipWhitespace(content, pos);
-        if (pos >= arrayEnd) {
-            break;
-        }
-        if (content[pos] == ',') {
-            ++pos;
-            continue;
-        }
-        if (content[pos] != '{') {
-            throw runtime_error("Expected sample object in sample config: " + sampleConfigPath);
-        }
-
-        const size_t objectEnd = findMatchingJsonDelimiter(content, pos, '{', '}');
-        const string objectText = content.substr(pos, objectEnd - pos + 1);
-        smatch nameMatch;
-        if (regex_search(objectText, nameMatch, namePattern) && nameMatch.size() >= 2 &&
-            nameMatch[1].str() == sampleName) {
-            smatch rawEntriesMatch;
-            if (!regex_search(objectText, rawEntriesMatch, rawEntriesPattern) || rawEntriesMatch.size() < 2) {
-                throw runtime_error("Cannot find raw_entries for sample '" + sampleName +
-                                    "' in sample config: " + sampleConfigPath);
-            }
-
-            const size_t replacePos = pos + static_cast<size_t>(rawEntriesMatch.position(1));
-            const size_t replaceLen = rawEntriesMatch.length(1);
-            updated.replace(replacePos, replaceLen, to_string(static_cast<long long>(rawEntries)));
-            foundSample = true;
-            break;
-        }
-        pos = objectEnd + 1;
-    }
-
-    if (!foundSample) {
-        throw runtime_error("Cannot find sample '" + sampleName + "' in sample config: " + sampleConfigPath);
-    }
-
-    const fs::path targetPath(sampleConfigPath);
-    const fs::path tempPath = targetPath.string() + ".tmp";
-    ofstream fout(tempPath);
-    if (!fout) {
-        throw runtime_error("Cannot write temporary sample config file: " + tempPath.string());
-    }
-    fout << updated;
-    fout.close();
-    if (!fout) {
-        throw runtime_error("Failed writing sample config file: " + tempPath.string());
-    }
-
-    std::error_code ec;
-    fs::rename(tempPath, targetPath, ec);
-    if (ec) {
-        throw runtime_error("Failed to replace sample config file '" + targetPath.string() +
-                            "': " + ec.message());
-    }
+    writeSampleNumericField(sampleConfigPath, sampleName, "raw_entries",
+                            to_string(static_cast<long long>(rawEntries)));
 }
 
 OutputScalarConfig parseOutputScalar(const JsonValue& node) {
@@ -1545,7 +1750,12 @@ SelectionConfig loadSelectionConfig(const AppConfig& appConfig) {
             collection.sortRule = parseSortRule(collection.sortText);
         }
         config.collectionOrder.push_back(collection.name);
-        config.collections[collection.name] = std::move(collection);
+        const auto inserted = config.collectionSlotByName.emplace(collection.name, static_cast<int>(config.collections.size()));
+        if (inserted.second) {
+            config.collections.push_back(std::move(collection));
+        } else {
+            config.collections[inserted.first->second] = std::move(collection);
+        }
     }
 
     if (payload.contains("tree_selection")) {
@@ -1584,57 +1794,219 @@ ObjectSchema makeSchemaFromCollection(const InputCollectionConfig& collection) {
     return schema;
 }
 
-bool hasObjectField(const RuntimeCollection& collection, const string& fieldName) {
-    return collection.schema.indexByName.find(fieldName) != collection.schema.indexByName.end();
-}
-
 float getObjectField(const RuntimeCollection& collection, const RuntimeObject& object, const string& fieldName, float defaultValue = def) {
-    const auto it = collection.schema.indexByName.find(fieldName);
-    if (it == collection.schema.indexByName.end()) {
+    const auto it = collection.schema->indexByName.find(fieldName);
+    if (it == collection.schema->indexByName.end()) {
         return defaultValue;
     }
     return object.values[it->second];
 }
 
-RuntimeObject remapObject(const RuntimeCollection& source, const RuntimeObject& sourceObject, const ObjectSchema& targetSchema) {
+// fieldMap[k]: index in sourceObject.values of target field k, or -1 if the source lacks it.
+RuntimeObject remapObject(const RuntimeObject& sourceObject, const vector<int>& fieldMap) {
     RuntimeObject out;
-    out.values.assign(targetSchema.fields.size(), def);
+    out.values.assign(fieldMap.size(), def);
     out.p4 = sourceObject.p4;
-    for (size_t index = 0; index < targetSchema.fields.size(); ++index) {
-        out.values[index] = getObjectField(source, sourceObject, targetSchema.fields[index], def);
+    for (size_t index = 0; index < fieldMap.size(); ++index) {
+        if (fieldMap[index] >= 0) {
+            out.values[index] = sourceObject.values[fieldMap[index]];
+        }
     }
     return out;
 }
 
-RuntimeCollection mergeCollections(const string& name, const vector<const RuntimeCollection*>& collections) {
-    vector<string> mergedFields;
-    unordered_map<string, bool> seen;
-    for (const auto* collection : collections) {
-        if (!collection) {
-            continue;
-        }
-        for (const auto& field : collection->schema.fields) {
-            if (!seen[field]) {
-                seen[field] = true;
-                mergedFields.push_back(field);
-            }
-        }
-    }
-
+RuntimeCollection mergeCollections(const RuntimeCollectionConfig& config, const vector<const RuntimeCollection*>& collections) {
     RuntimeCollection merged;
-    merged.name = name;
-    merged.schema = makeSchema(mergedFields);
+    merged.name = config.name;
+    merged.schema = config.mergedSchema;
 
-    for (const auto* collection : collections) {
-        if (!collection) {
-            continue;
-        }
-        for (const auto& object : collection->objects) {
-            merged.objects.push_back(remapObject(*collection, object, merged.schema));
+    for (size_t child = 0; child < collections.size(); ++child) {
+        for (const auto& object : collections[child]->objects) {
+            merged.objects.push_back(remapObject(object, config.mergeFieldMaps[child]));
         }
     }
 
     return merged;
+}
+
+// Startup name resolution for the expression engine. The field schemas (with their ids), the
+// event-variable slots and the collection slots depend only on the configuration, so every
+// identifier is resolved here once and the event loop indexes arrays instead of hashing names.
+// The merged field list of a merge collection keeps the first-occurrence order over its
+// children's fields. Unknown sources/children/dedup references and merge cycles are reported here.
+void resolveEngineSymbols(SelectionConfig& selectionConfig, BranchConfig& branchConfig) {
+    vector<const ObjectSchema*> schemas;
+    const auto registerSchema = [&](ObjectSchema schema) {
+        schema.id = static_cast<int>(schemas.size());
+        auto shared = make_shared<const ObjectSchema>(std::move(schema));
+        schemas.push_back(shared.get());
+        return shared;
+    };
+    const auto findSlot = [](const unordered_map<string, int>& slots, const string& name) {
+        const auto it = slots.find(name);
+        return (it != slots.end()) ? it->second : -1;
+    };
+
+    // Input collections (a repeated name resolves to the last one, as with the former name map).
+    unordered_map<string, int> inputSlotByName;
+    for (size_t slot = 0; slot < branchConfig.collections.size(); ++slot) {
+        InputCollectionConfig& input = branchConfig.collections[slot];
+        input.schema = registerSchema(makeSchemaFromCollection(input));
+        inputSlotByName[input.name] = static_cast<int>(slot);
+    }
+
+    // Runtime collections.
+    const auto runtimeSlotOf = [&](const string& name) {
+        const int slot = findSlot(selectionConfig.collectionSlotByName, name);
+        if (slot < 0) {
+            throw runtime_error("Unknown runtime collection: " + name);
+        }
+        return slot;
+    };
+    vector<shared_ptr<const ObjectSchema>> runtimeSchemas(selectionConfig.collections.size());
+    vector<unsigned char> active(selectionConfig.collections.size(), 0);
+    function<shared_ptr<const ObjectSchema>(int)> resolveCollection = [&](int slot) {
+        if (runtimeSchemas[slot]) {
+            return runtimeSchemas[slot];
+        }
+        RuntimeCollectionConfig& config = selectionConfig.collections[slot];
+        if (!config.source.empty()) {
+            config.sourceSlot = findSlot(inputSlotByName, config.source);
+            if (config.sourceSlot < 0) {
+                throw runtime_error("Unknown input collection source: " + config.source);
+            }
+            runtimeSchemas[slot] = branchConfig.collections[config.sourceSlot].schema;
+        } else if (!config.merge.empty()) {
+            if (active[slot]) {
+                throw runtime_error("Collection dependency cycle detected at: " + config.name);
+            }
+            active[slot] = 1;
+            vector<shared_ptr<const ObjectSchema>> children;
+            vector<string> mergedFields;
+            unordered_set<string> seen;
+            config.mergeSlots.clear();
+            for (const auto& childName : config.merge) {
+                config.mergeSlots.push_back(runtimeSlotOf(childName));
+                children.push_back(resolveCollection(config.mergeSlots.back()));
+                for (const auto& field : children.back()->fields) {
+                    if (seen.insert(field).second) {
+                        mergedFields.push_back(field);
+                    }
+                }
+            }
+            active[slot] = 0;
+            config.mergedSchema = registerSchema(makeSchema(mergedFields));
+            config.mergeFieldMaps.clear();
+            for (const auto& child : children) {
+                vector<int> fieldMap(mergedFields.size(), -1);
+                for (size_t index = 0; index < mergedFields.size(); ++index) {
+                    const auto it = child->indexByName.find(mergedFields[index]);
+                    if (it != child->indexByName.end()) {
+                        fieldMap[index] = static_cast<int>(it->second);
+                    }
+                }
+                config.mergeFieldMaps.push_back(std::move(fieldMap));
+            }
+            runtimeSchemas[slot] = config.mergedSchema;
+        } else {
+            throw runtime_error("Runtime collection must define source or merge: " + config.name);
+        }
+        return runtimeSchemas[slot];
+    };
+    for (size_t slot = 0; slot < selectionConfig.collections.size(); ++slot) {
+        resolveCollection(static_cast<int>(slot));
+        RuntimeCollectionConfig& config = selectionConfig.collections[slot];
+        if (config.dedupExpr && !config.dedupCollection.empty()) {
+            config.dedupSlot = runtimeSlotOf(config.dedupCollection);
+        }
+    }
+    selectionConfig.buildOrder.clear();
+    for (const auto& name : selectionConfig.collectionOrder) {
+        selectionConfig.buildOrder.push_back(runtimeSlotOf(name));
+    }
+
+    // Event variables: the input scalars, the sample metadata, the MC weights and every scalar
+    // output name (written while the tree is filled, readable by the later formulas).
+    EventVarLayout& layout = branchConfig.varLayout;
+    layout = EventVarLayout();
+    const auto addVar = [&](const string& name) {
+        return layout.slotByName.emplace(name, static_cast<int>(layout.slotByName.size())).first->second;
+    };
+    unordered_map<string, int> scalarIndexByName;
+    for (size_t index = 0; index < branchConfig.scalars.size(); ++index) {
+        branchConfig.scalars[index].varSlot = addVar(branchConfig.scalars[index].name);
+        scalarIndexByName[branchConfig.scalars[index].name] = static_cast<int>(index);
+    }
+    layout.sampleId = addVar("sample_ID");
+    layout.isMC = addVar("is_MC");
+    layout.isSignal = addVar("is_signal");
+    layout.xsection = addVar("xsection");
+    layout.lumi = addVar("lumi");
+    layout.weightPu = addVar("weight_pu");
+    layout.weightPuDown = addVar("weight_pu_down");
+    layout.weightPuUp = addVar("weight_pu_up");
+    layout.genWeight = addVar("genWeight");
+    for (auto& tree : branchConfig.trees) {
+        for (auto* group : {&tree.regularScalars, &tree.extremaScalars}) {
+            for (auto& config : *group) {
+                if (config.collection.empty()) {
+                    config.varSlot = addVar(config.name);
+                }
+            }
+        }
+    }
+    layout.puTrueInt = findSlot(layout.slotByName, "Pileup_nTrueInt");
+    layout.run = findSlot(layout.slotByName, "run");
+    layout.luminosityBlock = findSlot(layout.slotByName, "luminosityBlock");
+    for (auto& input : branchConfig.collections) {
+        input.sizeSlot = findSlot(layout.slotByName, input.sizeName);
+    }
+
+    // Identifiers.
+    function<void(const ExprPtr&)> annotate = [&](const ExprPtr& expr) {
+        if (!expr) {
+            return;
+        }
+        if (expr->kind == ExprKind::Identifier) {
+            expr->varSlot = findSlot(layout.slotByName, expr->text);
+            expr->runtimeSlot = findSlot(selectionConfig.collectionSlotByName, expr->text);
+            expr->inputSlot = findSlot(inputSlotByName, expr->text);
+            expr->fieldIndex.assign(schemas.size(), -1);
+            for (const ObjectSchema* schema : schemas) {
+                const auto it = schema->indexByName.find(expr->text);
+                if (it != schema->indexByName.end()) {
+                    expr->fieldIndex[schema->id] = static_cast<int>(it->second);
+                }
+            }
+            expr->resolved = true;
+        }
+        annotate(expr->lhs);
+        annotate(expr->rhs);
+        for (const auto& arg : expr->args) {
+            annotate(arg);
+        }
+    };
+    annotate(selectionConfig.eventPreselection);
+    for (auto& config : selectionConfig.collections) {
+        annotate(config.selectionExpr);
+        annotate(config.dedupExpr);
+        annotate(config.sortRule.expr);
+    }
+    for (auto& item : selectionConfig.treeSelections) {
+        annotate(item.second);
+    }
+    for (auto& tree : branchConfig.trees) {
+        for (auto* group : {&tree.regularScalars, &tree.extremaScalars}) {
+            for (auto& config : *group) {
+                annotate(config.formula);
+                if (!config.collection.empty()) {
+                    config.collectionSlot = findSlot(selectionConfig.collectionSlotByName, config.collection);
+                } else if (config.formula && config.formula->kind == ExprKind::Identifier) {
+                    config.exactScalarIndex = findSlot(scalarIndexByName, config.formula->text);
+                }
+            }
+        }
+    }
 }
 
 vector<PileupBin> loadPileupWeights(const string& path) {
@@ -1696,29 +2068,57 @@ long double lookupPileupWeight(const vector<PileupBin>& bins, float pu, int col)
         }
         return static_cast<long double>(last.weightHigh);
     }
-    return 1.0L;
+    // Outside the pileup histogram range the data profile carries no probability, so the
+    // event gets weight 0 (the old 1.0 gave full weight to a region data does not populate).
+    return 0.0L;
 }
 
-// Enable and bind theory weight branches on an input TTree. Silently skips missing branches.
+// Bind genWeight on an MC input tree (every MC sample, not only theory samples: downstream
+// event weights use its sign/magnitude). A missing branch is an error.
+void bindGenWeight(TTree* tree, TheoryWeightBufs& buf) {
+    if (tree->GetBranch("genWeight") == nullptr) {
+        throw runtime_error("MC input tree has no genWeight branch");
+    }
+    tree->SetBranchStatus("genWeight", 1);
+    tree->SetBranchAddress("genWeight", &buf.genWeight);
+    tree->AddBranchToCache("genWeight", true);
+}
+
+// Enable and bind the theory weight arrays on an input TTree. Silently skips missing
+// branches. Each array buffer is sized from the largest count stored in this file, so
+// samples with more weights than usual (e.g. 44 PS weights) cannot overflow it.
 void activateTheoryInputBranches(TTree* tree, TheoryWeightBufs& buf) {
-    const auto tryBind = [&](const char* name, void* addr) {
-        if (tree->GetBranch(name) != nullptr) {
-            tree->SetBranchStatus(name, 1);
-            tree->SetBranchAddress(name, addr);
+    const auto bindArray = [&](const char* countName, int* countAddr,
+                               const char* arrayName, vector<float>& values, Long64_t minSize) {
+        if (tree->GetBranch(countName) == nullptr || tree->GetBranch(arrayName) == nullptr) {
+            return;
         }
+        // The count branch must be enabled before GetMaximum (a disabled branch reads as 0).
+        tree->SetBranchStatus(countName, 1);
+        tree->SetBranchStatus(arrayName, 1);
+        const Long64_t maxCount = max<Long64_t>(minSize, llround(tree->GetMaximum(countName)));
+        values.assign(static_cast<size_t>(maxCount), 1.f);
+        tree->SetBranchAddress(countName, countAddr);
+        tree->SetBranchAddress(arrayName, values.data());
+        tree->AddBranchToCache(countName, true);
+        tree->AddBranchToCache(arrayName, true);
     };
-    tryBind("genWeight",       &buf.genWeight);
-    tryBind("nLHEPdfWeight",   &buf.nLHEPdfWeight);
-    tryBind("LHEPdfWeight",     buf.LHEPdfWeight);
-    tryBind("nLHEScaleWeight", &buf.nLHEScaleWeight);
-    tryBind("LHEScaleWeight",   buf.LHEScaleWeight);
-    tryBind("nPSWeight",       &buf.nPSWeight);
-    tryBind("PSWeight",         buf.PSWeight);
+    // Lower bounds = the previous fixed buffer sizes.
+    bindArray("nLHEPdfWeight",   &buf.nLHEPdfWeight,   "LHEPdfWeight",   buf.LHEPdfWeight,   200);
+    bindArray("nLHEScaleWeight", &buf.nLHEScaleWeight, "LHEScaleWeight", buf.LHEScaleWeight, 20);
+    bindArray("nPSWeight",       &buf.nPSWeight,       "PSWeight",       buf.PSWeight,       10);
 }
 
 // Create fixed-size array branches on an output tree, pointed at treeState.theoryOutBuf.
+// genWeight itself is written by branch.json for every MC tree; it is only added here when a
+// tree does not define it, so no tree ends up with two branches named genWeight.
 void setupTheoryOutputBranches(OutputTreeState& treeState) {
-    treeState.tree->Branch("genWeight",      &treeState.theoryOutBuf.genWeight,       "genWeight/F");
+    if (treeState.tree->GetBranch("genWeight") == nullptr) {
+        treeState.tree->Branch("genWeight",  &treeState.theoryOutBuf.genWeight,       "genWeight/F");
+    }
+    treeState.tree->Branch("nLHEPdfWeight",   &treeState.theoryOutBuf.nLHEPdfWeight,   "nLHEPdfWeight/I");
+    treeState.tree->Branch("nLHEScaleWeight", &treeState.theoryOutBuf.nLHEScaleWeight, "nLHEScaleWeight/I");
+    treeState.tree->Branch("nPSWeight",       &treeState.theoryOutBuf.nPSWeight,       "nPSWeight/I");
     treeState.tree->Branch("LHEPdfWeight",    treeState.theoryOutBuf.LHEPdfWeight,    "LHEPdfWeight[101]/F");
     treeState.tree->Branch("LHEPdfWeightAlphaS", treeState.theoryOutBuf.LHEPdfWeightAlphaS, "LHEPdfWeightAlphaS[2]/F");
     treeState.tree->Branch("LHEScaleWeight",  treeState.theoryOutBuf.LHEScaleWeight,  "LHEScaleWeight[9]/F");
@@ -1727,8 +2127,13 @@ void setupTheoryOutputBranches(OutputTreeState& treeState) {
 }
 
 // Copy input theory weight buffers to an output struct, padding unused slots with 1.0.
+// An 8-entry scale set (nominal omitted, NanoAOD order (muR,muF) without (1,1)) is stored in
+// the standard 9-entry layout with 1.0 inserted at the nominal index 4.
 void copyTheoryWeights(const TheoryWeightBufs& src, TheoryOutBufs& dst) {
     dst.genWeight = src.genWeight;
+    dst.nLHEPdfWeight = src.nLHEPdfWeight;
+    dst.nLHEScaleWeight = src.nLHEScaleWeight;
+    dst.nPSWeight = src.nPSWeight;
     const int nPdf = min(src.nLHEPdfWeight, TheoryOutBufs::kNPdf);
     for (int i = 0; i < nPdf; ++i) dst.LHEPdfWeight[i] = src.LHEPdfWeight[i];
     for (int i = nPdf; i < TheoryOutBufs::kNPdf; ++i) dst.LHEPdfWeight[i] = 1.f;
@@ -1742,43 +2147,73 @@ void copyTheoryWeights(const TheoryWeightBufs& src, TheoryOutBufs& dst) {
         dst.LHEPdfWeightAlphaS[i] =
             (srcIdx < src.nLHEPdfWeight) ? src.LHEPdfWeight[srcIdx] : 1.f;
     }
-    const int nScale = min(src.nLHEScaleWeight, TheoryOutBufs::kNScale);
-    for (int i = 0; i < nScale; ++i) dst.LHEScaleWeight[i] = src.LHEScaleWeight[i];
-    for (int i = nScale; i < TheoryOutBufs::kNScale; ++i) dst.LHEScaleWeight[i] = 1.f;
+    if (src.nLHEScaleWeight == TheoryOutBufs::kNScale - 1) {
+        for (int i = 0; i < 4; ++i) dst.LHEScaleWeight[i] = src.LHEScaleWeight[i];
+        dst.LHEScaleWeight[4] = 1.f;
+        for (int i = 4; i < 8; ++i) dst.LHEScaleWeight[i + 1] = src.LHEScaleWeight[i];
+    } else {
+        const int nScale = min(src.nLHEScaleWeight, TheoryOutBufs::kNScale);
+        for (int i = 0; i < nScale; ++i) dst.LHEScaleWeight[i] = src.LHEScaleWeight[i];
+        for (int i = nScale; i < TheoryOutBufs::kNScale; ++i) dst.LHEScaleWeight[i] = 1.f;
+    }
     const int nPS = min(src.nPSWeight, TheoryOutBufs::kNPS);
     for (int i = 0; i < nPS; ++i) dst.PSWeight[i] = src.PSWeight[i];
     for (int i = nPS; i < TheoryOutBufs::kNPS; ++i) dst.PSWeight[i] = 1.f;
 }
 
-unordered_map<string, long double> buildRawScalarValues(const BranchConfig& branchConfig,
-                                                        const SampleMeta& sampleMeta,
-                                                        const vector<PileupBin>* pileupWeights = nullptr,
-                                                        const TheoryWeightBufs* theoryBufs = nullptr) {
-    unordered_map<string, long double> values;
-    values.reserve(branchConfig.scalars.size() + 8);
+// The event variables every expression can read: the input scalars, the sample metadata and,
+// for MC, the pileup weights and genWeight.
+void fillEventVars(EventVars& vars,
+                   const BranchConfig& branchConfig,
+                   const SampleMeta& sampleMeta,
+                   const vector<PileupBin>* pileupWeights = nullptr,
+                   const TheoryWeightBufs* theoryBufs = nullptr) {
+    const EventVarLayout& layout = branchConfig.varLayout;
+    vars.reset(layout.slotByName.size());
     for (const auto& scalar : branchConfig.scalars) {
-        values[scalar.name] = scalar.numericValue();
+        vars.set(scalar.varSlot, scalar.numericValue());
     }
-    values["sample_ID"] = sampleMeta.sampleId;
-    values["is_MC"] = sampleMeta.isMC ? 1. : 0.;
-    values["is_signal"] = sampleMeta.isSignal ? 1. : 0.;
-    values["xsection"] = sampleMeta.xsection;
-    values["lumi"] = sampleMeta.lumi;
+    vars.set(layout.sampleId, sampleMeta.sampleId);
+    vars.set(layout.isMC, sampleMeta.isMC ? 1. : 0.);
+    vars.set(layout.isSignal, sampleMeta.isSignal ? 1. : 0.);
+    vars.set(layout.xsection, sampleMeta.xsection);
+    vars.set(layout.lumi, sampleMeta.lumi);
     if (sampleMeta.isMC) {
-        const auto puIt = values.find("Pileup_nTrueInt");
-        const float puValue = (puIt != values.end()) ? static_cast<float>(puIt->second) : 0.f;
+        const float puValue = vars.has(layout.puTrueInt) ? static_cast<float>(vars.values[layout.puTrueInt]) : 0.f;
         if (pileupWeights != nullptr && !pileupWeights->empty()) {
-            values["weight_pu"] = lookupPileupWeight(*pileupWeights, puValue, 0);
-            values["weight_pu_down"] = lookupPileupWeight(*pileupWeights, puValue, 1);
-            values["weight_pu_up"] = lookupPileupWeight(*pileupWeights, puValue, 2);
+            vars.set(layout.weightPu, lookupPileupWeight(*pileupWeights, puValue, 0));
+            vars.set(layout.weightPuDown, lookupPileupWeight(*pileupWeights, puValue, 1));
+            vars.set(layout.weightPuUp, lookupPileupWeight(*pileupWeights, puValue, 2));
         } else {
-            values["weight_pu"] = 1.;
-            values["weight_pu_down"] = 1.;
-            values["weight_pu_up"] = 1.;
+            vars.set(layout.weightPu, 1.);
+            vars.set(layout.weightPuDown, 1.);
+            vars.set(layout.weightPuUp, 1.);
         }
-        values["genWeight"] = theoryBufs ? static_cast<long double>(theoryBufs->genWeight) : 1.L;
+        // theoryBufs holds the bound genWeight for every MC sample (see bindGenWeight).
+        vars.set(layout.genWeight, theoryBufs ? static_cast<long double>(theoryBufs->genWeight) : 1.L);
     }
-    return values;
+}
+
+// The event-variable slots an expression reads.
+void collectVarSlots(const ExprPtr& expr, set<int>& slots) {
+    if (!expr) {
+        return;
+    }
+    if (expr->kind == ExprKind::Identifier && expr->varSlot >= 0) {
+        slots.insert(expr->varSlot);
+    }
+    collectVarSlots(expr->lhs, slots);
+    collectVarSlots(expr->rhs, slots);
+    for (const auto& arg : expr->args) {
+        collectVarSlots(arg, slots);
+    }
+}
+
+long double requireEventVar(const EventVars& vars, int slot, const char* name) {
+    if (!vars.has(slot)) {
+        throw runtime_error(string("Event variable not available: ") + name);
+    }
+    return vars.values[slot];
 }
 
 TLorentzVector buildObjectP4(const InputCollectionConfig& config, int index) {
@@ -1791,22 +2226,20 @@ TLorentzVector buildObjectP4(const InputCollectionConfig& config, int index) {
     return vector;
 }
 
-RuntimeCollection buildInputCollection(const InputCollectionConfig& config,
-                                       const unordered_map<string, long double>& rawVars) {
-    const auto sizeIt = rawVars.find(config.sizeName);
-    if (sizeIt == rawVars.end()) {
+RuntimeCollection buildInputCollection(const InputCollectionConfig& config, const EventVars& vars) {
+    if (!vars.has(config.sizeSlot)) {
         throw runtime_error("Input collection size not found: " + config.sizeName);
     }
 
     RuntimeCollection collection;
     collection.name = config.name;
-    collection.schema = makeSchemaFromCollection(config);
+    collection.schema = config.schema;
 
-    const int size = min(static_cast<int>(sizeIt->second), config.maxSize);
+    const int size = min(static_cast<int>(vars.values[config.sizeSlot]), config.maxSize);
     collection.objects.reserve(size);
     for (int index = 0; index < size; ++index) {
         RuntimeObject object;
-        object.values.reserve(collection.schema.fields.size());
+        object.values.reserve(config.fields.size());
         for (const auto& field : config.fields) {
             object.values.push_back(field.valueAt(index));
         }
@@ -1817,18 +2250,16 @@ RuntimeCollection buildInputCollection(const InputCollectionConfig& config,
     return collection;
 }
 
-const RuntimeCollection* findCollection(const EvalContext& context, const string& name) {
-    if (context.collections) {
-        const auto it = context.collections->find(name);
-        if (it != context.collections->end()) {
-            return &it->second;
-        }
+// A runtime collection already built in this event, else an input collection of that name.
+const RuntimeCollection* findCollection(const EvalContext& context, const Expression& identifier) {
+    if (!context.collections) {
+        return nullptr;
     }
-    if (context.inputCollections) {
-        const auto it = context.inputCollections->find(name);
-        if (it != context.inputCollections->end()) {
-            return &it->second;
-        }
+    if (identifier.runtimeSlot >= 0 && context.collections->built[identifier.runtimeSlot]) {
+        return &context.collections->runtime[identifier.runtimeSlot];
+    }
+    if (identifier.inputSlot >= 0) {
+        return &context.collections->inputs[identifier.inputSlot];
     }
     return nullptr;
 }
@@ -1858,7 +2289,7 @@ Value makeCollectionValue(const RuntimeCollection* collection) {
 Value makeP4Value(const TLorentzVector& p4) {
     Value out;
     out.kind = Value::Kind::P4;
-    out.p4 = p4;
+    out.p4 = make_shared<const TLorentzVector>(p4);
     return out;
 }
 
@@ -1869,9 +2300,10 @@ long double toNumber(const Value& value) {
     return value.number;
 }
 
-TLorentzVector toP4(const Value& value) {
+// The reference points into value (or the object it refers to): use it within the lifetime of value.
+const TLorentzVector& toP4(const Value& value) {
     if (value.kind == Value::Kind::P4) {
-        return value.p4;
+        return *value.p4;
     }
     if (value.kind == Value::Kind::ObjectRef) {
         return value.object->p4;
@@ -1899,14 +2331,13 @@ bool truthy(const Value& value) {
     return true;
 }
 
-double pairMetric(const string& metric, const TLorentzVector& lhs, const TLorentzVector& rhs) {
-    if (metric == "deltaR") {
-        return lhs.DeltaR(rhs);
+double pairMetric(bool deltaPhi, const TLorentzVector& lhs, const TLorentzVector& rhs) {
+    if (deltaPhi) {
+        // |dphi|: pair_min/max_deltaPhi summarise the smallest/largest angular separation;
+        // the signed TLorentzVector::DeltaPhi made them the most negative/positive value.
+        return fabs(lhs.DeltaPhi(rhs));
     }
-    if (metric == "deltaPhi") {
-        return lhs.DeltaPhi(rhs);
-    }
-    throw runtime_error("Unsupported metric: " + metric);
+    return lhs.DeltaR(rhs);
 }
 
 Value evalExpression(const ExprPtr& expr, const EvalContext& context);
@@ -1951,9 +2382,9 @@ void symmetricEigenvalues3(double a, double b, double c, double d, double e, dou
 //   S^{ab} = sum_i p_i^a p_i^b / sum_i |p_i|^2 ,  eigenvalues l1 >= l2 >= l3 (sum = 1)
 //   sphericity = 1.5*(l2 + l3),  aplanarity = 1.5*l3,  planarity = l2 - l3
 // Returns -1 when fewer than 2 objects with non-zero momentum are present.
-double evalEventShape(const string& op, const vector<ExprPtr>& args, const EvalContext& context) {
+double evalEventShape(Op op, const string& name, const vector<ExprPtr>& args, const EvalContext& context) {
     if (args.empty()) {
-        throw runtime_error(op + " requires at least one object or collection argument");
+        throw runtime_error(name + " requires at least one object or collection argument");
     }
     double sxx = 0, syy = 0, szz = 0, sxy = 0, sxz = 0, syz = 0, norm = 0;
     int n = 0;
@@ -1979,21 +2410,22 @@ double evalEventShape(const string& op, const vector<ExprPtr>& args, const EvalC
     double l1, l2, l3;
     symmetricEigenvalues3(sxx, syy, szz, sxy, sxz, syz, l1, l2, l3);
     if (l3 < 0.0) l3 = 0.0;  // guard tiny negative eigenvalue from round-off
-    if (op == "sphericity") return 1.5 * (l2 + l3);
-    if (op == "aplanarity") return 1.5 * l3;
-    if (op == "planarity") return l2 - l3;
-    throw runtime_error("Unsupported event-shape: " + op);
+    if (op == Op::Sphericity) return 1.5 * (l2 + l3);
+    if (op == Op::Aplanarity) return 1.5 * l3;
+    if (op == Op::Planarity) return l2 - l3;
+    throw runtime_error("Unsupported event-shape: " + name);
 }
 
-Value evalAggregation(const string& op,
+Value evalAggregation(Op op,
+                      const string& name,
                       const vector<ExprPtr>& args,
                       const EvalContext& context) {
     if (args.size() < 2) {
-        throw runtime_error(op + " requires at least 2 arguments");
+        throw runtime_error(name + " requires at least 2 arguments");
     }
 
     const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
-    if (op == "sum") {
+    if (op == Op::Sum) {
         long double total = 0.;
         for (const auto& object : collection->objects) {
             EvalContext loop = context;
@@ -2012,7 +2444,7 @@ Value evalAggregation(const string& op,
         loop.currentCollection = collection;
         loop.currentObject = &object;
         const long double value = evalNumber(args[1], loop);
-        if (!found || (op == "max_value" && value > best) || (op == "min_value" && value < best)) {
+        if (!found || (op == Op::MaxValue && value > best) || (op == Op::MinValue && value < best)) {
             best = value;
             found = true;
         }
@@ -2358,9 +2790,9 @@ Value evalFirstBosonAncestorIndex(const vector<ExprPtr>& args, const EvalContext
 // to reach the final copy, then classify that copy's own daughters: presence of an
 // electron/muon (|pdgId| in {11,13}) means a leptonic tau decay, its absence (given the
 // tau did decay at all) means hadronic.
-Value evalCountTauDecayFromBoson(const string& op, const vector<ExprPtr>& args, const EvalContext& context) {
+Value evalCountTauDecayFromBoson(Op op, const string& name, const vector<ExprPtr>& args, const EvalContext& context) {
     if (args.size() < 3) {
-        throw runtime_error(op + " requires collection, pdgId field, and mother-index field expressions");
+        throw runtime_error(name + " requires collection, pdgId field, and mother-index field expressions");
     }
     const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
     const int size = static_cast<int>(collection->objects.size());
@@ -2409,7 +2841,7 @@ Value evalCountTauDecayFromBoson(const string& op, const vector<ExprPtr>& args, 
         }
         if (!decayed) continue;  // undecayed tau in the record (shouldn't happen); skip
 
-        if (op == "count_leptonic_tau_from_wz") {
+        if (op == Op::CountLeptonicTauFromWz) {
             if (hasLeptonDaughter) ++count;
         } else {
             if (!hasLeptonDaughter) ++count;
@@ -2418,11 +2850,12 @@ Value evalCountTauDecayFromBoson(const string& op, const vector<ExprPtr>& args, 
     return makeNumberValue(static_cast<long double>(count));
 }
 
-Value evalPairwiseMetric(const string& op,
+Value evalPairwiseMetric(Op op,
+                         const string& name,
                          const vector<ExprPtr>& args,
                          const EvalContext& context) {
     if (args.empty()) {
-        throw runtime_error(op + " requires a collection argument");
+        throw runtime_error(name + " requires a collection argument");
     }
     const RuntimeCollection* collection = toCollection(evalExpression(args[0], context));
     const int limit = (args.size() >= 2) ? static_cast<int>(llround(evalNumber(args[1], context)))
@@ -2432,13 +2865,13 @@ Value evalPairwiseMetric(const string& op,
         return makeNumberValue(kMissingDistance);
     }
 
-    const bool takeMin = (op.find("_min_") != string::npos);
-    const string metric = (op.find("deltaPhi") != string::npos) ? "deltaPhi" : "deltaR";
+    const bool takeMin = (op == Op::PairMinDeltaR || op == Op::PairMinDeltaPhi);
+    const bool deltaPhi = (op == Op::PairMinDeltaPhi || op == Op::PairMaxDeltaPhi);
     bool first = true;
     double best = 0.;
     for (int i = 0; i < count; ++i) {
         for (int j = i + 1; j < count; ++j) {
-            const double value = pairMetric(metric, collection->objects[i].p4, collection->objects[j].p4);
+            const double value = pairMetric(deltaPhi, collection->objects[i].p4, collection->objects[j].p4);
             if (first || (takeMin && value < best) || (!takeMin && value > best)) {
                 best = value;
                 first = false;
@@ -2566,6 +2999,12 @@ Value evalDeltaPhiAtMinDeltaR(const vector<ExprPtr>& args, const EvalContext& co
 //   "closest_wz_mass" -- minimise |m(i+j) - mW| or |m(i+j) - mZ|, whichever is closer
 // Shared by both the P4-returning (pair_p4_*) and index-returning (pair_index_*)
 // builtins below, so the two families can never disagree about which pair won.
+enum class PairCriterion {
+    MinDr,
+    ClosestWzMass,
+    CombinedWzDr,
+};
+
 struct BestJetPairResult {
     bool found = false;
     int i = -1;
@@ -2573,7 +3012,7 @@ struct BestJetPairResult {
     TLorentzVector sum;
 };
 
-BestJetPairResult findBestJetPair(const RuntimeCollection* collection, const string& criterion, int limit) {
+BestJetPairResult findBestJetPair(const RuntimeCollection* collection, PairCriterion criterion, int limit) {
     BestJetPairResult result;
     const int count = min(limit, static_cast<int>(collection->objects.size()));
     if (count < 2) {
@@ -2585,9 +3024,9 @@ BestJetPairResult findBestJetPair(const RuntimeCollection* collection, const str
         for (int j = i + 1; j < count; ++j) {
             const TLorentzVector& p4j = collection->objects[j].p4;
             double metric;
-            if (criterion == "min_dr") {
+            if (criterion == PairCriterion::MinDr) {
                 metric = p4i.DeltaR(p4j);
-            } else if (criterion == "closest_wz_mass") {
+            } else if (criterion == PairCriterion::ClosestWzMass) {
                 const double m = (p4i + p4j).M();
                 metric = min(fabs(m - kNominalWMass), fabs(m - kNominalZMass));
             } else {  // "combined_wz_dr": chi2-like combination of both terms
@@ -2674,7 +3113,7 @@ BestJetPairResult findBestSFOSPair(const RuntimeCollection* collection, int limi
 // returns the summed 4-vector of the winning pair (zero vector if fewer than 2 objects),
 // meant to be composed with mass()/pt()/eta()/phi(), e.g.
 //   mass(pair_p4_min_dr(ak4, 4))
-Value evalPairP4Selection(const string& criterion, const vector<ExprPtr>& args, const EvalContext& context) {
+Value evalPairP4Selection(PairCriterion criterion, const vector<ExprPtr>& args, const EvalContext& context) {
     if (args.empty()) {
         throw runtime_error("pair_p4_* requires a collection argument");
     }
@@ -2691,7 +3130,7 @@ Value evalPairP4Selection(const string& criterion, const vector<ExprPtr>& args, 
 // collections are pT-sorted, slot 1 is the higher-pT member), or `default` (or `def`)
 // if fewer than 2 objects are available. Lets downstream formulas (or offline analysis)
 // identify exactly which two jets were picked, e.g. to cross-check against gen truth.
-Value evalPairIndexSelection(const string& criterion, const vector<ExprPtr>& args, const EvalContext& context) {
+Value evalPairIndexSelection(PairCriterion criterion, const vector<ExprPtr>& args, const EvalContext& context) {
     if (args.size() < 2) {
         throw runtime_error("pair_index_* requires a collection and a slot (1 or 2) argument");
     }
@@ -2754,22 +3193,18 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
     const string& op = expr->text;
     const auto& args = expr->args;
 
-    if (op == "abs") {
+    switch (expr->op) {
+    case Op::Abs:
         return makeNumberValue(fabsl(evalNumber(args.at(0), context)));
-    }
-    if (op == "sqrt") {
+    case Op::Sqrt:
         return makeNumberValue(sqrtl(evalNumber(args.at(0), context)));
-    }
-    if (op == "cos") {
+    case Op::Cos:
         return makeNumberValue(cosl(evalNumber(args.at(0), context)));
-    }
-    if (op == "sin") {
+    case Op::Sin:
         return makeNumberValue(sinl(evalNumber(args.at(0), context)));
-    }
-    if (op == "pow") {
+    case Op::Pow:
         return makeNumberValue(powl(evalNumber(args.at(0), context), evalNumber(args.at(1), context)));
-    }
-    if (op == "min") {
+    case Op::Min: {
         long double best = 0.;
         bool first = true;
         for (const auto& arg : args) {
@@ -2781,7 +3216,7 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
         }
         return makeNumberValue(best);
     }
-    if (op == "max") {
+    case Op::Max: {
         long double best = 0.;
         bool first = true;
         for (const auto& arg : args) {
@@ -2793,7 +3228,7 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
         }
         return makeNumberValue(best);
     }
-    if (op == "safe_div") {
+    case Op::SafeDiv: {
         const long double numerator = evalNumber(args.at(0), context);
         const long double denominator = evalNumber(args.at(1), context);
         const long double fallback = (args.size() >= 3) ? evalNumber(args.at(2), context) : 0.;
@@ -2802,7 +3237,7 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
         }
         return makeNumberValue(numerator / denominator);
     }
-    if (op == "first_valid") {
+    case Op::FirstValid:
         for (const auto& arg : args) {
             const long double value = evalNumber(arg, context);
             if (fabsl(value - def) > 1e-9L) {
@@ -2810,83 +3245,62 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
             }
         }
         return makeNumberValue(def);
-    }
-    if (op == "size") {
+    case Op::Size:
         return makeNumberValue(static_cast<long double>(toCollection(evalExpression(args.at(0), context))->objects.size()));
-    }
-    if (op == "sum" || op == "max_value" || op == "min_value") {
-        return evalAggregation(op, args, context);
-    }
-    if (op == "sphericity" || op == "aplanarity" || op == "planarity") {
-        return makeNumberValue(static_cast<long double>(evalEventShape(op, args, context)));
-    }
-    if (op == "nth_max_value") {
+    case Op::Sum:
+    case Op::MaxValue:
+    case Op::MinValue:
+        return evalAggregation(expr->op, op, args, context);
+    case Op::Sphericity:
+    case Op::Aplanarity:
+    case Op::Planarity:
+        return makeNumberValue(static_cast<long double>(evalEventShape(expr->op, op, args, context)));
+    case Op::NthMaxValue:
         return evalNthMaxValue(args, context);
-    }
-    if (op == "value_at_max") {
+    case Op::ValueAtMax:
         return evalValueAtMax(args, context);
-    }
-    if (op == "value_at_nth_max") {
+    case Op::ValueAtNthMax:
         return evalValueAtNthMax(args, context);
-    }
-    if (op == "value_at") {
+    case Op::ValueAt:
         return evalValueAt(args, context);
-    }
-    if (op == "first_ancestor_index") {
+    case Op::FirstAncestorIndex:
         return evalFirstAncestorIndex(args, context);
-    }
-    if (op == "first_nonqg_ancestor_index") {
+    case Op::FirstNonQgAncestorIndex:
         return evalFirstNonQuarkGluonAncestorIndex(args, context);
-    }
-    if (op == "first_boson_ancestor_index") {
+    case Op::FirstBosonAncestorIndex:
         return evalFirstBosonAncestorIndex(args, context);
-    }
-    if (op == "count_hadronic_tau_from_wz" || op == "count_leptonic_tau_from_wz") {
-        return evalCountTauDecayFromBoson(op, args, context);
-    }
-    if (op == "pair_p4_min_dr") {
-        return evalPairP4Selection("min_dr", args, context);
-    }
-    if (op == "pair_p4_closest_wz_mass") {
-        return evalPairP4Selection("closest_wz_mass", args, context);
-    }
-    if (op == "pair_index_min_dr") {
-        return evalPairIndexSelection("min_dr", args, context);
-    }
-    if (op == "pair_index_closest_wz_mass") {
-        return evalPairIndexSelection("closest_wz_mass", args, context);
-    }
-    if (op == "pair_p4_combined_wz_dr") {
-        return evalPairP4Selection("combined_wz_dr", args, context);
-    }
-    if (op == "pair_index_combined_wz_dr") {
-        return evalPairIndexSelection("combined_wz_dr", args, context);
-    }
-    if (op == "pair_p4_sfos_z_mass") {
+    case Op::CountHadronicTauFromWz:
+    case Op::CountLeptonicTauFromWz:
+        return evalCountTauDecayFromBoson(expr->op, op, args, context);
+    case Op::PairP4MinDr:
+        return evalPairP4Selection(PairCriterion::MinDr, args, context);
+    case Op::PairP4ClosestWzMass:
+        return evalPairP4Selection(PairCriterion::ClosestWzMass, args, context);
+    case Op::PairIndexMinDr:
+        return evalPairIndexSelection(PairCriterion::MinDr, args, context);
+    case Op::PairIndexClosestWzMass:
+        return evalPairIndexSelection(PairCriterion::ClosestWzMass, args, context);
+    case Op::PairP4CombinedWzDr:
+        return evalPairP4Selection(PairCriterion::CombinedWzDr, args, context);
+    case Op::PairIndexCombinedWzDr:
+        return evalPairIndexSelection(PairCriterion::CombinedWzDr, args, context);
+    case Op::PairP4SfosZMass:
         return evalPairP4SFOS(args, context);
-    }
-    if (op == "pair_index_sfos_z_mass") {
+    case Op::PairIndexSfosZMass:
         return evalPairIndexSFOS(args, context);
-    }
-    if (op == "mass") {
+    case Op::Mass:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).M());
-    }
-    if (op == "pt") {
+    case Op::Pt:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).Pt());
-    }
-    if (op == "eta") {
+    case Op::Eta:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).Eta());
-    }
-    if (op == "phi") {
+    case Op::Phi:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).Phi());
-    }
-    if (op == "deltaR") {
+    case Op::DeltaR:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).DeltaR(toP4(evalExpression(args.at(1), context))));
-    }
-    if (op == "deltaPhi") {
+    case Op::DeltaPhi:
         return makeNumberValue(toP4(evalExpression(args.at(0), context)).DeltaPhi(toP4(evalExpression(args.at(1), context))));
-    }
-    if (op == "relPtDiff") {
+    case Op::RelPtDiff: {
         const double pt1 = toP4(evalExpression(args.at(0), context)).Pt();
         const double pt2 = toP4(evalExpression(args.at(1), context)).Pt();
         if (pt1 == 0.) {
@@ -2894,20 +3308,21 @@ Value evalCall(const ExprPtr& expr, const EvalContext& context) {
         }
         return makeNumberValue(fabs(pt1 - pt2) / pt1);
     }
-    if (op == "pair_min_deltaR" || op == "pair_max_deltaR" || op == "pair_min_deltaPhi" || op == "pair_max_deltaPhi") {
-        return evalPairwiseMetric(op, args, context);
-    }
-    if (op == "closest_deltaR") {
+    case Op::PairMinDeltaR:
+    case Op::PairMaxDeltaR:
+    case Op::PairMinDeltaPhi:
+    case Op::PairMaxDeltaPhi:
+        return evalPairwiseMetric(expr->op, op, args, context);
+    case Op::ClosestDeltaR:
         return evalClosestMetric(args, context);
-    }
-    if (op == "min_deltaR") {
+    case Op::MinDeltaR:
         return evalMinDeltaR(args, context);
-    }
-    if (op == "max_ratio_within_dr") {
+    case Op::MaxRatioWithinDr:
         return evalMaxRatioWithinDr(args, context);
-    }
-    if (op == "deltaPhi_at_min_deltaR") {
+    case Op::DeltaPhiAtMinDeltaR:
         return evalDeltaPhiAtMinDeltaR(args, context);
+    default:
+        break;
     }
 
     throw runtime_error("Unsupported function in expression: " + op);
@@ -2922,34 +3337,39 @@ Value evalExpression(const ExprPtr& expr, const EvalContext& context) {
         return makeNumberValue(expr->number);
     }
     if (expr->kind == ExprKind::Identifier) {
-        if (expr->text == "true") {
+        switch (expr->op) {
+        case Op::True:
             return makeNumberValue(1.);
-        }
-        if (expr->text == "false") {
+        case Op::False:
             return makeNumberValue(0.);
-        }
-        if (expr->text == "self") {
+        case Op::Self:
             if (!context.currentCollection || !context.currentObject) {
                 throw runtime_error("self used without current object");
             }
             return makeObjectValue(context.currentCollection, context.currentObject);
-        }
-        if (expr->text == "other") {
+        case Op::Other:
             if (!context.otherCollection || !context.otherObject) {
                 throw runtime_error("other used without comparison object");
             }
             return makeObjectValue(context.otherCollection, context.otherObject);
+        default:
+            break;
         }
-        if (context.currentCollection && context.currentObject && hasObjectField(*context.currentCollection, expr->text)) {
-            return makeNumberValue(getObjectField(*context.currentCollection, *context.currentObject, expr->text, def));
+        // Lookup order: field of the current object, event variable, collection. (Every input
+        // scalar is an event variable, so the former raw-scalar fallback could never be reached.)
+        if (!expr->resolved) {
+            throw runtime_error("Internal error: unresolved identifier in expression: " + expr->text);
         }
-        if (context.vars && context.vars->count(expr->text)) {
-            return makeNumberValue(context.vars->at(expr->text));
+        if (context.currentCollection && context.currentObject) {
+            const int field = expr->fieldIndex[context.currentCollection->schema->id];
+            if (field >= 0) {
+                return makeNumberValue(context.currentObject->values[field]);
+            }
         }
-        if (context.rawScalars && context.rawScalars->count(expr->text)) {
-            return makeNumberValue(context.rawScalars->at(expr->text)->numericValue());
+        if (context.vars && context.vars->has(expr->varSlot)) {
+            return makeNumberValue(context.vars->values[expr->varSlot]);
         }
-        const RuntimeCollection* collection = findCollection(context, expr->text);
+        const RuntimeCollection* collection = findCollection(context, *expr);
         if (collection) {
             return makeCollectionValue(collection);
         }
@@ -2963,34 +3383,35 @@ Value evalExpression(const ExprPtr& expr, const EvalContext& context) {
     }
     if (expr->kind == ExprKind::Unary) {
         const Value value = evalExpression(expr->lhs, context);
-        if (expr->text == "+") {
+        switch (expr->op) {
+        case Op::Plus:
             return makeNumberValue(+toNumber(value));
-        }
-        if (expr->text == "-") {
+        case Op::Minus:
             return makeNumberValue(-toNumber(value));
-        }
-        if (expr->text == "!") {
+        case Op::Not:
             return makeNumberValue(truthy(value) ? 0. : 1.);
+        default:
+            break;
         }
         throw runtime_error("Unsupported unary operator: " + expr->text);
     }
     if (expr->kind == ExprKind::Binary) {
-        if (expr->text == "&&") {
+        if (expr->op == Op::And) {
             return makeNumberValue((truthy(evalExpression(expr->lhs, context)) && truthy(evalExpression(expr->rhs, context))) ? 1. : 0.);
         }
-        if (expr->text == "||") {
+        if (expr->op == Op::Or) {
             return makeNumberValue((truthy(evalExpression(expr->lhs, context)) || truthy(evalExpression(expr->rhs, context))) ? 1. : 0.);
         }
 
         const Value lhs = evalExpression(expr->lhs, context);
         const Value rhs = evalExpression(expr->rhs, context);
 
-        if (expr->text == "+" || expr->text == "-") {
+        if (expr->op == Op::Plus || expr->op == Op::Minus) {
             const bool lhsP4 = (lhs.kind == Value::Kind::ObjectRef || lhs.kind == Value::Kind::P4);
             const bool rhsP4 = (rhs.kind == Value::Kind::ObjectRef || rhs.kind == Value::Kind::P4);
             if (lhsP4 || rhsP4) {
                 TLorentzVector total = toP4(lhs);
-                if (expr->text == "+") {
+                if (expr->op == Op::Plus) {
                     total += toP4(rhs);
                 } else {
                     total -= toP4(rhs);
@@ -3001,35 +3422,29 @@ Value evalExpression(const ExprPtr& expr, const EvalContext& context) {
 
         const long double leftNumber = toNumber(lhs);
         const long double rightNumber = toNumber(rhs);
-        if (expr->text == "+") {
+        switch (expr->op) {
+        case Op::Plus:
             return makeNumberValue(leftNumber + rightNumber);
-        }
-        if (expr->text == "-") {
+        case Op::Minus:
             return makeNumberValue(leftNumber - rightNumber);
-        }
-        if (expr->text == "*") {
+        case Op::Mul:
             return makeNumberValue(leftNumber * rightNumber);
-        }
-        if (expr->text == "/") {
+        case Op::Div:
             return makeNumberValue(leftNumber / rightNumber);
-        }
-        if (expr->text == "<") {
+        case Op::Lt:
             return makeNumberValue(leftNumber < rightNumber ? 1. : 0.);
-        }
-        if (expr->text == "<=") {
+        case Op::Le:
             return makeNumberValue(leftNumber <= rightNumber ? 1. : 0.);
-        }
-        if (expr->text == ">") {
+        case Op::Gt:
             return makeNumberValue(leftNumber > rightNumber ? 1. : 0.);
-        }
-        if (expr->text == ">=") {
+        case Op::Ge:
             return makeNumberValue(leftNumber >= rightNumber ? 1. : 0.);
-        }
-        if (expr->text == "==") {
+        case Op::Eq:
             return makeNumberValue(leftNumber == rightNumber ? 1. : 0.);
-        }
-        if (expr->text == "!=") {
+        case Op::Ne:
             return makeNumberValue(leftNumber != rightNumber ? 1. : 0.);
+        default:
+            break;
         }
         throw runtime_error("Unsupported binary operator: " + expr->text);
     }
@@ -3132,61 +3547,44 @@ void sortCollection(RuntimeCollection& collection,
                 });
 }
 
-const RuntimeCollection& buildRuntimeCollection(const string& name,
+const RuntimeCollection& buildRuntimeCollection(int slot,
                                                 const SelectionConfig& selectionConfig,
-                                                const unordered_map<string, RuntimeCollection>& inputCollections,
-                                                unordered_map<string, RuntimeCollection>& builtCollections,
-                                                unordered_set<string>& activeCollections,
-                                                const unordered_map<string, long double>& baseVars,
-                                                const unordered_map<string, const ScalarInputConfig*>& rawScalars) {
-    const auto builtIt = builtCollections.find(name);
-    if (builtIt != builtCollections.end()) {
-        return builtIt->second;
+                                                EventCollections& collections,
+                                                const EventVars& baseVars) {
+    if (collections.built[slot]) {
+        return collections.runtime[slot];
     }
-
-    if (activeCollections.count(name)) {
-        throw runtime_error("Collection dependency cycle detected at: " + name);
+    const RuntimeCollectionConfig& config = selectionConfig.collections[slot];
+    if (collections.active[slot]) {
+        throw runtime_error("Collection dependency cycle detected at: " + config.name);
     }
-
-    const auto configIt = selectionConfig.collections.find(name);
-    if (configIt == selectionConfig.collections.end()) {
-        throw runtime_error("Unknown runtime collection: " + name);
-    }
-
-    activeCollections.insert(name);
-    const RuntimeCollectionConfig& config = configIt->second;
-
-    RuntimeCollection current;
-    if (!config.source.empty()) {
-        const auto inputIt = inputCollections.find(config.source);
-        if (inputIt == inputCollections.end()) {
-            throw runtime_error("Unknown input collection source: " + config.source);
-        }
-        current = inputIt->second;
-        current.name = config.name;
-    } else if (!config.merge.empty()) {
-        vector<const RuntimeCollection*> sources;
-        sources.reserve(config.merge.size());
-        for (const auto& childName : config.merge) {
-            sources.push_back(&buildRuntimeCollection(childName, selectionConfig, inputCollections, builtCollections, activeCollections, baseVars, rawScalars));
-        }
-        current = mergeCollections(config.name, sources);
-    } else {
-        throw runtime_error("Runtime collection must define source or merge: " + config.name);
-    }
+    collections.active[slot] = 1;
 
     EvalContext context;
     context.vars = &baseVars;
-    context.collections = &builtCollections;
-    context.inputCollections = &inputCollections;
-    context.rawScalars = &rawScalars;
+    context.collections = &collections;
 
-    if (config.selectionExpr) {
-        current = applySelection(current, config.selectionExpr, context);
+    // A sourced collection is selected straight from the input collection (same schema), so the
+    // input is not copied first. Unknown sources/children were rejected by resolveEngineSymbols.
+    RuntimeCollection current;
+    if (config.sourceSlot >= 0) {
+        const RuntimeCollection& input = collections.inputs[config.sourceSlot];
+        current = config.selectionExpr ? applySelection(input, config.selectionExpr, context) : input;
+        current.name = config.name;
+    } else {
+        vector<const RuntimeCollection*> sources;
+        sources.reserve(config.mergeSlots.size());
+        for (const int child : config.mergeSlots) {
+            sources.push_back(&buildRuntimeCollection(child, selectionConfig, collections, baseVars));
+        }
+        current = mergeCollections(config, sources);
+        if (config.selectionExpr) {
+            current = applySelection(current, config.selectionExpr, context);
+        }
     }
 
-    if (config.dedupExpr && !config.dedupCollection.empty()) {
-        const RuntimeCollection& reference = buildRuntimeCollection(config.dedupCollection, selectionConfig, inputCollections, builtCollections, activeCollections, baseVars, rawScalars);
+    if (config.dedupSlot >= 0) {
+        const RuntimeCollection& reference = buildRuntimeCollection(config.dedupSlot, selectionConfig, collections, baseVars);
         current = applyDeduplication(current, reference, config.dedupExpr, context);
     }
 
@@ -3194,9 +3592,10 @@ const RuntimeCollection& buildRuntimeCollection(const string& name,
         sortCollection(current, config.sortRule, context);
     }
 
-    activeCollections.erase(name);
-    builtCollections[name] = std::move(current);
-    return builtCollections.at(name);
+    collections.active[slot] = 0;
+    collections.runtime[slot] = std::move(current);
+    collections.built[slot] = 1;
+    return collections.runtime[slot];
 }
 
 string replaceAll(string text, const string& from, const string& to) {
@@ -3313,17 +3712,6 @@ Long64_t outputSizeLimitBytes(double maxOutputFileSizeGB) {
     return static_cast<Long64_t>(maxOutputFileSizeGB * kBytesPerGiB);
 }
 
-Long64_t estimateTreeBytes(const TTree* tree) {
-    Long64_t bytes = tree->GetZipBytes();
-    if (bytes <= 0) {
-        bytes = tree->GetTotBytes();
-    }
-    if (bytes <= 0) {
-        bytes = max<Long64_t>(tree->GetEntries(), 1);
-    }
-    return bytes;
-}
-
 fs::path makeSplitOutputPath(const fs::path& basePath, size_t index) {
     const string stem = basePath.stem().string();
     const string extension = basePath.has_extension() ? basePath.extension().string() : ".root";
@@ -3372,9 +3760,254 @@ Long64_t readBatchRawEntries(const fs::path& batchOutputPath) {
     return rawEntries;
 }
 
+// -------------------- Batch provenance --------------------
+uint64_t fnv1a64(const string& data, uint64_t hash = 1469598103934665603ULL) {
+    for (const unsigned char c : data) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+string hashHex(uint64_t hash) {
+    ostringstream os;
+    os << hex << setw(16) << setfill('0') << hash;
+    return os.str();
+}
+
+string readFileBytes(const string& path) {
+    ifstream fin(path, ios::binary);
+    if (!fin) {
+        throw runtime_error("Cannot read " + path + " for the batch provenance hash");
+    }
+    return string((istreambuf_iterator<char>(fin)), istreambuf_iterator<char>());
+}
+
+// Identity of a batch's input slice (ordered file names).
+string hashFileList(const vector<string>& files) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (const auto& file : files) {
+        hash = fnv1a64(file + "\n", hash);
+    }
+    return hashHex(hash);
+}
+
+// Everything besides the input files that changes a batch output: the converter binary,
+// branch.json / selection.json, the input tree name, the pileup weights (MC) or lumi mask
+// (data) in use, and the sample metadata written into the trees. A batch whose stored hash
+// differs is rerun on resume and rejected at merge time.
+string computeConversionConfigHash(const AppConfig& appConfig,
+                                   const SampleMeta& sampleMeta,
+                                   const string& puWeightPath) {
+    uint64_t hash = 1469598103934665603ULL;
+    const auto addFile = [&](const string& label, const string& path) {
+        hash = fnv1a64(label + "\n", hash);
+        hash = fnv1a64(readFileBytes(path), hash);
+    };
+    addFile("binary", "/proc/self/exe");
+    addFile("branch", resolveReferencedPath(appConfig.configPath, kBranchConfigPath));
+    addFile("selection", resolveReferencedPath(appConfig.configPath, kSelectionConfigPath));
+    if (!puWeightPath.empty()) {
+        addFile("pileup", puWeightPath);
+    }
+    if (!sampleMeta.isMC && !appConfig.lumiMaskPath.empty()) {
+        addFile("lumi_mask", appConfig.lumiMaskPath);
+    }
+    // Jet corrections: their settings and every correction / JMS-JMR input file.
+    const JetPtCorrectionConfig& jpc = appConfig.jetPtCorrection;
+    if (jpc.enabled) {
+        ostringstream jec;
+        jec << setprecision(17) << jpc.nominalCorrection << '|' << jpc.jecAk4Name << '|' << jpc.jecAk8Name << '|'
+            << jpc.jecAk4L1Name << '|' << jpc.jecAk8L1Name << '|' << jpc.ak4TagThreshold << '|'
+            << jpc.ak8TagThreshold << '|' << jpc.jerResolutionName << '|' << jpc.jerScaleFactorName << '|'
+            << jpc.jesShift << '|' << jpc.applyJmsJmr << '|' << jpc.debugNominalConfiguration;
+        for (const auto& variation : jpc.variations) {
+            jec << "|variation=" << variation;
+        }
+        const map<string, vector<string>> variationBranches(jpc.variationBranches.begin(),
+                                                            jpc.variationBranches.end());
+        for (const auto& item : variationBranches) {
+            jec << "|" << item.first << ":";
+            for (const auto& branch : item.second) {
+                jec << branch << ",";
+            }
+        }
+        hash = fnv1a64("jet_pt_correction\n" + jec.str(), hash);
+        const vector<pair<string, string>> files = {
+            {"jec_ak4", jpc.jecAk4File}, {"jec_ak8", jpc.jecAk8File}, {"corrections", jpc.correctionsFile},
+            {"jes_jer", jpc.jesJerFile}, {"jer_smear", jpc.jerSmearFile}, {"jms_jmr", jpc.jmsJmrResultsFile},
+        };
+        for (const auto& file : files) {
+            if (!file.second.empty()) {
+                addFile(file.first, file.second);
+            }
+        }
+    }
+    ostringstream meta;
+    meta << setprecision(17) << appConfig.treeName << '|' << sampleMeta.sample << '|'
+         << sampleMeta.sampleId << '|' << sampleMeta.isMC << '|' << sampleMeta.isSignal << '|'
+         << sampleMeta.hasTheoryWeights << '|' << sampleMeta.xsection << '|' << sampleMeta.lumi;
+    hash = fnv1a64(meta.str(), hash);
+    return hashHex(hash);
+}
+
+// Batch completion record, written last (atomically) after the batch ROOT file and the other
+// sidecars, so a batch without a matching .meta is never treated as complete.
+struct BatchMeta {
+    size_t nFiles = 0;
+    string filesHash;
+    string configHash;
+    Long64_t rawEntries = 0;
+    long double sumWeightPu = 0.L;
+    long double sumWeightPuUp = 0.L;
+    long double sumWeightPuDown = 0.L;
+    vector<string> skippedFiles;
+};
+
+fs::path makeBatchMetaPath(const fs::path& batchOutputPath) {
+    return fs::path(batchOutputPath.string() + ".meta");
+}
+
+fs::path makeBatchLumisPath(const fs::path& batchOutputPath) {
+    return fs::path(batchOutputPath.string() + ".lumis");
+}
+
+void writeTextFileAtomically(const fs::path& path, const string& content) {
+    const fs::path tempPath = path.string() + ".tmp." + to_string(static_cast<long long>(getpid()));
+    {
+        ofstream fout(tempPath);
+        if (!fout) {
+            throw runtime_error("Cannot write " + tempPath.string());
+        }
+        fout << content;
+        fout.close();
+        if (!fout) {
+            throw runtime_error("Failed writing " + tempPath.string());
+        }
+    }
+    std::error_code ec;
+    fs::rename(tempPath, path, ec);
+    if (ec) {
+        throw runtime_error("Failed to move " + tempPath.string() + " to " + path.string() + ": " + ec.message());
+    }
+}
+
+void writeBatchMeta(const fs::path& batchOutputPath, const BatchMeta& meta) {
+    ostringstream os;
+    os << setprecision(21);
+    os << "format=1\n"
+       << "n_files=" << meta.nFiles << "\n"
+       << "files_hash=" << meta.filesHash << "\n"
+       << "config_hash=" << meta.configHash << "\n"
+       << "raw_entries=" << meta.rawEntries << "\n"
+       << "sum_weight_pu=" << meta.sumWeightPu << "\n"
+       << "sum_weight_pu_up=" << meta.sumWeightPuUp << "\n"
+       << "sum_weight_pu_down=" << meta.sumWeightPuDown << "\n";
+    for (const auto& file : meta.skippedFiles) {
+        os << "skipped_file=" << file << "\n";
+    }
+    writeTextFileAtomically(makeBatchMetaPath(batchOutputPath), os.str());
+}
+
+bool readBatchMeta(const fs::path& batchOutputPath, BatchMeta& meta, string& reason) {
+    ifstream fin(makeBatchMetaPath(batchOutputPath));
+    if (!fin) {
+        reason = "missing batch .meta (incomplete batch or written by an older convert_branch)";
+        return false;
+    }
+    meta = BatchMeta();
+    set<string> seen;
+    string line;
+    try {
+        while (getline(fin, line)) {
+            const size_t eq = line.find('=');
+            if (eq == string::npos) {
+                continue;
+            }
+            const string key = line.substr(0, eq);
+            const string value = line.substr(eq + 1);
+            seen.insert(key);
+            if (key == "n_files") meta.nFiles = static_cast<size_t>(stoull(value));
+            else if (key == "files_hash") meta.filesHash = value;
+            else if (key == "config_hash") meta.configHash = value;
+            else if (key == "raw_entries") meta.rawEntries = stoll(value);
+            else if (key == "sum_weight_pu") meta.sumWeightPu = stold(value);
+            else if (key == "sum_weight_pu_up") meta.sumWeightPuUp = stold(value);
+            else if (key == "sum_weight_pu_down") meta.sumWeightPuDown = stold(value);
+            else if (key == "skipped_file") meta.skippedFiles.push_back(value);
+        }
+    } catch (const exception& ex) {
+        reason = string("unreadable batch .meta: ") + ex.what();
+        return false;
+    }
+    for (const char* key : {"format", "n_files", "files_hash", "config_hash", "raw_entries"}) {
+        if (seen.count(key) == 0u) {
+            reason = string("batch .meta lacks '") + key + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
+void writeBatchLumis(const fs::path& batchOutputPath, const set<pair<UInt_t, UInt_t>>& lumis) {
+    ostringstream os;
+    for (const auto& lumi : lumis) {
+        os << lumi.first << ' ' << lumi.second << '\n';
+    }
+    writeTextFileAtomically(makeBatchLumisPath(batchOutputPath), os.str());
+}
+
+void readBatchLumis(const fs::path& batchOutputPath, set<pair<UInt_t, UInt_t>>& lumis) {
+    const fs::path path = makeBatchLumisPath(batchOutputPath);
+    ifstream fin(path);
+    if (!fin) {
+        throw runtime_error("Missing batch lumi list " + path.string());
+    }
+    UInt_t run = 0;
+    UInt_t lumi = 0;
+    while (fin >> run >> lumi) {
+        lumis.emplace(run, lumi);
+    }
+    if (!fin.eof()) {
+        throw runtime_error("Malformed batch lumi list " + path.string());
+    }
+}
+
+// Golden-JSON layout ({"run": [[first, last], ...]}), usable directly with brilcalc -i.
+void writeProcessedLumiJson(const fs::path& path, const set<pair<UInt_t, UInt_t>>& lumis) {
+    map<UInt_t, vector<pair<UInt_t, UInt_t>>> ranges;
+    for (const auto& item : lumis) {
+        auto& runRanges = ranges[item.first];
+        if (!runRanges.empty() && item.second == runRanges.back().second + 1) {
+            runRanges.back().second = item.second;
+        } else {
+            runRanges.emplace_back(item.second, item.second);
+        }
+    }
+    ostringstream os;
+    os << "{";
+    bool firstRun = true;
+    for (const auto& run : ranges) {
+        os << (firstRun ? "\n" : ",\n") << "  \"" << run.first << "\": [";
+        firstRun = false;
+        for (size_t i = 0; i < run.second.size(); ++i) {
+            os << (i ? ", " : "") << "[" << run.second[i].first << ", " << run.second[i].second << "]";
+        }
+        os << "]";
+    }
+    os << "\n}\n";
+    writeTextFileAtomically(path, os.str());
+}
+
+// A batch output counts as complete only when its ROOT file opens with every configured tree,
+// the .raw_entries and .meta sidecars agree, the .meta matches the expected input slice and
+// conversion configuration, and (for data) the processed-lumi list exists.
 bool validateBatchTempOutput(const fs::path& batchOutputPath,
                              const vector<TreeConfig>& treeConfigs,
-                             Long64_t& rawEntries,
+                             const string& expectedFilesHash,
+                             const string& expectedConfigHash,
+                             bool isMC,
+                             BatchMeta& meta,
                              string& reason) {
     const fs::path rawEntriesPath = makeBatchRawEntriesPath(batchOutputPath);
     if (!fs::exists(batchOutputPath)) {
@@ -3386,10 +4019,30 @@ bool validateBatchTempOutput(const fs::path& batchOutputPath,
         return false;
     }
 
+    Long64_t rawEntries = 0;
     try {
         rawEntries = readBatchRawEntries(batchOutputPath);
     } catch (const exception& ex) {
         reason = ex.what();
+        return false;
+    }
+    if (!readBatchMeta(batchOutputPath, meta, reason)) {
+        return false;
+    }
+    if (meta.rawEntries != rawEntries) {
+        reason = "batch .meta and .raw_entries disagree";
+        return false;
+    }
+    if (meta.filesHash != expectedFilesHash) {
+        reason = "batch was produced from a different input-file slice";
+        return false;
+    }
+    if (meta.configHash != expectedConfigHash) {
+        reason = "batch was produced with a different converter binary or configuration";
+        return false;
+    }
+    if (!isMC && !fs::exists(makeBatchLumisPath(batchOutputPath))) {
+        reason = "missing processed-lumi list";
         return false;
     }
 
@@ -3488,6 +4141,53 @@ vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
     return files;
 }
 
+fs::path makeFileListSnapshotPath(const AppConfig& appConfig, const SampleMeta& sampleMeta) {
+    return makeBatchTempOutputDir(appConfig, sampleMeta) / (sampleMeta.sample + ".files");
+}
+
+// The sorted input file list is discovered once and stored as {group}_tmp/{sample}.files;
+// every batch job and the merge read that snapshot, so the file-to-batch mapping cannot shift
+// when a DAS dataset grows while jobs run. The snapshot is (re)written when it does not exist
+// or when CONVERT_REFRESH_FILE_LIST=1 (run.py sets it for a new mode-0 submission).
+vector<string> resolveInputFiles(const AppConfig& appConfig, SampleMeta& sampleMeta) {
+    const fs::path snapshotPath = makeFileListSnapshotPath(appConfig, sampleMeta);
+    const char* refreshEnv = getenv(kRefreshFileListEnvVar);
+    const bool refresh = refreshEnv != nullptr && string(refreshEnv) == "1";
+    if (!refresh && fs::exists(snapshotPath)) {
+        sampleMeta.remoteSourceCount = static_cast<size_t>(
+            count_if(sampleMeta.inputPaths.begin(), sampleMeta.inputPaths.end(), isCmsDatasetPath));
+        ifstream fin(snapshotPath);
+        if (!fin) {
+            throw runtime_error("Cannot read input file-list snapshot " + snapshotPath.string());
+        }
+        vector<string> files;
+        string line;
+        while (getline(fin, line)) {
+            if (!line.empty()) {
+                files.push_back(line);
+            }
+        }
+        if (files.empty()) {
+            throw runtime_error("Input file-list snapshot is empty: " + snapshotPath.string());
+        }
+        // stderr: --batch-count prints only the count on stdout.
+        cerr << "Using input file-list snapshot " << snapshotPath.string()
+             << " (" << files.size() << " files)" << endl;
+        return files;
+    }
+
+    vector<string> files = discoverInputFiles(sampleMeta);
+    fs::create_directories(snapshotPath.parent_path());
+    ostringstream content;
+    for (const auto& file : files) {
+        content << file << '\n';
+    }
+    writeTextFileAtomically(snapshotPath, content.str());
+    cerr << "Wrote input file-list snapshot " << snapshotPath.string()
+         << " (" << files.size() << " files)" << endl;
+    return files;
+}
+
 SampleMeta resolveSampleMeta(const string& sample, const AppConfig& appConfig) {
     for (const auto& rule : appConfig.sampleRules) {
         if (!matchesRule(sample, rule)) {
@@ -3561,7 +4261,8 @@ BatchRequest resolveBatchRequest(int argc, char** argv) {
         return request;
     }
     if (argc > 3) {
-        throw runtime_error("Usage: convert_branch <sample> [batch_index|--batch-count|--merge-successful-batches]");
+        throw runtime_error("Usage: convert_branch <sample> "
+                            "[batch_index|--batch-count|--merge-successful-batches|--update-genweight-mean]");
     }
 
     const string arg = argv[2] == nullptr ? "" : argv[2];
@@ -3573,11 +4274,16 @@ BatchRequest resolveBatchRequest(int argc, char** argv) {
         request.mergeSuccessfulBatches = true;
         return request;
     }
+    if (arg == "--update-genweight-mean") {
+        request.updateGenWeightMean = true;
+        return request;
+    }
 
     size_t batchIndex = 0;
     if (!parseNonNegativeIndex(arg, batchIndex)) {
         throw runtime_error("Invalid batch argument '" + arg +
-                            "'. Use a non-negative batch index, --batch-count, or --merge-successful-batches.");
+                            "'. Use a non-negative batch index, --batch-count, --merge-successful-batches, "
+                            "or --update-genweight-mean.");
     }
     request.singleBatch = true;
     request.batchIndex = batchIndex;
@@ -3734,6 +4440,39 @@ void bookTreeBranches(OutputTreeState& treeState, bool isMC, TDirectory* directo
     treeState.branchIndexByName.reserve(totalBranches);
     bookOutputGroup(treeState, treeState.config.regularScalars, isMC);
     bookOutputGroup(treeState, treeState.config.extremaScalars, isMC);
+
+    // Resolve every (config, slot) to its branch once; the lookup by name keeps the former
+    // per-event semantics (a repeated branch name maps to the last booked branch). A variation
+    // tree books only its kept branches; the others get kNoBranch.
+    const auto branchIndex = [&](const string& branchName) {
+        const auto it = treeState.branchIndexByName.find(branchName);
+        if (it != treeState.branchIndexByName.end()) {
+            return it->second;
+        }
+        if (treeState.config.keptBranches.empty()) {
+            throw runtime_error("Output branch not booked: " + branchName);
+        }
+        return kNoBranch;
+    };
+    const auto indexGroup = [&](const vector<OutputScalarConfig>& configs) {
+        vector<vector<size_t>> indices(configs.size());
+        for (size_t index = 0; index < configs.size(); ++index) {
+            const OutputScalarConfig& config = configs[index];
+            if (config.onlyMC && !isMC) {
+                continue;
+            }
+            if (config.collection.empty()) {
+                indices[index].push_back(branchIndex(config.name));
+            } else {
+                for (int slot = 0; slot < config.slots; ++slot) {
+                    indices[index].push_back(branchIndex(config.name + "_" + to_string(slot + 1)));
+                }
+            }
+        }
+        return indices;
+    };
+    treeState.regularBranches = indexGroup(treeState.config.regularScalars);
+    treeState.extremaBranches = indexGroup(treeState.config.extremaScalars);
 }
 
 vector<OutputTreeState> makeOutputTrees(const BranchConfig& branchConfig, bool isMC, TDirectory* directory) {
@@ -3781,7 +4520,7 @@ void initializeThreadResult(ThreadConvertResult& result,
                             size_t batchIndex,
                             int threadIndex) {
     result.tempFilePath = makeThreadTempFilePath(tempDir, sample, batchIndex, threadIndex);
-    result.tempFile = TFile::Open(result.tempFilePath.c_str(), "RECREATE");
+    result.tempFile = TFile::Open(result.tempFilePath.c_str(), "RECREATE", "", kOutputCompression);
     if (!result.tempFile || result.tempFile->IsZombie()) {
         throw runtime_error("Error opening temporary output file " + result.tempFilePath);
     }
@@ -3824,20 +4563,6 @@ void resetTreeValues(OutputTreeState& treeState) {
     }
 }
 
-bool isRawScalarIdentity(const ExprPtr& expr,
-                         const unordered_map<string, const ScalarInputConfig*>& rawScalars,
-                         const ScalarInputConfig*& scalar) {
-    if (!expr || expr->kind != ExprKind::Identifier) {
-        return false;
-    }
-    const auto it = rawScalars.find(expr->text);
-    if (it == rawScalars.end()) {
-        return false;
-    }
-    scalar = it->second;
-    return true;
-}
-
 void assignExactScalar(OutputBranchRuntime& branch, const ScalarInputConfig& scalar) {
     if (branch.type == DataType::Float) {
         branch.floatValue = static_cast<Float_t>(scalar.numericValue());
@@ -3876,88 +4601,80 @@ void assignNumericValue(OutputBranchRuntime& branch, long double value) {
     }
 }
 
+// branchIndices: OutputTreeState::regularBranches / extremaBranches for configs.
 void fillOutputGroup(const vector<OutputScalarConfig>& configs,
+                     const vector<vector<size_t>>& branchIndices,
                      OutputTreeState& treeState,
-                     unordered_map<string, long double>& vars,
-                     const unordered_map<string, RuntimeCollection>& collections,
-                     const unordered_map<string, RuntimeCollection>& inputCollections,
-                     const unordered_map<string, const ScalarInputConfig*>& rawScalars,
+                     EventVars& vars,
+                     const EventCollections& collections,
+                     const vector<ScalarInputConfig>& scalars,
                      bool isMC) {
-    for (const auto& config : configs) {
+    for (size_t index = 0; index < configs.size(); ++index) {
+        const OutputScalarConfig& config = configs[index];
         if (config.onlyMC && !isMC) {
             continue;
         }
 
         if (config.collection.empty()) {
-            EvalContext context;
-            context.vars = &vars;
-            context.collections = &collections;
-            context.inputCollections = &inputCollections;
-            context.rawScalars = &rawScalars;
-
-            // A variation tree evaluates only the scalars its kept branches read;
-            // a needed scalar that is not kept is evaluated but not booked.
+            // A variation tree evaluates only the scalars its kept branches read; a needed
+            // scalar that is not kept is evaluated but not booked.
             if (!treeState.config.keptBranches.empty() && treeState.config.neededScalars.count(config.name) == 0) {
                 continue;
             }
-            const auto branchIt = treeState.branchIndexByName.find(config.name);
-            OutputBranchRuntime* branch = (branchIt != treeState.branchIndexByName.end())
-                ? &treeState.branches[branchIt->second] : nullptr;
-            const ScalarInputConfig* scalar = nullptr;
-            if (isRawScalarIdentity(config.formula, rawScalars, scalar) && scalar != nullptr) {
+            EvalContext context;
+            context.vars = &vars;
+            context.collections = &collections;
+
+            const size_t branchIndex = branchIndices[index][0];
+            OutputBranchRuntime* branch = (branchIndex != kNoBranch) ? &treeState.branches[branchIndex] : nullptr;
+            if (config.exactScalarIndex >= 0) {
+                const ScalarInputConfig& scalar = scalars[config.exactScalarIndex];
                 if (branch != nullptr) {
-                    assignExactScalar(*branch, *scalar);
+                    assignExactScalar(*branch, scalar);
                 }
-                vars[config.name] = scalar->numericValue();
+                vars.set(config.varSlot, scalar.numericValue());
             } else {
                 const long double value = evalNumber(config.formula, context);
                 if (branch != nullptr) {
                     assignNumericValue(*branch, value);
                 }
-                vars[config.name] = value;
+                vars.set(config.varSlot, value);
             }
             continue;
         }
 
-        const auto collectionIt = collections.find(config.collection);
-        if (collectionIt == collections.end()) {
+        if (config.collectionSlot < 0 || !collections.built[config.collectionSlot]) {
             throw runtime_error("Unknown output collection: " + config.collection);
         }
-        const RuntimeCollection& collection = collectionIt->second;
+        const RuntimeCollection& collection = collections.runtime[config.collectionSlot];
         for (int slot = 0; slot < config.slots; ++slot) {
-            if (slot >= static_cast<int>(collection.objects.size())) {
+            if (slot >= static_cast<int>(collection.objects.size()) || branchIndices[index][slot] == kNoBranch) {
                 continue;
             }
             EvalContext context;
             context.vars = &vars;
             context.collections = &collections;
-            context.inputCollections = &inputCollections;
-            context.rawScalars = &rawScalars;
             context.currentCollection = &collection;
             context.currentObject = &collection.objects[slot];
 
-            const string branchName = config.name + "_" + to_string(slot + 1);
-            const auto branchIt = treeState.branchIndexByName.find(branchName);
-            if (branchIt == treeState.branchIndexByName.end()) {
-                continue;
-            }
-            OutputBranchRuntime& branch = treeState.branches[branchIt->second];
+            OutputBranchRuntime& branch = treeState.branches[branchIndices[index][slot]];
             assignNumericValue(branch, evalNumber(config.formula, context));
         }
     }
 }
 
+// vars: scratch copy of baseVars that receives the tree's scalar outputs.
 void fillOutputTree(OutputTreeState& treeState,
-                    const unordered_map<string, RuntimeCollection>& collections,
-                    const unordered_map<string, RuntimeCollection>& inputCollections,
-                    const unordered_map<string, long double>& baseVars,
-                    const unordered_map<string, const ScalarInputConfig*>& rawScalars,
+                    const EventCollections& collections,
+                    const EventVars& baseVars,
+                    EventVars& vars,
+                    const vector<ScalarInputConfig>& scalars,
                     bool isMC) {
     resetTreeValues(treeState);
 
-    unordered_map<string, long double> vars = baseVars;
-    fillOutputGroup(treeState.config.regularScalars, treeState, vars, collections, inputCollections, rawScalars, isMC);
-    fillOutputGroup(treeState.config.extremaScalars, treeState, vars, collections, inputCollections, rawScalars, isMC);
+    vars = baseVars;
+    fillOutputGroup(treeState.config.regularScalars, treeState.regularBranches, treeState, vars, collections, scalars, isMC);
+    fillOutputGroup(treeState.config.extremaScalars, treeState.extremaBranches, treeState, vars, collections, scalars, isMC);
 
     treeState.tree->Fill();
 }
@@ -4071,9 +4788,10 @@ void printFileProgress(const string& sample, size_t done, size_t total) {
     }
 }
 
-// Persist each thread's filled trees to its temp ROOT file and close the file.
-// The temp file on disk is kept so the streaming writer below can re-open it
-// read-only; cleanupThreadResult() unlinks the file later.
+// Persist each thread's filled trees to its temp ROOT file and close the file. A write error
+// (e.g. a full node-local $TMPDIR) fails the batch instead of silently dropping that thread's
+// entries. The temp file on disk is kept so the batch merge can read it; cleanupThreadResult()
+// unlinks it later.
 vector<string> finalizeThreadTempFiles(vector<ThreadConvertResult>& threadResults) {
     vector<string> paths;
     paths.reserve(threadResults.size());
@@ -4088,12 +4806,16 @@ vector<string> finalizeThreadTempFiles(vector<ThreadConvertResult>& threadResult
             }
         }
         result.tempFile->Close();
+        const bool writeError = result.tempFile->TestBit(TFile::kWriteError);
         delete result.tempFile;
         result.tempFile = nullptr;
         // TFile::Close() deletes the TTree objects owned by the file, so the
         // cached pointers in outputTrees are now dangling — null them out.
         for (auto& treeState : result.outputTrees) {
             treeState.tree = nullptr;
+        }
+        if (writeError) {
+            throw runtime_error("Write error on thread temp file " + result.tempFilePath);
         }
         if (!result.tempFilePath.empty()) {
             paths.push_back(result.tempFilePath);
@@ -4102,156 +4824,82 @@ vector<string> finalizeThreadTempFiles(vector<ThreadConvertResult>& threadResult
     return paths;
 }
 
-// Stream the combined per-thread trees into one or more output files. Each
-// chunk is a fresh TFile with both fat2/fat3 trees cloned from a TChain over
-// the thread temp files, so ROOT keeps the clone's branch addresses synced as
-// the chain advances across file boundaries. Basket size is fixed and
-// auto-flush is disabled so that OptimizeBaskets cannot inflate a basket past
-// ROOT's 1GB TBufferFile serialization limit (the failure mode observed on the
-// large QCD samples when TTree::MergeTrees was used instead).
-vector<string> writeOutputFilesStreaming(const fs::path& baseOutputPath,
-                                         const vector<string>& threadTempPaths,
-                                         const vector<TreeConfig>& treeConfigs,
-                                         Long64_t maxOutputBytes) {
-    const size_t nTrees = treeConfigs.size();
-
-    // Sum per-tree entry counts and estimated bytes across all thread temp files.
-    vector<Long64_t> treeEntries(nTrees, 0);
-    Long64_t estimatedTotalBytes = 0;
-    for (const auto& p : threadTempPaths) {
-        unique_ptr<TFile> f(TFile::Open(p.c_str(), "READ"));
-        if (!f || f->IsZombie()) {
-            continue;
+// Merge ROOT files holding the configured trees into one output by copying the compressed
+// baskets (TFileMerger fast mode; every convert output uses kOutputCompression), writing to a
+// hidden temporary name, checking each tree's entry count against the inputs, then renaming.
+// Unreadable inputs, missing trees or a failed merge throw instead of being skipped. Fast
+// merging never re-optimises baskets, so it cannot hit the 1 GB TBufferFile limit that the old
+// TTree::MergeTrees path did.
+void fastMergeRootFiles(const vector<string>& inputPaths,
+                        const fs::path& outputPath,
+                        const vector<TreeConfig>& treeConfigs) {
+    if (inputPaths.empty()) {
+        throw runtime_error("No inputs to merge into " + outputPath.string());
+    }
+    vector<Long64_t> expectedEntries(treeConfigs.size(), 0);
+    for (const auto& input : inputPaths) {
+        unique_ptr<TFile> file(TFile::Open(input.c_str(), "READ"));
+        if (!file || file->IsZombie()) {
+            throw runtime_error("Cannot open merge input " + input);
         }
-        for (size_t i = 0; i < nTrees; ++i) {
-            TTree* t = dynamic_cast<TTree*>(f->Get(treeConfigs[i].name.c_str()));
-            if (t == nullptr) {
-                continue;
+        for (size_t i = 0; i < treeConfigs.size(); ++i) {
+            TTree* tree = dynamic_cast<TTree*>(file->Get(treeConfigs[i].name.c_str()));
+            if (tree == nullptr) {
+                throw runtime_error("Merge input " + input + " lacks tree " + treeConfigs[i].name);
             }
-            treeEntries[i] += t->GetEntries();
-            estimatedTotalBytes += estimateTreeBytes(t);
+            expectedEntries[i] += tree->GetEntries();
         }
     }
 
-    // Decide how many chunks to write. Stay safely under the configured GB
-    // limit (~10% margin) so per-file on-disk size comes close to but does
-    // not exceed the limit.
-    size_t nChunks = 1;
-    if (maxOutputBytes > 0 && estimatedTotalBytes > maxOutputBytes) {
-        const Long64_t target = max<Long64_t>(1, static_cast<Long64_t>(maxOutputBytes * 0.9));
-        nChunks = static_cast<size_t>((estimatedTotalBytes + target - 1) / target);
-        if (nChunks < 2) {
-            nChunks = 2;
+    const fs::path tempPath = outputPath.parent_path() /
+        ("." + outputPath.filename().string() + ".tmp_" + to_string(static_cast<long long>(getpid())));
+    try {
+        {
+            TFileMerger merger(kFALSE, kFALSE);
+            merger.SetPrintLevel(0);
+            merger.SetFastMethod(kTRUE);
+            if (!merger.OutputFile(tempPath.string().c_str(), "RECREATE", kOutputCompression)) {
+                throw runtime_error("Cannot create merge output " + tempPath.string());
+            }
+            for (const auto& input : inputPaths) {
+                if (!merger.AddFile(input.c_str(), kFALSE)) {
+                    throw runtime_error("Cannot add merge input " + input);
+                }
+            }
+            if (!merger.Merge()) {
+                throw runtime_error("TFileMerger failed for " + outputPath.string());
+            }
         }
+        unique_ptr<TFile> merged(TFile::Open(tempPath.string().c_str(), "READ"));
+        if (!merged || merged->IsZombie()) {
+            throw runtime_error("Cannot reopen merged file " + tempPath.string());
+        }
+        for (size_t i = 0; i < treeConfigs.size(); ++i) {
+            TTree* tree = dynamic_cast<TTree*>(merged->Get(treeConfigs[i].name.c_str()));
+            const Long64_t found = (tree != nullptr) ? tree->GetEntries() : -1;
+            if (found != expectedEntries[i]) {
+                throw runtime_error("Merged entry count mismatch for tree " + treeConfigs[i].name +
+                                    " in " + outputPath.string() + ": expected " +
+                                    to_string(expectedEntries[i]) + ", got " + to_string(found));
+            }
+        }
+    } catch (...) {
+        std::error_code ignored;
+        fs::remove(tempPath, ignored);
+        throw;
     }
-    const bool split = (nChunks > 1);
-
-    vector<string> writtenFiles;
-    writtenFiles.reserve(nChunks);
-
-    for (size_t chunkIdx = 0; chunkIdx < nChunks; ++chunkIdx) {
-        const fs::path outPath = split
-            ? makeSplitOutputPath(baseOutputPath, chunkIdx)
-            : baseOutputPath;
-        unique_ptr<TFile> outFile(TFile::Open(outPath.c_str(), "RECREATE"));
-        if (!outFile || outFile->IsZombie()) {
-            throw runtime_error("Error opening output file " + outPath.string());
-        }
-
-        for (size_t i = 0; i < nTrees; ++i) {
-            const Long64_t totalE = treeEntries[i];
-            const Long64_t first = (totalE * static_cast<Long64_t>(chunkIdx)) /
-                                   static_cast<Long64_t>(nChunks);
-            const Long64_t last = (totalE * static_cast<Long64_t>(chunkIdx + 1)) /
-                                  static_cast<Long64_t>(nChunks);
-            const Long64_t expectedEntries = last - first;
-
-            auto configureOutTree = [&](TTree& outTree) {
-                outTree.SetDirectory(outFile.get());
-                outTree.SetNameTitle(treeConfigs[i].name.c_str(),
-                                     treeConfigs[i].title.c_str());
-                // Explicit small basket + disabled auto-flush prevents ROOT's
-                // OptimizeBaskets from growing a single basket's uncompressed size
-                // past its 1GB TBufferFile serialization cap on highly-compressible
-                // branches (e.g. constant sample_ID / is_MC flags).
-                outTree.SetBasketSize("*", 32000);
-                outTree.SetAutoFlush(0);
-                outTree.SetAutoSave(0);
-            };
-
-            outFile->cd();
-            TTree* outTree = nullptr;
-            if (expectedEntries > 0) {
-                TChain chain(treeConfigs[i].name.c_str());
-                for (const auto& p : threadTempPaths) {
-                    chain.Add(p.c_str());
-                }
-                if (chain.LoadTree(first) < 0) {
-                    throw runtime_error("Failed to load entry " + to_string(first) +
-                                        " for tree " + treeConfigs[i].name);
-                }
-                outTree = chain.CloneTree(0);
-                if (outTree == nullptr) {
-                    throw runtime_error("Failed to clone output tree from chain for " +
-                                        treeConfigs[i].name);
-                }
-                configureOutTree(*outTree);
-                Long64_t written = 0;
-                for (Long64_t e = first; e < last; ++e) {
-                    if (chain.GetEntry(e) <= 0) {
-                        throw runtime_error("Failed to read entry " + to_string(e) +
-                                            " for tree " + treeConfigs[i].name);
-                    }
-                    outTree->Fill();
-                    ++written;
-                }
-                if (written != expectedEntries) {
-                    throw runtime_error("Output chunk entry count mismatch for tree " +
-                                        treeConfigs[i].name + ": expected " +
-                                        to_string(expectedEntries) + ", got " +
-                                        to_string(written));
-                }
-                outFile->cd();
-                outTree->Write("", TObject::kOverwrite);
-                chain.ResetBranchAddresses();
-                outTree->ResetBranchAddresses();
-                continue;
-            }
-
-            // No entries land in this chunk for this tree, but still create an
-            // empty tree so every output file keeps the full fat2/fat3 layout.
-            unique_ptr<TFile> structureFile;
-            TTree* structureSrc = nullptr;
-            for (const auto& p : threadTempPaths) {
-                unique_ptr<TFile> f(TFile::Open(p.c_str(), "READ"));
-                if (!f || f->IsZombie()) {
-                    continue;
-                }
-                TTree* t = dynamic_cast<TTree*>(f->Get(treeConfigs[i].name.c_str()));
-                if (t != nullptr) {
-                    structureFile = std::move(f);
-                    structureSrc = t;
-                    break;
-                }
-            }
-            if (structureSrc != nullptr) {
-                outTree = structureSrc->CloneTree(0);
-            }
-            if (outTree == nullptr) {
-                outTree = new TTree(treeConfigs[i].name.c_str(),
-                                    treeConfigs[i].title.c_str());
-            }
-            configureOutTree(*outTree);
-
-            outFile->cd();
-            outTree->Write("", TObject::kOverwrite);
-            outTree->ResetBranchAddresses();
-        }
-        outFile->Close();
-        writtenFiles.push_back(outPath.string());
+    std::error_code ec;
+    fs::rename(tempPath, outputPath, ec);
+    if (ec) {
+        throw runtime_error("Failed to move merged file to " + outputPath.string() + ": " + ec.message());
     }
+}
 
-    return writtenFiles;
+// Remote opens are serialised: concurrent TFile::Open of root:// URLs from OpenMP threads
+// races in TNetXNGFile::SetEnv (getenv/setenv) and segfaulted ~2% of the data batches.
+mutex& remoteOpenMutex() {
+    static mutex instance;
+    return instance;
 }
 
 unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
@@ -4259,7 +4907,13 @@ unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
     const int maxRetries = remoteInput ? kRemoteInputOpenRetries : 0;
 
     for (int retry = 0; retry <= maxRetries; ++retry) {
-        unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
+        unique_ptr<TFile> inputFile;
+        if (remoteInput) {
+            lock_guard<mutex> lock(remoteOpenMutex());
+            inputFile.reset(TFile::Open(inputFileName.c_str(), "READ"));
+        } else {
+            inputFile.reset(TFile::Open(inputFileName.c_str(), "READ"));
+        }
         if (inputFile && !inputFile->IsZombie()) {
             return inputFile;
         }
@@ -4274,6 +4928,17 @@ unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
 
     throw runtime_error("Error opening input file " + inputFileName);
 }
+
+struct FileProcessResult {
+    Long64_t rawEntries = 0;
+    // MC: weight_pu sums over every entry of the file (all generated events, before any
+    // selection) for the absolute pileup normalisation.
+    long double sumWeightPu = 0.L;
+    long double sumWeightPuUp = 0.L;
+    long double sumWeightPuDown = 0.L;
+    // Data: processed (run, lumi) pairs passing the lumi mask.
+    set<pair<UInt_t, UInt_t>> lumis;
+};
 
 // Jet energy corrections, Type-1 MET, and the systematic configurations of the
 // single-pass conversion. For each configuration the corrected jets are written
@@ -4442,13 +5107,11 @@ ScalarInputConfig& requireInputScalar(BranchConfig& branchConfig, const string& 
                         " with its NanoAOD type (neither onlyMC nor optional) in branch.json");
 }
 
-int correctedCollectionSize(const InputCollectionConfig& collection,
-                            const unordered_map<string, long double>& vars) {
-    const auto sizeIt = vars.find(collection.sizeName);
-    if (sizeIt == vars.end()) {
+int correctedCollectionSize(const InputCollectionConfig& collection, const EventVars& vars) {
+    if (!vars.has(collection.sizeSlot)) {
         throw runtime_error("Input collection size not found: " + collection.sizeName);
     }
-    return max(0, min(static_cast<int>(sizeIt->second), collection.maxSize));
+    return max(0, min(static_cast<int>(vars.values[collection.sizeSlot]), collection.maxSize));
 }
 
 bool referencesIdentifier(const ExprPtr& expr, const string& name) {
@@ -4604,7 +5267,7 @@ public:
     // Reads the stored values of the current entry, before any configuration
     // overwrites them, and evaluates everything the configurations share.
     void prepareEvent(const JetCorrectionInputs& in,
-                      const unordered_map<string, long double>& vars,
+                      const EventVars& vars,
                       bool isMC,
                       JetCorrectionEventState& state) const {
         const int nAk4 = correctedCollectionSize(*in.ak4, vars);
@@ -4688,7 +5351,7 @@ public:
                             const JetCorrectionEventState& state,
                             const CorrectionConfiguration& configuration,
                             bool isMC,
-                            unordered_map<string, long double>& vars) const {
+                            EventVars& vars) const {
         double type1Px = 0.;
         double type1Py = 0.;
         for (size_t i = 0; i < state.ak4.size(); ++i) {
@@ -4719,8 +5382,8 @@ public:
         const double metPy = state.rawMetPy - type1Py;
         in.metPt->floatValue = static_cast<Float_t>(hypot(metPx, metPy));
         in.metPhi->floatValue = static_cast<Float_t>(atan2(metPy, metPx));
-        vars[kMetPtScalar] = in.metPt->floatValue;
-        vars[kMetPhiScalar] = in.metPhi->floatValue;
+        vars.set(in.metPt->varSlot, in.metPt->floatValue);
+        vars.set(in.metPhi->varSlot, in.metPhi->floatValue);
     }
 
 private:
@@ -5141,7 +5804,8 @@ unordered_set<string> jetDependentCollections(const SelectionConfig& selectionCo
             if (dependent.count(name) > 0) {
                 continue;
             }
-            const RuntimeCollectionConfig& config = selectionConfig.collections.at(name);
+            const RuntimeCollectionConfig& config =
+                selectionConfig.collections[selectionConfig.collectionSlotByName.at(name)];
             bool jetDependent = (config.source == kAk4JetCollection || config.source == kAk8JetCollection) ||
                                 (!config.dedupCollection.empty() && dependent.count(config.dedupCollection) > 0);
             for (const auto& child : config.merge) {
@@ -5182,20 +5846,53 @@ void requirePreselectionWithoutCorrectedInputs(const SelectionConfig& selectionC
     }
 }
 
-Long64_t processInputFile(const string& inputFileName,
-                          const AppConfig& appConfig,
-                          const SelectionConfig& selectionConfig,
-                          const SampleMeta& sampleMeta,
-                          const vector<PileupBin>& pileupWeights,
-                          const LumiMask* lumiMask,
-                          const JetPtCorrector& jetCorrector,
-                          BranchConfig& branchConfig,
-                          vector<OutputTreeState>& outputTrees) {
+FileProcessResult processInputFile(const string& inputFileName,
+                                   const AppConfig& appConfig,
+                                   const SelectionConfig& selectionConfig,
+                                   const SampleMeta& sampleMeta,
+                                   const vector<PileupBin>& pileupWeights,
+                                   const LumiMask* lumiMask,
+                                   const JetPtCorrector& jetCorrector,
+                                   BranchConfig& branchConfig,
+                                   vector<OutputTreeState>& outputTrees) {
+    FileProcessResult result;
     unique_ptr<TFile> inputFile;
     try {
         inputFile = openInputFileWithRetry(inputFileName);
     } catch (const runtime_error& ex) {
         throw SkippableFileError(ex.what());
+    }
+
+    // Data: every lumisection of this file passing the lumi mask counts as processed. They come
+    // from the LuminosityBlocks tree, so lumisections without (selected) events are included;
+    // files without that tree fall back to the (run, lumi) of their Events entries.
+    bool lumisFromTree = false;
+    if (!sampleMeta.isMC) {
+        TTree* lumiTree = dynamic_cast<TTree*>(inputFile->Get("LuminosityBlocks"));
+        if (lumiTree != nullptr && lumiTree->GetBranch("run") != nullptr &&
+            lumiTree->GetBranch("luminosityBlock") != nullptr) {
+            UInt_t lbRun = 0;
+            UInt_t lbLumi = 0;
+            lumiTree->SetBranchStatus("*", 0);
+            lumiTree->SetBranchStatus("run", 1);
+            lumiTree->SetBranchStatus("luminosityBlock", 1);
+            if (lumiTree->SetBranchAddress("run", &lbRun) < 0 ||
+                lumiTree->SetBranchAddress("luminosityBlock", &lbLumi) < 0) {
+                throw runtime_error("Cannot bind LuminosityBlocks run/luminosityBlock in " + inputFileName);
+            }
+            const Long64_t nLumis = lumiTree->GetEntries();
+            for (Long64_t i = 0; i < nLumis; ++i) {
+                if (lumiTree->GetEntry(i) <= 0) {
+                    throw runtime_error("Failed to read LuminosityBlocks entry " + to_string(i) +
+                                        " in " + inputFileName);
+                }
+                if (lumiMask == nullptr || lumiMask->contains(lbRun, lbLumi)) {
+                    result.lumis.emplace(lbRun, lbLumi);
+                }
+            }
+            lumiTree->ResetBranchAddresses();
+            lumisFromTree = true;
+        }
     }
 
     TTree* tree = static_cast<TTree*>(inputFile->Get(appConfig.treeName.c_str()));
@@ -5205,7 +5902,7 @@ Long64_t processInputFile(const string& inputFileName,
 
     const Long64_t nEntries = tree->GetEntries();
     if (nEntries == 0) {
-        return 0;
+        return result;
     }
 
     configureActiveBranches(tree, branchConfig, sampleMeta.isMC);
@@ -5213,9 +5910,15 @@ Long64_t processInputFile(const string& inputFileName,
     unordered_map<string, const ScalarInputConfig*> rawScalarByName = bindInputBranches(tree, branchConfig, sampleMeta.isMC);
 
     TheoryWeightBufs theoryInBuf;
-    if (sampleMeta.hasTheoryWeights) {
-        activateTheoryInputBranches(tree, theoryInBuf);
+    if (sampleMeta.isMC) {
+        bindGenWeight(tree, theoryInBuf);
+        if (sampleMeta.hasTheoryWeights) {
+            activateTheoryInputBranches(tree, theoryInBuf);
+        }
     }
+    // Every branch is now registered with the TTreeCache: end the learning phase so the
+    // remaining entries are prefetched instead of being read basket by basket.
+    tree->StopCacheLearningPhase();
 
     const bool applyLumiMask = (!sampleMeta.isMC && lumiMask != nullptr);
     const ScalarInputConfig* runScalar = nullptr;
@@ -5238,27 +5941,77 @@ Long64_t processInputFile(const string& inputFileName,
         }
     }
 
-    // Output trees filled by each jet-correction configuration.
+    // Per-file event state, reused across events.
+    const EventVarLayout& varLayout = branchConfig.varLayout;
+
+    // An entry is read completely only if it passes the event preselection. Before that, only
+    // the branches of the scalars the preselection reads are read, plus what the all-event
+    // bookkeeping below needs: Pileup_nTrueInt (MC pileup-weight sums) and, for data without a
+    // LuminosityBlocks tree, run/luminosityBlock (processed lumis). Rejected entries skip
+    // decompressing and unpacking all other branches.
+    set<int> preselectionSlots;
+    collectVarSlots(selectionConfig.eventPreselection, preselectionSlots);
+    if (sampleMeta.isMC) {
+        preselectionSlots.insert(varLayout.puTrueInt);
+    } else if (!lumisFromTree) {
+        preselectionSlots.insert(varLayout.run);
+        preselectionSlots.insert(varLayout.luminosityBlock);
+    }
+    vector<TBranch*> preselectionBranches;
+    for (const auto& scalar : branchConfig.scalars) {
+        if (scalar.bound && preselectionSlots.count(scalar.varSlot)) {
+            preselectionBranches.push_back(tree->GetBranch(scalar.branch.c_str()));
+        }
+    }
+    if (sampleMeta.isMC && preselectionSlots.count(varLayout.genWeight)) {
+        preselectionBranches.push_back(tree->GetBranch("genWeight"));
+    }
+
+    EventVars baseVars;
+    EventVars treeVars;
+    EventCollections collections;
+    collections.inputs.resize(branchConfig.collections.size());
+    collections.runtime.resize(selectionConfig.collections.size());
+    vector<const ExprPtr*> treeCuts;
+    for (const auto& treeState : outputTrees) {
+        const auto cutIt = selectionConfig.treeSelections.find(treeState.config.selection);
+        treeCuts.push_back(cutIt != selectionConfig.treeSelections.end() ? &cutIt->second : nullptr);
+    }
+
+    // Output trees (indices into outputTrees) filled by each jet-correction configuration: the
+    // nominal one first, then one per variation (MC); without corrections only the nominal.
     const vector<CorrectionConfiguration>& configurations = jetCorrector.configurations(sampleMeta.isMC);
-    vector<vector<OutputTreeState*>> treesByConfiguration(configurations.size());
-    for (auto& treeState : outputTrees) {
+    vector<vector<size_t>> treesByConfiguration(configurations.size());
+    for (size_t t = 0; t < outputTrees.size(); ++t) {
         const auto configurationIt = find_if(configurations.begin(), configurations.end(),
                                              [&](const CorrectionConfiguration& configuration) {
-                                                 return configuration.variation == treeState.config.variation;
+                                                 return configuration.variation == outputTrees[t].config.variation;
                                              });
         if (configurationIt == configurations.end()) {
-            throw runtime_error("No jet correction configuration fills output tree " + treeState.config.name);
+            throw runtime_error("No jet correction configuration fills output tree " + outputTrees[t].config.name);
         }
-        treesByConfiguration[configurationIt - configurations.begin()].push_back(&treeState);
+        treesByConfiguration[configurationIt - configurations.begin()].push_back(t);
     }
+    // With corrections, the AK4/AK8 input collections and the runtime collections that depend
+    // on them (or on the corrected MET) are rebuilt for every configuration; the other runtime
+    // collections are built once per event.
     JetCorrectionInputs correctionInputs;
+    size_t ak4Input = 0;
+    size_t ak8Input = 0;
+    vector<unsigned char> jetDependent(selectionConfig.collections.size(), 0);
     if (jetCorrector.enabled()) {
         correctionInputs = jetCorrector.resolveInputs(branchConfig);
+        ak4Input = static_cast<size_t>(correctionInputs.ak4 - branchConfig.collections.data());
+        ak8Input = static_cast<size_t>(correctionInputs.ak8 - branchConfig.collections.data());
+        for (const auto& name : jetDependentCollections(selectionConfig)) {
+            jetDependent[selectionConfig.collectionSlotByName.at(name)] = 1;
+        }
     }
     JetCorrectionEventState correctionState;
-    const unordered_set<string> jetDependent = jetDependentCollections(selectionConfig);
+    EventVars configurationVars;
 
-    Long64_t rawEntries = applyLumiMask ? 0 : nEntries;
+    vector<Long64_t> truncatedEvents(branchConfig.collections.size(), 0);
+    result.rawEntries = applyLumiMask ? 0 : nEntries;
     for (Long64_t entry = 0; entry < nEntries; ++entry) {
         if (applyLumiMask) {
             if (runBranch->GetEntry(entry) < 0 || lumiBranch->GetEntry(entry) < 0) {
@@ -5269,101 +6022,131 @@ Long64_t processInputFile(const string& inputFileName,
             if (!lumiMask->contains(runValue, lumiValue)) {
                 continue;
             }
-            ++rawEntries;
+            ++result.rawEntries;
         }
 
-        tree->GetEntry(entry);
+        for (TBranch* branch : preselectionBranches) {
+            if (branch->GetEntry(entry) < 0) {
+                throw runtime_error("Failed to read branch " + string(branch->GetName()) + " of entry " +
+                                    to_string(entry) + " of tree " + appConfig.treeName + " in " + inputFileName);
+            }
+        }
 
-        const TheoryWeightBufs* theoryBufsPtr = sampleMeta.hasTheoryWeights ? &theoryInBuf : nullptr;
-        const unordered_map<string, long double> baseVars =
-            buildRawScalarValues(branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
+        const TheoryWeightBufs* theoryBufsPtr = sampleMeta.isMC ? &theoryInBuf : nullptr;
+        fillEventVars(baseVars, branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
+        if (sampleMeta.isMC) {
+            result.sumWeightPu += baseVars.values[varLayout.weightPu];
+            result.sumWeightPuUp += baseVars.values[varLayout.weightPuUp];
+            result.sumWeightPuDown += baseVars.values[varLayout.weightPuDown];
+        } else if (!lumisFromTree) {
+            result.lumis.emplace(static_cast<UInt_t>(requireEventVar(baseVars, varLayout.run, "run")),
+                                 static_cast<UInt_t>(requireEventVar(baseVars, varLayout.luminosityBlock, "luminosityBlock")));
+        }
 
-        // The event preselection reads input scalars only, none of which the jet
-        // corrections change (see requirePreselectionWithoutCorrectedInputs).
         EvalContext preContext;
         preContext.vars = &baseVars;
-        preContext.rawScalars = &rawScalarByName;
         if (!evaluateCondition(selectionConfig.eventPreselection, preContext)) {
             continue;
         }
 
-        unordered_map<string, RuntimeCollection> inputCollections;
-        inputCollections.reserve(branchConfig.collections.size());
-        for (const auto& inputConfig : branchConfig.collections) {
-            inputCollections[inputConfig.name] = buildInputCollection(inputConfig, baseVars);
+        if (tree->GetEntry(entry) <= 0) {
+            throw runtime_error("Failed to read entry " + to_string(entry) + " of tree " +
+                                appConfig.treeName + " in " + inputFileName);
         }
+        fillEventVars(baseVars, branchConfig, sampleMeta, &pileupWeights, theoryBufsPtr);
+
+        for (size_t c = 0; c < branchConfig.collections.size(); ++c) {
+            const auto& inputConfig = branchConfig.collections[c];
+            if (baseVars.has(inputConfig.sizeSlot) && baseVars.values[inputConfig.sizeSlot] > inputConfig.maxSize) {
+                ++truncatedEvents[c];
+            }
+            collections.inputs[c] = buildInputCollection(inputConfig, baseVars);
+        }
+
+        collections.built.assign(selectionConfig.collections.size(), 0);
+        collections.active.assign(selectionConfig.collections.size(), 0);
         if (jetCorrector.enabled()) {
             jetCorrector.prepareEvent(correctionInputs, baseVars, sampleMeta.isMC, correctionState);
         }
-        unordered_map<string, RuntimeCollection> sharedCollections;
-        {
-            unordered_set<string> activeCollections;
-            for (const auto& name : selectionConfig.collectionOrder) {
-                if (jetDependent.count(name) == 0) {
-                    buildRuntimeCollection(name, selectionConfig, inputCollections, sharedCollections,
-                                           activeCollections, baseVars, rawScalarByName);
-                }
+        for (const int slot : selectionConfig.buildOrder) {
+            if (!jetDependent[slot]) {
+                buildRuntimeCollection(slot, selectionConfig, collections, baseVars);
             }
         }
 
         for (size_t configurationIndex = 0; configurationIndex < configurations.size(); ++configurationIndex) {
-            unordered_map<string, long double> vars = baseVars;
+            const EventVars* vars = &baseVars;
             if (jetCorrector.enabled()) {
+                configurationVars = baseVars;
                 jetCorrector.applyConfiguration(correctionInputs, correctionState,
-                                                configurations[configurationIndex], sampleMeta.isMC, vars);
-                inputCollections[kAk4JetCollection] = buildInputCollection(*correctionInputs.ak4, vars);
-                inputCollections[kAk8JetCollection] = buildInputCollection(*correctionInputs.ak8, vars);
+                                                configurations[configurationIndex], sampleMeta.isMC,
+                                                configurationVars);
+                collections.inputs[ak4Input] = buildInputCollection(*correctionInputs.ak4, configurationVars);
+                collections.inputs[ak8Input] = buildInputCollection(*correctionInputs.ak8, configurationVars);
+                for (size_t slot = 0; slot < jetDependent.size(); ++slot) {
+                    if (jetDependent[slot]) {
+                        collections.built[slot] = 0;
+                        collections.active[slot] = 0;
+                    }
+                }
+                vars = &configurationVars;
+            }
+            for (const int slot : selectionConfig.buildOrder) {
+                buildRuntimeCollection(slot, selectionConfig, collections, *vars);
             }
 
-            unordered_map<string, RuntimeCollection> runtimeCollections = sharedCollections;
-            runtimeCollections.reserve(selectionConfig.collectionOrder.size());
-            unordered_set<string> activeCollections;
-            activeCollections.reserve(selectionConfig.collectionOrder.size());
-            for (const auto& name : selectionConfig.collectionOrder) {
-                buildRuntimeCollection(name, selectionConfig, inputCollections, runtimeCollections,
-                                       activeCollections, vars, rawScalarByName);
-            }
-
-            for (OutputTreeState* treeState : treesByConfiguration[configurationIndex]) {
-                const auto cutIt = selectionConfig.treeSelections.find(treeState->config.selection);
-                if (cutIt == selectionConfig.treeSelections.end()) {
-                    throw runtime_error("Missing tree selection: " + treeState->config.selection);
+            for (const size_t t : treesByConfiguration[configurationIndex]) {
+                OutputTreeState& treeState = outputTrees[t];
+                if (treeCuts[t] == nullptr) {
+                    throw runtime_error("Missing tree selection: " + treeState.config.selection);
                 }
 
                 EvalContext treeContext;
-                treeContext.vars = &vars;
-                treeContext.collections = &runtimeCollections;
-                treeContext.inputCollections = &inputCollections;
-                treeContext.rawScalars = &rawScalarByName;
-                if (!evaluateCondition(cutIt->second, treeContext)) {
+                treeContext.vars = vars;
+                treeContext.collections = &collections;
+                if (!evaluateCondition(*treeCuts[t], treeContext)) {
                     continue;
                 }
 
-                if (treeState->hasTheoryBranches) {
-                    copyTheoryWeights(theoryInBuf, treeState->theoryOutBuf);
+                if (treeState.hasTheoryBranches) {
+                    copyTheoryWeights(theoryInBuf, treeState.theoryOutBuf);
                 }
-                fillOutputTree(*treeState, runtimeCollections, inputCollections, vars, rawScalarByName,
-                               sampleMeta.isMC);
+                fillOutputTree(treeState, collections, *vars, treeVars, branchConfig.scalars, sampleMeta.isMC);
             }
         }
     }
-    return rawEntries;
+    for (size_t c = 0; c < truncatedEvents.size(); ++c) {
+        if (truncatedEvents[c] == 0) {
+            continue;
+        }
+#pragma omp critical(convert_progress)
+        cerr << "\nWarning: " << truncatedEvents[c] << " preselected events in " << inputFileName
+             << " have more than max_size = " << branchConfig.collections[c].maxSize << " "
+             << branchConfig.collections[c].name << " objects; only the first "
+             << branchConfig.collections[c].maxSize << " are used" << endl;
+    }
+    return result;
 }
 
-vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles,
-                                           size_t batchIndex,
-                                           int threadCount,
-                                           const fs::path& batchOutputPath,
-                                           const AppConfig& appConfig,
-                                           const SelectionConfig& selectionConfig,
-                                           const SampleMeta& sampleMeta,
-                                           const vector<PileupBin>& pileupWeights,
-                                           const LumiMask* lumiMask,
-                                           const JetPtCorrector& jetCorrector,
-                                           const BranchConfig& branchConfig,
-                                           atomic<size_t>& processedFiles,
-                                           size_t totalFiles,
-                                           atomic<Long64_t>& batchRawEntries) {
+// Runs one batch: every input file is converted by the OpenMP threads into per-thread temp
+// files, which are then fast-merged into batchOutputPath. batchMeta accumulates raw_entries,
+// the MC pileup-weight sums and (MC) skipped files; batchLumis the processed data lumis. A data
+// file that cannot be opened/read fails the batch, because skipping it would lose luminosity.
+void processInputBatchToTempFile(const vector<string>& batchInputFiles,
+                                 size_t batchIndex,
+                                 int threadCount,
+                                 const fs::path& batchOutputPath,
+                                 const AppConfig& appConfig,
+                                 const SelectionConfig& selectionConfig,
+                                 const SampleMeta& sampleMeta,
+                                 const vector<PileupBin>& pileupWeights,
+                                 const LumiMask* lumiMask,
+                                 const JetPtCorrector& jetCorrector,
+                                 const BranchConfig& branchConfig,
+                                 atomic<size_t>& processedFiles,
+                                 size_t totalFiles,
+                                 BatchMeta& batchMeta,
+                                 set<pair<UInt_t, UInt_t>>& batchLumis) {
     if (batchInputFiles.empty()) {
         throw runtime_error("Empty input batch for sample " + sampleMeta.sample);
     }
@@ -5422,26 +6205,42 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
             }
 
             try {
-                const Long64_t fileEntries = processInputFile(batchInputFiles[index],
-                                                              appConfig,
-                                                              selectionConfig,
-                                                              sampleMeta,
-                                                              pileupWeights,
-                                                              lumiMask,
-                                                              jetCorrector,
-                                                              threadConfigs[tid],
-                                                              threadResults[tid].outputTrees);
-                batchRawEntries.fetch_add(fileEntries);
+                const FileProcessResult fileResult = processInputFile(batchInputFiles[index],
+                                                                      appConfig,
+                                                                      selectionConfig,
+                                                                      sampleMeta,
+                                                                      pileupWeights,
+                                                                      lumiMask,
+                                                                      jetCorrector,
+                                                                      threadConfigs[tid],
+                                                                      threadResults[tid].outputTrees);
+#pragma omp critical(convert_accumulate)
+                {
+                    batchMeta.rawEntries += fileResult.rawEntries;
+                    batchMeta.sumWeightPu += fileResult.sumWeightPu;
+                    batchMeta.sumWeightPuUp += fileResult.sumWeightPuUp;
+                    batchMeta.sumWeightPuDown += fileResult.sumWeightPuDown;
+                    batchLumis.insert(fileResult.lumis.begin(), fileResult.lumis.end());
+                }
                 const size_t done = processedFiles.fetch_add(1) + 1;
 #pragma omp critical(convert_progress)
                 printFileProgress(sampleMeta.sample, done, totalFiles);
             } catch (const SkippableFileError& ex) {
-                const size_t done = processedFiles.fetch_add(1) + 1;
+                if (!sampleMeta.isMC) {
+                    failed.store(true);
+#pragma omp critical(convert_error)
+                    errors.push_back("Input ROOT file " + batchInputFiles[index] +
+                                     " cannot be processed and data files are never skipped: " + ex.what());
+                } else {
+                    const size_t done = processedFiles.fetch_add(1) + 1;
+#pragma omp critical(convert_accumulate)
+                    batchMeta.skippedFiles.push_back(batchInputFiles[index]);
 #pragma omp critical(convert_progress)
-                {
-                    cerr << "\nWarning: skipping " << batchInputFiles[index]
-                         << ": " << ex.what() << '\n';
-                    printFileProgress(sampleMeta.sample, done, totalFiles);
+                    {
+                        cerr << "\nWarning: skipping " << batchInputFiles[index]
+                             << ": " << ex.what() << '\n';
+                        printFileProgress(sampleMeta.sample, done, totalFiles);
+                    }
                 }
             } catch (const exception& ex) {
                 failed.store(true);
@@ -5474,14 +6273,10 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
 
     try {
         const vector<string> threadTempPaths = finalizeThreadTempFiles(threadResults);
-        const vector<string> writtenFiles = writeOutputFilesStreaming(batchOutputPath,
-                                                                      threadTempPaths,
-                                                                      branchConfig.trees,
-                                                                      0);
+        fastMergeRootFiles(threadTempPaths, batchOutputPath, branchConfig.trees);
         for (auto& result : threadResults) {
             cleanupThreadResult(result);
         }
-        return writtenFiles;
     } catch (...) {
         for (auto& result : threadResults) {
             cleanupThreadResult(result);
@@ -5490,30 +6285,50 @@ vector<string> processInputBatchToTempFile(const vector<string>& batchInputFiles
     }
 }
 
+vector<string> sliceBatchFiles(const vector<string>& inputFiles, size_t batchSize, size_t batchIndex) {
+    const size_t begin = min(inputFiles.size(), batchIndex * batchSize);
+    const size_t end = min(inputFiles.size(), begin + batchSize);
+    return vector<string>(inputFiles.begin() + static_cast<vector<string>::difference_type>(begin),
+                          inputFiles.begin() + static_cast<vector<string>::difference_type>(end));
+}
+
 BatchTempCollection collectSuccessfulBatchTempFiles(const AppConfig& appConfig,
                                                     const SampleMeta& sampleMeta,
                                                     const BranchConfig& branchConfig,
+                                                    const vector<string>& inputFiles,
+                                                    size_t batchSize,
+                                                    const string& configHash,
                                                     const vector<size_t>& batchIndices,
                                                     size_t nBatches) {
     BatchTempCollection collection;
     collection.paths.reserve(batchIndices.size());
     for (const size_t batchIndex : batchIndices) {
         const fs::path batchOutputPath = makeBatchTempOutputPath(appConfig, sampleMeta, batchIndex);
-        Long64_t batchRawEntries = 0;
+        const string expectedFilesHash = hashFileList(sliceBatchFiles(inputFiles, batchSize, batchIndex));
+        BatchMeta meta;
         string invalidReason;
         if (!validateBatchTempOutput(batchOutputPath,
                                      branchConfig.trees,
-                                     batchRawEntries,
+                                     expectedFilesHash,
+                                     configHash,
+                                     sampleMeta.isMC,
+                                     meta,
                                      invalidReason)) {
-            // Input samples are now produced with an upstream event filter, so raw_entries is a
-            // fixed, externally-set normalization that can no longer be reconstructed from
-            // whichever batches happen to be present. A missing/incomplete batch must fail the
-            // merge outright rather than silently producing an under-counted output.
+            // A missing, incomplete or stale batch must fail the merge outright rather than
+            // silently producing an under-counted (or mixed-configuration) output.
             throw runtime_error("Missing or incomplete batch " + to_string(batchIndex + 1) +
                                 "/" + to_string(nBatches) + " for sample = " + sampleMeta.sample +
                                 ": " + invalidReason);
         }
-        collection.rawEntries += batchRawEntries;
+        collection.rawEntries += meta.rawEntries;
+        collection.sumWeightPu += meta.sumWeightPu;
+        collection.sumWeightPuUp += meta.sumWeightPuUp;
+        collection.sumWeightPuDown += meta.sumWeightPuDown;
+        collection.skippedFiles.insert(collection.skippedFiles.end(),
+                                       meta.skippedFiles.begin(), meta.skippedFiles.end());
+        if (!sampleMeta.isMC) {
+            readBatchLumis(batchOutputPath, collection.lumis);
+        }
         collection.paths.push_back(batchOutputPath.string());
     }
 
@@ -5524,24 +6339,142 @@ BatchTempCollection collectSuccessfulBatchTempFiles(const AppConfig& appConfig,
     return collection;
 }
 
+// True for "<stem><ext>" or "<stem>_<digits><ext>", the names downstream globs as this sample.
+bool isSampleOutputName(const string& name, const string& stem, const string& extension) {
+    if (name == stem + extension) {
+        return true;
+    }
+    const string prefix = stem + "_";
+    if (name.size() <= prefix.size() + extension.size() || name.compare(0, prefix.size(), prefix) != 0 ||
+        name.compare(name.size() - extension.size(), extension.size(), extension) != 0) {
+        return false;
+    }
+    const string middle = name.substr(prefix.size(), name.size() - prefix.size() - extension.size());
+    return !middle.empty() && all_of(middle.begin(), middle.end(),
+                                     [](unsigned char c) { return isdigit(c) != 0; });
+}
+
 int finalizeSuccessfulBatches(const AppConfig& appConfig,
                               const SampleMeta& sampleMeta,
                               const BranchConfig& branchConfig,
+                              const vector<string>& inputFiles,
+                              size_t batchSize,
+                              const string& configHash,
                               const vector<size_t>& batchIndices,
                               size_t nBatches) {
     BatchTempCollection batchFiles;
     try {
-        batchFiles = collectSuccessfulBatchTempFiles(appConfig, sampleMeta, branchConfig, batchIndices, nBatches);
+        batchFiles = collectSuccessfulBatchTempFiles(appConfig, sampleMeta, branchConfig, inputFiles,
+                                                     batchSize, configHash, batchIndices, nBatches);
+    } catch (const exception& ex) {
+        cerr << "Batch collection error: " << ex.what() << endl;
+        return 1;
+    }
+    if (!batchFiles.skippedFiles.empty()) {
+        cerr << "Warning: " << batchFiles.skippedFiles.size() << " MC input file"
+             << (batchFiles.skippedFiles.size() == 1 ? " was" : "s were")
+             << " skipped (unreadable); raw_entries counts only processed files, so the"
+             << " normalisation stays consistent:";
+        for (const auto& file : batchFiles.skippedFiles) {
+            cerr << "\n  " << file;
+        }
+        cerr << endl;
+    }
+
+    const fs::path outputPath(sampleMeta.outputFileName);
+    try {
+        if (!outputPath.parent_path().empty()) {
+            fs::create_directories(outputPath.parent_path());
+        }
+
+        // Group the batch files in order into outputs of at most max_output_file_size_gb
+        // (fast merging keeps the compressed size, so the input file sizes add up).
+        const Long64_t maxOutputBytes = outputSizeLimitBytes(appConfig.maxOutputFileSizeGB);
+        vector<vector<string>> groups;
+        Long64_t groupBytes = 0;
+        for (const auto& path : batchFiles.paths) {
+            const Long64_t bytes = static_cast<Long64_t>(fs::file_size(path));
+            if (groups.empty() || (maxOutputBytes > 0 && !groups.back().empty() &&
+                                   groupBytes + bytes > maxOutputBytes)) {
+                groups.emplace_back();
+                groupBytes = 0;
+            }
+            groups.back().push_back(path);
+            groupBytes += bytes;
+        }
+        vector<fs::path> outputs;
+        for (size_t k = 0; k < groups.size(); ++k) {
+            outputs.push_back(groups.size() == 1 ? outputPath : makeSplitOutputPath(outputPath, k));
+        }
+
+        // Outputs of an earlier merge that this one would not overwrite (e.g. more chunks
+        // before) would be globbed downstream as extra events: refuse instead of mixing them.
+        const string stem = outputPath.stem().string();
+        const string extension = outputPath.has_extension() ? outputPath.extension().string() : ".root";
+        set<string> planned;
+        for (const auto& output : outputs) {
+            planned.insert(output.filename().string());
+        }
+        vector<string> stale;
+        const fs::path outputDir = outputPath.parent_path().empty() ? fs::path(".") : outputPath.parent_path();
+        for (const auto& entry : fs::directory_iterator(outputDir)) {
+            const string name = entry.path().filename().string();
+            if (isSampleOutputName(name, stem, extension) && planned.count(name) == 0u) {
+                stale.push_back(entry.path().string());
+            }
+        }
+        if (!stale.empty()) {
+            ostringstream os;
+            os << stale.size() << " existing output file(s) of sample " << sampleMeta.sample
+               << " would not be overwritten by this merge (" << outputs.size()
+               << " outputs) and would be read downstream as extra events; remove them and rerun"
+               << " the merge:";
+            for (const auto& path : stale) {
+                os << ' ' << path;
+            }
+            throw runtime_error(os.str());
+        }
+
+        cout << "Merging " << batchFiles.paths.size()
+             << " successful temporary batch file" << (batchFiles.paths.size() == 1 ? "" : "s")
+             << " out of " << nBatches << " into " << outputs.size() << " output file"
+             << (outputs.size() == 1 ? "" : "s") << endl;
+        for (size_t k = 0; k < groups.size(); ++k) {
+            fastMergeRootFiles(groups[k], outputs[k], branchConfig.trees);
+            cout << "Wrote output file: " << outputs[k].string() << endl;
+        }
+    } catch (const exception& ex) {
+        cerr << "Output error: " << ex.what() << endl;
+        return 1;
+    }
+
+    // sample.json and the processed-lumi list are written only once every output exists.
+    try {
         if (appConfig.updateRawEntries) {
             writeSampleRawEntries(appConfig.sampleConfigPath, sampleMeta.sample, batchFiles.rawEntries);
             cout << "Updated raw_entries in " << appConfig.sampleConfigPath
                  << " for sample = " << sampleMeta.sample
                  << ", tree = " << appConfig.treeName
                  << ", raw_entries = " << batchFiles.rawEntries << endl;
+            if (sampleMeta.isMC && batchFiles.rawEntries > 0) {
+                // Mean weight_pu (and up/down) over all generated events of the processed
+                // files: the denominator of the absolute pileup normalisation downstream.
+                const long double n = static_cast<long double>(batchFiles.rawEntries);
+                const vector<pair<string, long double>> means = {
+                    {"weight_pu_mean", batchFiles.sumWeightPu / n},
+                    {"weight_pu_up_mean", batchFiles.sumWeightPuUp / n},
+                    {"weight_pu_down_mean", batchFiles.sumWeightPuDown / n},
+                };
+                for (const auto& item : means) {
+                    ostringstream value;
+                    value << setprecision(17) << static_cast<double>(item.second);
+                    writeSampleNumericField(appConfig.sampleConfigPath, sampleMeta.sample, item.first, value.str());
+                    cout << "Updated " << item.first << " = " << value.str() << endl;
+                }
+            }
         } else {
-            // update_raw_entries: false -- input samples are produced with an upstream event
-            // filter, so the processed entry count no longer equals the correct normalization
-            // and raw_entries (set externally) must not be overwritten here.
+            // update_raw_entries: false -- the processed entry count is not the normalisation
+            // of this configuration, so sample.json is left untouched.
             cout << "Processed raw_entries = " << batchFiles.rawEntries
                  << " for sample = " << sampleMeta.sample
                  << ", tree = " << appConfig.treeName
@@ -5553,34 +6486,22 @@ int finalizeSuccessfulBatches(const AppConfig& appConfig,
         return 1;
     }
 
-    try {
-        const fs::path outputPath(sampleMeta.outputFileName);
-        if (!outputPath.parent_path().empty()) {
-            fs::create_directories(outputPath.parent_path());
-        }
-
-        const Long64_t maxOutputBytes = outputSizeLimitBytes(appConfig.maxOutputFileSizeGB);
-        cout << "Merging " << batchFiles.paths.size()
-             << " successful temporary batch file" << (batchFiles.paths.size() == 1 ? "" : "s")
-             << " out of " << nBatches << endl;
-        const vector<string> writtenFiles = writeOutputFilesStreaming(outputPath,
-                                                                      batchFiles.paths,
-                                                                      branchConfig.trees,
-                                                                      maxOutputBytes);
-        if (writtenFiles.size() <= 1) {
-            cout << "Wrote output file: "
-                 << (writtenFiles.empty() ? sampleMeta.outputFileName : writtenFiles.front())
-                 << endl;
-        } else {
-            cout << "Wrote output files:";
-            for (const auto& fileName : writtenFiles) {
-                cout << ' ' << fileName;
+    if (!sampleMeta.isMC) {
+        try {
+            const fs::path lumiPath = (outputPath.parent_path().empty() ? fs::path(".") : outputPath.parent_path()) /
+                                      (sampleMeta.sample + "_processed_lumis.json");
+            writeProcessedLumiJson(lumiPath, batchFiles.lumis);
+            set<UInt_t> runs;
+            for (const auto& lumi : batchFiles.lumis) {
+                runs.insert(lumi.first);
             }
-            cout << endl;
+            cout << "Wrote processed-lumi JSON " << lumiPath.string() << " ("
+                 << batchFiles.lumis.size() << " lumisections in " << runs.size()
+                 << " runs); pass it to brilcalc -i for the luminosity" << endl;
+        } catch (const exception& ex) {
+            cerr << "Processed-lumi error: " << ex.what() << endl;
+            return 1;
         }
-    } catch (const exception& ex) {
-        cerr << "Output error: " << ex.what() << endl;
-        return 1;
     }
 
     return 0;
@@ -5610,6 +6531,107 @@ size_t computeNBatches(const AppConfig& appConfig, size_t inputFileCount) {
 
 }  // namespace
 
+struct GenWeightSums {
+    long double sumw = 0.L;
+    long double count = 0.L;
+    size_t filesUsed = 0;
+    vector<string> skippedFiles;
+};
+
+// Sum genEventSumw / genEventCount over the Runs trees of the input files. Files are
+// opened serially (concurrent remote TFile::Open is not thread-safe). A file that cannot
+// be read after the usual retries is skipped and reported: the result is a mean, so a
+// few missing files do not bias it.
+GenWeightSums sumRunsGenWeights(const vector<string>& inputFiles) {
+    GenWeightSums sums;
+    for (size_t i = 0; i < inputFiles.size(); ++i) {
+        const string& inputFileName = inputFiles[i];
+        try {
+            unique_ptr<TFile> inputFile = openInputFileWithRetry(inputFileName);
+            TTree* runs = dynamic_cast<TTree*>(inputFile->Get("Runs"));
+            if (runs == nullptr || runs->GetBranch("genEventSumw") == nullptr ||
+                runs->GetBranch("genEventCount") == nullptr) {
+                throw runtime_error("missing Runs tree or genEventSumw/genEventCount branch");
+            }
+            Double_t fileSumw = 0.;
+            Long64_t fileCount = 0;
+            runs->SetBranchStatus("*", 0);
+            runs->SetBranchStatus("genEventSumw", 1);
+            runs->SetBranchStatus("genEventCount", 1);
+            runs->SetBranchAddress("genEventSumw", &fileSumw);
+            runs->SetBranchAddress("genEventCount", &fileCount);
+            long double sumw = 0.L;
+            long double count = 0.L;
+            for (Long64_t entry = 0; entry < runs->GetEntries(); ++entry) {
+                if (runs->GetEntry(entry) <= 0) {
+                    throw runtime_error("failed to read Runs entry " + to_string(entry));
+                }
+                sumw += fileSumw;
+                count += fileCount;
+            }
+            runs->ResetBranchAddresses();
+            sums.sumw += sumw;
+            sums.count += count;
+            ++sums.filesUsed;
+        } catch (const exception& ex) {
+            cerr << "Warning: skipping " << inputFileName << " for genweight_mean: " << ex.what() << endl;
+            sums.skippedFiles.push_back(inputFileName);
+        }
+        if ((i + 1) % 100 == 0 || i + 1 == inputFiles.size()) {
+            cout << "Runs trees read: " << (i + 1) << "/" << inputFiles.size() << endl;
+        }
+    }
+    return sums;
+}
+
+// --update-genweight-mean: store genweight_mean = sum(genEventSumw) / sum(genEventCount)
+// (the mean signed generator weight of the generated sample) in sample.json. Downstream
+// event weights use genWeight / genweight_mean, so negative-weight events enter with a
+// negative sign while the raw_entries-based normalisation keeps its meaning.
+int updateGenWeightMean(const AppConfig& appConfig, SampleMeta& sampleMeta) {
+    if (!sampleMeta.isMC) {
+        cerr << "genweight_mean error: sample " << sampleMeta.sample << " is data" << endl;
+        return 1;
+    }
+    vector<string> inputFiles;
+    try {
+        inputFiles = discoverInputFiles(sampleMeta);
+    } catch (const exception& ex) {
+        cerr << "Input discovery error: " << ex.what() << endl;
+        return 1;
+    }
+    cout << "Running convert_branch for sample = " << sampleMeta.sample
+         << ", update genweight_mean from " << inputFiles.size() << " Runs trees" << endl;
+
+    const GenWeightSums sums = sumRunsGenWeights(inputFiles);
+    if (sums.filesUsed == 0 || sums.count <= 0.L || sums.sumw <= 0.L) {
+        cerr << "genweight_mean error: no usable Runs tree content for sample " << sampleMeta.sample
+             << " (files used = " << sums.filesUsed << ", sumw = " << static_cast<double>(sums.sumw)
+             << ", count = " << static_cast<double>(sums.count) << ")" << endl;
+        return 1;
+    }
+    if (!sums.skippedFiles.empty()) {
+        cerr << "Warning: genweight_mean for sample " << sampleMeta.sample << " uses " << sums.filesUsed
+             << "/" << inputFiles.size() << " files (" << sums.skippedFiles.size() << " skipped)" << endl;
+    }
+
+    const double mean = static_cast<double>(sums.sumw / sums.count);
+    ostringstream valueText;
+    valueText << setprecision(17) << mean;
+    try {
+        writeSampleNumericField(appConfig.sampleConfigPath, sampleMeta.sample, "genweight_mean", valueText.str());
+    } catch (const exception& ex) {
+        cerr << "genweight_mean update error: " << ex.what() << endl;
+        return 1;
+    }
+    cout << "Updated genweight_mean in " << appConfig.sampleConfigPath << " for sample = " << sampleMeta.sample
+         << ": genweight_mean = " << valueText.str()
+         << ", sum(genEventSumw) = " << setprecision(17) << static_cast<double>(sums.sumw)
+         << ", sum(genEventCount) = " << static_cast<long long>(sums.count)
+         << " (compare with raw_entries)" << endl;
+    return 0;
+}
+
 int main(int argc, char** argv) {
     TH1::AddDirectory(false);
 
@@ -5620,6 +6642,7 @@ int main(int argc, char** argv) {
         appConfig = loadAppConfig();
         branchConfig = loadBranchConfig(appConfig);
         selectionConfig = loadSelectionConfig(appConfig);
+        resolveEngineSymbols(selectionConfig, branchConfig);
         requirePreselectionWithoutCorrectedInputs(selectionConfig, appConfig.jetPtCorrection);
     } catch (const exception& ex) {
         cerr << "Configuration error: " << ex.what() << endl;
@@ -5650,8 +6673,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // The variation trees are part of the output layout of an MC sample, for the
-    // batch outputs and for the final merge alike.
+    if (batchRequest.updateGenWeightMean) {
+        return updateGenWeightMean(appConfig, sampleMeta);
+    }
+
+    // The variation trees are part of the output layout of an MC sample, for the batch outputs
+    // and for the final merge alike. They are copies of the nominal trees, whose expressions and
+    // variable slots resolveEngineSymbols has already resolved.
     try {
         addVariationTrees(branchConfig, appConfig.jetPtCorrection, sampleMeta.isMC);
     } catch (const exception& ex) {
@@ -5659,20 +6687,33 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Pileup weights in use (MC) and the conversion-configuration hash recorded in, and
+    // checked against, every batch .meta.
+    string puWeightPath;
+    if (sampleMeta.isMC && !appConfig.puWeightPathPattern.empty()) {
+        try {
+            puWeightPath = resolvePileupWeightPath(appConfig, sampleMeta);
+        } catch (const exception& ex) {
+            cerr << "Pileup weight error: " << ex.what() << endl;
+            return 1;
+        }
+    }
+
     if (batchRequest.mergeSuccessfulBatches) {
         const fs::path batchTempDir = makeBatchTempOutputDir(appConfig, sampleMeta);
-        // Recompute the true expected batch count from the current input file discovery (the
-        // same logic the original batch-processing invocation used), rather than inferring it
-        // from whichever batch temp files happen to exist -- otherwise a batch whose job never
-        // ran at all (no temp file, no sidecar) would be invisible to the merge and silently
-        // dropped instead of failing it.
+        // The expected batch count and each batch's input slice come from the same file-list
+        // snapshot the batch jobs used, rather than from whichever batch temp files happen to
+        // exist -- a batch whose job never ran (no temp file, no sidecar) fails the merge.
         vector<string> inputFiles;
+        string configHash;
         try {
-            inputFiles = discoverInputFiles(sampleMeta);
+            inputFiles = resolveInputFiles(appConfig, sampleMeta);
+            configHash = computeConversionConfigHash(appConfig, sampleMeta, puWeightPath);
         } catch (const exception& ex) {
             cerr << "Input discovery error: " << ex.what() << endl;
             return 1;
         }
+        const size_t batchSize = computeBatchSize(appConfig, inputFiles.size());
         const size_t nBatches = computeNBatches(appConfig, inputFiles.size());
         cout << "Running convert_branch for sample = " << sample
              << ", merge successful batches" << endl;
@@ -5686,12 +6727,13 @@ int main(int argc, char** argv) {
             cerr << "Batch selection error: " << ex.what() << endl;
             return 1;
         }
-        return finalizeSuccessfulBatches(appConfig, sampleMeta, branchConfig, batchIndices, nBatches);
+        return finalizeSuccessfulBatches(appConfig, sampleMeta, branchConfig, inputFiles, batchSize,
+                                         configHash, batchIndices, nBatches);
     }
 
     vector<string> inputFiles;
     try {
-        inputFiles = discoverInputFiles(sampleMeta);
+        inputFiles = resolveInputFiles(appConfig, sampleMeta);
     } catch (const exception& ex) {
         cerr << "Input discovery error: " << ex.what() << endl;
         return 1;
@@ -5728,10 +6770,17 @@ int main(int argc, char** argv) {
 
     const fs::path batchTempDir = makeBatchTempOutputDir(appConfig, sampleMeta);
 
+    string configHash;
+    try {
+        configHash = computeConversionConfigHash(appConfig, sampleMeta, puWeightPath);
+    } catch (const exception& ex) {
+        cerr << "Configuration error: " << ex.what() << endl;
+        return 1;
+    }
+
     vector<PileupBin> pileupWeights;
-    if (sampleMeta.isMC && !appConfig.puWeightPathPattern.empty()) {
+    if (!puWeightPath.empty()) {
         try {
-            const string puWeightPath = resolvePileupWeightPath(appConfig, sampleMeta);
             pileupWeights = loadPileupWeights(puWeightPath);
             cout << "Loaded pileup weights from: " << puWeightPath << endl;
         } catch (const exception& ex) {
@@ -5803,18 +6852,22 @@ int main(int argc, char** argv) {
         vector<string> batchInputFiles(batchBegin, batchEnd);
         const int batchThreadCount = determineThreadCount(appConfig.maxThreads, batchInputFiles.size());
         const fs::path batchOutputPath = makeBatchTempOutputPath(appConfig, sampleMeta, batchIndex);
+        const string filesHash = hashFileList(batchInputFiles);
         bool batchAlreadyComplete = false;
         if (appConfig.resumeSuccessfulBatches && batchRequest.singleBatch) {
-            Long64_t existingRawEntries = 0;
+            BatchMeta existingMeta;
             string invalidReason;
             if (validateBatchTempOutput(batchOutputPath,
                                         branchConfig.trees,
-                                        existingRawEntries,
+                                        filesHash,
+                                        configHash,
+                                        sampleMeta.isMC,
+                                        existingMeta,
                                         invalidReason)) {
                 cout << "Skipping completed batch " << (batchIndex + 1) << "/" << nBatches
                      << ": found valid existing temporary batch file "
                      << batchOutputPath.string()
-                     << " with raw_entries = " << existingRawEntries << endl;
+                     << " with raw_entries = " << existingMeta.rawEntries << endl;
                 batchAlreadyComplete = true;
             }
             if (!batchAlreadyComplete &&
@@ -5827,7 +6880,16 @@ int main(int argc, char** argv) {
         if (batchAlreadyComplete) {
             continue;
         }
-        atomic<Long64_t> batchRawEntries{0};
+        // Invalidate any completion record of an earlier attempt before rewriting the batch.
+        {
+            std::error_code ignored;
+            fs::remove(makeBatchMetaPath(batchOutputPath), ignored);
+        }
+        BatchMeta batchMeta;
+        batchMeta.nFiles = batchInputFiles.size();
+        batchMeta.filesHash = filesHash;
+        batchMeta.configHash = configHash;
+        set<pair<UInt_t, UInt_t>> batchLumis;
 
         cout << "Processing batch " << (batchIndex + 1) << "/" << nBatches
              << ": files " << (begin + 1) << "-" << end
@@ -5836,26 +6898,27 @@ int main(int argc, char** argv) {
              << (batchThreadCount == 1 ? "" : "s") << endl;
 
         try {
-            const vector<string> writtenBatchFiles = processInputBatchToTempFile(batchInputFiles,
-                                                                                 batchIndex,
-                                                                                 batchThreadCount,
-                                                                                 batchOutputPath,
-                                                                                 appConfig,
-                                                                                 selectionConfig,
-                                                                                 sampleMeta,
-                                                                                 pileupWeights,
-                                                                                 lumiMask.get(),
-                                                                                 jetCorrector,
-                                                                                 branchConfig,
-                                                                                 processedFiles,
-                                                                                 inputFiles.size(),
-                                                                                 batchRawEntries);
-            if (writtenBatchFiles.size() != 1) {
-                throw runtime_error("Expected one temporary batch file, got " +
-                                    to_string(writtenBatchFiles.size()));
+            processInputBatchToTempFile(batchInputFiles,
+                                        batchIndex,
+                                        batchThreadCount,
+                                        batchOutputPath,
+                                        appConfig,
+                                        selectionConfig,
+                                        sampleMeta,
+                                        pileupWeights,
+                                        lumiMask.get(),
+                                        jetCorrector,
+                                        branchConfig,
+                                        processedFiles,
+                                        inputFiles.size(),
+                                        batchMeta,
+                                        batchLumis);
+            writeBatchRawEntries(batchOutputPath, batchMeta.rawEntries);
+            if (!sampleMeta.isMC) {
+                writeBatchLumis(batchOutputPath, batchLumis);
             }
-            writeBatchRawEntries(batchOutputPath, batchRawEntries.load());
-            cout << "Wrote temporary batch file: " << writtenBatchFiles.front() << endl;
+            writeBatchMeta(batchOutputPath, batchMeta);  // completion marker, written last
+            cout << "Wrote temporary batch file: " << batchOutputPath.string() << endl;
         } catch (const exception& ex) {
             cerr << "Runtime error: " << ex.what() << endl;
             return 1;
@@ -5877,5 +6940,6 @@ int main(int argc, char** argv) {
         cerr << "Batch selection error: " << ex.what() << endl;
         return 1;
     }
-    return finalizeSuccessfulBatches(appConfig, sampleMeta, branchConfig, batchIndices, nBatches);
+    return finalizeSuccessfulBatches(appConfig, sampleMeta, branchConfig, inputFiles, batchSize,
+                                     configHash, batchIndices, nBatches);
 }

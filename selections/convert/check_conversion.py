@@ -140,13 +140,22 @@ def root_health(path, trees):
         return False, info
 
 
-def temp_batch_valid(tmp_dir, sample, idx, trees):
-    """Replicate convert_branch validateBatchTempOutput for one batch index."""
+def temp_batch_valid(tmp_dir, sample, idx, trees, is_mc=True):
+    """Replicate convert_branch validateBatchTempOutput for one batch index.
+
+    The .meta completion record (and, for data, the .lumis list) must exist; its input-slice
+    and configuration hashes can only be checked by convert_branch itself, which rejects a
+    stale batch at merge time.
+    """
     root_path = os.path.join(tmp_dir, f"{sample}_{idx}.root")
     if not os.path.exists(root_path):
         return False, "missing ROOT output"
     if not os.path.exists(root_path + ".raw_entries"):
         return False, "missing raw_entries"
+    if not os.path.exists(root_path + ".meta"):
+        return False, "missing .meta (incomplete batch or older convert_branch)"
+    if not is_mc and not os.path.exists(root_path + ".lumis"):
+        return False, "missing processed-lumi list"
     try:
         with open(root_path + ".raw_entries") as fh:
             int(fh.read().strip())
@@ -169,12 +178,13 @@ def parse_merge_log(sample):
     """Parse the newest merge .out for this sample.
 
     Returns dict: path, n_batches, n_merged, skipped(set of 0-based idx), wrote_output,
-    no_successful, crash.
+    no_successful, crash, merge_failed (the merge reported an error, e.g. a missing/stale batch
+    or a failed output/sample.json write).
     """
     logs = glob.glob(os.path.join(_SCRIPT_DIR, f"convert_branch_{sample}_merge_*.out"))
     log = newest(logs)
     res = dict(path=log, n_batches=None, n_merged=None, skipped=set(),
-               wrote_output=False, no_successful=False, crash=False)
+               wrote_output=False, no_successful=False, crash=False, merge_failed=False)
     if not log:
         return res
     with open(log, "r", encoding="utf-8", errors="replace") as fh:
@@ -188,10 +198,29 @@ def parse_merge_log(sample):
     m = re.search(r"Merging\s+(\d+)\s+successful temporary batch file[s]?\s+out of\s+(\d+)", text)
     if m:
         res["n_merged"], res["n_batches"] = int(m.group(1)), int(m.group(2))
-    for mm in re.finditer(r"skipping incomplete batch\s+(\d+)/(\d+)", text):
+    for mm in re.finditer(r"skipping incomplete batch\s+(\d+)/(\d+)", text):  # older convert_branch
         res["skipped"].add(int(mm.group(1)) - 1)  # log is 1-based
         res["n_batches"] = int(mm.group(2))
+    for mm in re.finditer(r"Missing or incomplete batch\s+(\d+)/(\d+)", text):
+        res["skipped"].add(int(mm.group(1)) - 1)  # log is 1-based
+        res["n_batches"] = int(mm.group(2))
+        res["merge_failed"] = True
+    if re.search(r"^(Batch collection error|Output error|raw_entries update error|Processed-lumi error):",
+                 text, re.MULTILINE):
+        res["merge_failed"] = True
     return res
+
+
+def convert_binary():
+    """The convert_branch binary recovery jobs should use.
+
+    run.py --slurm builds a content-hashed convert_branch_<hash> per distinct build, and every
+    batch records a hash of the binary that wrote it (convert_branch rejects mixed builds at
+    merge time), so the newest such binary is preferred over the plain convert_branch.
+    """
+    hashed = [p for p in glob.glob(os.path.join(_SCRIPT_DIR, "convert_branch_*"))
+              if re.fullmatch(r"convert_branch_[0-9a-f]{12}", os.path.basename(p)) and os.access(p, os.X_OK)]
+    return newest(hashed) or os.path.join(_SCRIPT_DIR, "convert_branch")
 
 
 def query_batch_count(sample, cfg, files_per_job=None):
@@ -202,7 +231,7 @@ def query_batch_count(sample, cfg, files_per_job=None):
     Without it convert_branch falls back to its threads*32 default, which does NOT
     match the SLURM batch indices.
     """
-    binp = os.path.join(_SCRIPT_DIR, "convert_branch")
+    binp = convert_binary()
     if not os.path.exists(binp):
         return None
     env = {**os.environ, "CONVERT_CONFIG_PATH": os.path.join(_SCRIPT_DIR, "config.json")}
@@ -258,7 +287,7 @@ def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, nominal_trees, variati
     if n is not None:
         valid_idx, missing_idx = [], []
         for i in range(n):
-            ok, _reason = temp_batch_valid(tmp_dir, name, i, trees)
+            ok, _reason = temp_batch_valid(tmp_dir, name, i, trees, is_mc)
             (valid_idx if ok else missing_idx).append(i)
         r["valid_temps"] = len(valid_idx)
         r["missing_batches"] = missing_idx
@@ -299,6 +328,10 @@ def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, nominal_trees, variati
         r["status"] = "MERGE_CORRUPT"
         if merge["crash"]:
             r["detail"].append("merge log shows a crash (Bus error / core dumped)")
+    elif merge["merge_failed"]:
+        # The newest merge failed; any merged file present predates it.
+        r["status"] = "MERGE_FAILED"
+        r["detail"].append(f"newest merge log reports an error: {os.path.basename(merge['path'])}")
     elif not schema_ok:
         r["status"] = "STALE_SCHEMA"
     elif merge["n_merged"] is not None and merge["n_batches"] is not None \
@@ -321,7 +354,7 @@ def inspect_sample(name, cfg, branch_cfg, sample_cfg_map, nominal_trees, variati
         missing = r["missing_batches"]
         partial_ok = (allow_partial and n is not None and n > 0
                       and 0 < len(missing) < n and r["status"] != "STALE_SCHEMA")
-        if temps_complete and r["status"] in ("MERGE_CORRUPT", "STALE_SCHEMA"):
+        if temps_complete and r["status"] in ("MERGE_CORRUPT", "STALE_SCHEMA", "MERGE_FAILED"):
             r["recovery"] = ("remerge", name)
         elif partial_ok:
             r["recovery"] = ("resubmit", name, list(missing))
@@ -577,7 +610,7 @@ def main():
     # ---- shared SLURM context for resubmits (mirrors run.py mode-0 layout) ----
     uid = os.getuid()
     ctx = dict(
-        bin=os.path.join(_SCRIPT_DIR, "convert_branch"),
+        bin=convert_binary(),
         config=os.path.join(_SCRIPT_DIR, "config.json"),
         workdir=_SCRIPT_DIR,
         files_per_job=args.files_per_job,
@@ -610,8 +643,11 @@ def main():
         name = r["recovery"][1]
         if action == "remerge":
             lines.append(f"# {name}: {r['status']} — all {r['n_batches']} temps valid, just re-merge")
+            # CONVERT_FILES_PER_BATCH must match the conversion, otherwise the merge expects a
+            # different batch count/slicing and validates the wrong batches.
             lines.append(f"CONVERT_CONFIG_PATH={_SCRIPT_DIR}/config.json "
-                         f"{_SCRIPT_DIR}/convert_branch {name} --merge-successful-batches")
+                         f"CONVERT_FILES_PER_BATCH={ctx['files_per_job']} "
+                         f"{ctx['bin']} {name} --merge-successful-batches")
             lines.append("")
         elif action == "resubmit":
             lines += resubmit_script_lines(ctx, r)
@@ -650,7 +686,8 @@ def main():
             if action == "remerge":
                 print(f"  -> {name}: remerge")
                 cmd = [ctx["bin"], name, "--merge-successful-batches"]
-                env = {**os.environ, "CONVERT_CONFIG_PATH": ctx["config"]}
+                env = {**os.environ, "CONVERT_CONFIG_PATH": ctx["config"],
+                       "CONVERT_FILES_PER_BATCH": str(ctx["files_per_job"])}
                 subprocess.run(cmd, env=env, cwd=_SCRIPT_DIR, check=False)
             elif action == "resubmit":
                 print(f"  -> {name}: resubmit {len(r['recovery'][2])} batch(es) + merge")

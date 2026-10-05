@@ -3,6 +3,7 @@
 
 import argparse
 import atexit
+import hashlib
 import json
 import multiprocessing
 import os
@@ -112,7 +113,10 @@ Sample selection for modes 0, 1, 6:
                    help="Optional: [config.json] [sample1 sample2 ...]")
     p.add_argument("--slurm", action="store_true",
                    help="Submit jobs to SLURM instead of running locally")
-    p.add_argument("--slurm-partition", default="cms-express", metavar="NAME")
+    p.add_argument("--slurm-account", default="cms-express", metavar="NAME",
+                   help="SLURM account passed as sbatch --account (default: cms-express)")
+    p.add_argument("--slurm-partition", default="", metavar="NAME",
+                   help="SLURM partition passed as sbatch --partition (default: cluster default)")
     p.add_argument("--slurm-time", default="24:00:00", metavar="HH:MM:SS")
     p.add_argument("--slurm-mem", default="4G", metavar="MEM")
     p.add_argument("--slurm-cpus", type=int, default=1, metavar="N")
@@ -124,11 +128,8 @@ Sample selection for modes 0, 1, 6:
                    help="Retry a failed SLURM job (e.g. transient xrootd/remote-file crashes) up to N times before giving up; 1 disables retries (default: 3)")
     p.add_argument("--slurm-retry-delay", type=int, default=30, metavar="SECONDS",
                    help="Seconds to sleep between retry attempts (default: 30)")
-    p.add_argument("--slurm-exclude", default="hammer-f001,hammer-f006,hammer-f008",
-                   metavar="NODES",
-                   help="Comma-separated nodes to exclude from SLURM scheduling "
-                        "(default: known-bad nodes hammer-f001/f006/f008; "
-                        "pass '' to disable)")
+    p.add_argument("--slurm-exclude", default="", metavar="NODES",
+                   help="Comma-separated nodes to exclude from SLURM scheduling (default: none)")
     p.add_argument("--max-jobs", type=int, default=1, metavar="N",
                    help="Max concurrent local jobs (default: 1)")
 
@@ -450,15 +451,16 @@ def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work
     if golden_json_path:
         env_base["CONVERT_GOLDEN_JSON"] = golden_json_path
 
-
-    
+    # A new submission re-queries DAS and rewrites the per-sample file-list snapshot that all
+    # batches and the merge then share.
     r = subprocess.run(
         [str(bin_path), sample, "--batch-count"],
-        env=env_base, cwd=work_dir,
+        env={**env_base, "CONVERT_REFRESH_FILE_LIST": "1"}, cwd=work_dir,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-    raw = r.stdout.decode().strip()
-    print (raw)
+    out_lines = r.stdout.decode().strip().splitlines()
+    raw = out_lines[-1].strip() if out_lines else ""
+    print(raw)
     if not raw.isdigit() or int(raw) <= 0:
         print(f"Invalid convert batch count for sample={sample}: {raw!r}", flush=True)
         sys.exit(1)
@@ -488,17 +490,19 @@ def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work
         successful_batches.append(batch_index)
 
     if batch_failures:
+        # Merging only the successful batches would silently drop events (and, for data,
+        # luminosity): leave the batches in place and fail so the failed ones can be rerun
+        # (resume_successful_batches keeps the valid ones).
         log(
-            f"warning: sample={sample} completed with "
-            f"{batch_failures}/{batch_count} failed batch(es); "
-            f"final output uses successful batches only"
+            f"error: sample={sample} has {batch_failures}/{batch_count} failed batch(es); "
+            f"not merging -- rerun to retry the failed batches"
         )
+        sys.exit(1)
 
-    log(f"running sample={sample} final merge from successful batches")
+    log(f"running sample={sample} final merge")
     r = subprocess.run(
         [str(bin_path), sample, "--merge-successful-batches"],
-        env={**env_base,
-             "CONVERT_SUCCESSFUL_BATCHES": ",".join(map(str, successful_batches))},
+        env=env_base,
         cwd=work_dir,
     )
     sys.exit(r.returncode)
@@ -591,11 +595,15 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
     ]
     if args.slurm_exclude:
         sbatch_args.append(f"--exclude={args.slurm_exclude}")
+    if args.slurm_account:
+        sbatch_args.append(f"--account={args.slurm_account}")
     if args.slurm_partition:
-        sbatch_args.append(f"--account={args.slurm_partition}")
+        sbatch_args.append(f"--partition={args.slurm_partition}")
     if args.slurm_extra:
         sbatch_args.extend(args.slurm_extra.split())
     ldpath_prefix = f"export LD_LIBRARY_PATH={root_libdir}:${{LD_LIBRARY_PATH:-}}; " if root_libdir else ""
+    # OpenMP sizes its thread pool from the node, not the allocation, unless told otherwise.
+    ldpath_prefix += "export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}; "
     retry_cmd = build_retry_wrap(
         f"env {config_env}={config_path} {bin_path} {sample}",
         args.slurm_retries, args.slurm_retry_delay, label=f"{label}_{sample}",
@@ -621,10 +629,12 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
                        golden_json_path=None, root_libdir=""):
     """Submit one SLURM job per ~files-per-job-sized batch, plus a dependency merge job.
 
-    Each batch job runs: convert_branch {sample} {idx} with CONVERT_DEFER_FINAL_MERGE=1
-    so it writes a temp file and exits without merging.  The merge job, submitted
-    with --dependency=afterany on all batch jobs, runs --merge-successful-batches
-    which tolerates missing temp files from any failed batch jobs.
+    The local --batch-count query refreshes the sample's input file-list snapshot, which every
+    batch job and the merge then read (no per-job DAS query). Each batch job runs:
+    convert_branch {sample} {idx} with CONVERT_DEFER_FINAL_MERGE=1 so it writes a temp file
+    and exits without merging. The merge job, submitted with --dependency=afterany on all
+    batch jobs, runs --merge-successful-batches, which fails if any batch is missing,
+    incomplete or stale (rerun the failed batches, then the merge).
     """
     config_env    = mode_cfg["config_env"]
     label         = mode_cfg["label"]
@@ -634,11 +644,13 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
     r = subprocess.run(
         [str(bin_path), sample, "--batch-count"],
         env={**os.environ, config_env: str(config_path),
-             "CONVERT_FILES_PER_BATCH": str(files_per_job)},
+             "CONVERT_FILES_PER_BATCH": str(files_per_job),
+             "CONVERT_REFRESH_FILE_LIST": "1"},
         cwd=work_dir,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-    raw = r.stdout.decode().strip()
+    out_lines = r.stdout.decode().strip().splitlines()
+    raw = out_lines[-1].strip() if out_lines else ""
     if not raw.isdigit() or int(raw) <= 0:
         sys.exit(
             f"batch count query failed for sample={sample}: "
@@ -649,6 +661,8 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
 
     x509_prefix   = f"export X509_USER_PROXY={x509_dst}; " if x509_dst else ""
     ldpath_prefix = f"export LD_LIBRARY_PATH={root_libdir}:${{LD_LIBRARY_PATH:-}}; " if root_libdir else ""
+    # OpenMP sizes its thread pool from the node, not the allocation, unless told otherwise.
+    ldpath_prefix += "export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}; "
     # Base env string shared by all jobs: sets config path and batch size override.
     base_env_str = (
         f"env {config_env}={config_path} "
@@ -669,8 +683,10 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
         ]
         if args.slurm_exclude:
             cmd.append(f"--exclude={args.slurm_exclude}")
+        if args.slurm_account:
+            cmd.append(f"--account={args.slurm_account}")
         if args.slurm_partition:
-            cmd.append(f"--account={args.slurm_partition}")
+            cmd.append(f"--partition={args.slurm_partition}")
         if depends_on:
             cmd.append(f"--dependency=afterany:{':'.join(depends_on)}")
         if args.slurm_extra:
@@ -834,8 +850,9 @@ def main():
         shutil.copy2(x509_src, x509_dst)
         print(f"[{timestamp()}] copied certificate {x509_src} -> {x509_dst}", flush=True)
     print (log_path)
-    # Redirect stdout/stderr to log file (truncate existing); mirrors bash `exec >> log 2>&1`
-    log_fh     = open(log_path, "w", buffering=1)
+    # Redirect stdout/stderr to the log file, appending so consecutive submissions keep their
+    # history; mirrors bash `exec >> log 2>&1`
+    log_fh     = open(log_path, "a", buffering=1)
     sys.stdout = log_fh
     sys.stderr = log_fh
     os.dup2(log_fh.fileno(), 1)
@@ -857,6 +874,19 @@ def main():
     # C++ modes — detect OpenMP, compile
     omp_cflags, omp_ldflags = detect_openmp()
     bin_path = work_dir / mode_cfg["bin_name"]
+    reuse_binary = False
+    if args.slurm:
+        # Queued SLURM jobs run long after submission: give every distinct build (source,
+        # shared JSON header, compiler and correctionlib flags) its own binary, so a later
+        # run.py invocation can neither overwrite nor delete the binary those jobs will execute.
+        digest = hashlib.sha256()
+        digest.update((work_dir / mode_cfg["source"]).read_bytes())
+        digest.update((ROOT_DIR / "src" / "simple_json.h").read_bytes())
+        digest.update(f"{omp_cflags}|{omp_ldflags}".encode())
+        digest.update("|".join(detect_correctionlib()).encode())
+        digest.update(subprocess.check_output(["root-config", "--cflags", "--libs"]))
+        bin_path = work_dir / f"{mode_cfg['bin_name']}_{digest.hexdigest()[:12]}"
+        reuse_binary = bin_path.exists()
 
     log(f"mode={mode} ({label})")
     log(f"work_dir={work_dir}")
@@ -868,7 +898,14 @@ def main():
     if not args.slurm:
         atexit.register(cleanup_build_artifacts, bin_path)
 
-    root_libdir = compile_binary(work_dir, mode_cfg["source"], bin_path, omp_cflags, omp_ldflags)
+    if reuse_binary:
+        root_libdir = subprocess.check_output(["root-config", "--libdir"], text=True).strip()
+        corrlib_libdir = detect_correctionlib()[2]
+        if corrlib_libdir:
+            root_libdir = f"{root_libdir}:{corrlib_libdir}"
+        log(f"reusing binary {bin_path} (same source and build flags)")
+    else:
+        root_libdir = compile_binary(work_dir, mode_cfg["source"], bin_path, omp_cflags, omp_ldflags)
 
     # Mode 7 — single run, no sample loop
     if mode == 7:
@@ -888,10 +925,10 @@ def main():
     if mode == 0:
         golden_json_path = find_golden_json()
         sample_mc_map = build_sample_mc_map(config_path)
-        if golden_json_path:
-            log(f"golden_json={golden_json_path}")
-        else:
-            log("no golden JSON found in project root — data quality selection disabled")
+        # convert_branch applies the data lumi mask from its config's lumi_mask key
+        # (CONVERT_GOLDEN_JSON is not read by convert_branch).
+        lumi_mask = json.loads(config_path.read_text()).get("lumi_mask", "")
+        log(f"data lumi_mask (convert config) = {lumi_mask or 'none -- no data quality selection'}")
 
     failed = dispatch_jobs(
         samples, mode, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,

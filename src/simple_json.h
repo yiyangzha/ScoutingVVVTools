@@ -262,7 +262,9 @@ private:
             skipWhitespace();
             consume(':');
             skipWhitespace();
-            object.emplace(key, parseValue());
+            // Duplicate keys: the last value wins, as in Python's json module, so C++ and
+            // Python tools read the same configuration.
+            object.insert_or_assign(key, parseValue());
             skipWhitespace();
 
             if (peekIf('}')) {
