@@ -75,6 +75,8 @@ _SELECTIONS_DIR = os.path.join(_ROOT_DIR, "selections")
 _BDT_DIR = os.path.join(_SELECTIONS_DIR, "BDT")
 if _BDT_DIR not in sys.path:
     sys.path.insert(0, _BDT_DIR)
+sys.path.insert(0, os.path.join(_SELECTIONS_DIR, "mc_weight_common"))
+import mc_weights  # noqa: E402
 
 from model_io import (
     load_model as _shared_load_model,
@@ -178,7 +180,10 @@ CLASS_GROUPS = cfg["class_groups"]
 CLASS_NAMES = list(CLASS_GROUPS.keys())
 NUM_CLASSES = len(CLASS_NAMES)
 DEFAULT_AXIS_NAMES = CLASS_NAMES[: max(1, NUM_CLASSES - 1)]
-INFERENCE_THREADS = max(1, min(32, os.cpu_count() or 1))
+# CPUs this process may run on (the Slurm allocation's cpuset on a batch node; macOS has no
+# affinity API).
+_AVAILABLE_CPUS = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+INFERENCE_THREADS = max(1, min(32, _AVAILABLE_CPUS))
 XGB_PREDICT_BATCH_TARGET_BYTES = 512 * 1024 * 1024
 XGB_PREDICT_MIN_BATCH_ROWS = 100_000
 XGB_PREDICT_PROGRESS_SECONDS = 30.0
@@ -286,8 +291,8 @@ def _diag_cov_from_vars(vars_: np.ndarray) -> np.ndarray:
 SAMPLE_INFO = {}
 for rule in sample_cfg["sample"]:
     SAMPLE_INFO[rule["name"]] = {
+        "rule": rule,
         "xsection": float(rule["xsection"]),
-        "raw_entries": int(rule.get("raw_entries", -1)),
         "is_MC": bool(rule["is_MC"]),
         "is_signal": bool(rule["is_signal"]),
         "sample_ID": int(rule["sample_ID"]),
@@ -618,12 +623,12 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
         f"load_elapsed={_format_seconds(step_start)}"
     )
     step_start = time.perf_counter()
-    #if not np.allclose(cur_weights, ref_weights, rtol=weight_rtol, atol=weight_atol):
-    #    diff = float(np.max(np.abs(cur_weights - ref_weights)))
-    #    raise RuntimeError(
-    #        "Prediction reference mismatch for qcd_est weights: "
-    #        f"max_abs_diff={diff:.6g}, rtol={weight_rtol}, atol={weight_atol}"
-    #    )
+    if not np.allclose(cur_weights, ref_weights, rtol=weight_rtol, atol=weight_atol):
+        diff = float(np.max(np.abs(cur_weights - ref_weights)))
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est weights: "
+            f"max_abs_diff={diff:.6g}, rtol={weight_rtol}, atol={weight_atol}"
+        )
     log_message(f"Weight comparison passed: elapsed={_format_seconds(step_start)}")
 
     step_start = time.perf_counter()
@@ -645,27 +650,10 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
     step_start = time.perf_counter()
     if not np.allclose(cur_proba, ref_proba, rtol=proba_rtol, atol=proba_atol):
         diff = float(np.max(np.abs(cur_proba - ref_proba)))
-        # Batched XGBoost inference is not bitwise-reproducible across thread/batch
-        # configurations (e.g. on shared nodes with varying core availability), so
-        # tiny probability differences vs the stored reference are expected and
-        # physically irrelevant. Only abort if the difference is large enough to
-        # indicate a genuinely different model/inputs rather than numerical noise.
-        # Configurable via QCD_EST_PROBA_TOL: batched inplace_predict can differ by
-        # O(0.01-0.2) on a handful of boundary events across thread/batch configs,
-        # which is irrelevant to the weighted ABCD yields; raise it for batch reruns.
-        BENIGN_PROBA_DIFF = float(os.environ.get("QCD_EST_PROBA_TOL", "5e-3"))
-        if diff <= BENIGN_PROBA_DIFF:
-            log_message(
-                "WARNING: qcd_est probabilities differ from reference within benign "
-                f"tolerance: max_abs_diff={diff:.6g} (strict rtol={proba_rtol}, "
-                f"atol={proba_atol}, benign_threshold={BENIGN_PROBA_DIFF}); continuing "
-                "(batched-inference thread-order noise, not a model change)."
-            )
-        else:
-            raise RuntimeError(
-                "Prediction reference mismatch for qcd_est probabilities: "
-                f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
-            )
+        raise RuntimeError(
+            "Prediction reference mismatch for qcd_est probabilities: "
+            f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
+        )
     else:
         log_message(f"Probability comparison passed: elapsed={_format_seconds(step_start)}")
 
@@ -676,7 +664,9 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
 
 # -------------------- Test data loading --------------------
 def load_test_data(branches: list[str]) -> pd.DataFrame:
-    """Load the full test split with the same weight definition as signal_region.py."""
+    """Load the full test split with the same weight definition as signal_region.py:
+    lumi * xsec * genWeight * weight_pu / S * total_tree_entries / n_loaded
+    (selections/mc_weight_common/mc_weights.py)."""
     log_message(f"Loading MC test samples: n={len(test_meta['samples'])}")
     dfs = []
 
@@ -697,12 +687,8 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
             raise RuntimeError(f"Sample '{sample_name}' not in any class group")
 
         xsec = float(info["xsection"])
-        raw_entries = int(info["raw_entries"])
+        generated_sum = mc_weights.generated_weight_sum(info["rule"], reweight_branches)
         total_entries = int(sample_meta["total_entries"])
-        if raw_entries <= 0:
-            raise RuntimeError(
-                f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json"
-            )
 
         parts = []
         for seg in sample_meta["test_segments"]:
@@ -738,28 +724,18 @@ def load_test_data(branches: list[str]) -> pd.DataFrame:
         df = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
 
-        if reweight_branches:
-            raw_w = np.ones(n_loaded, dtype=float)
-            for rb in reweight_branches:
-                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
-            df = df.drop(columns=reweight_branches)
-        else:
-            raw_w = np.ones(n_loaded, dtype=float)
+        raw_w = mc_weights.event_weight_product(df, reweight_branches)
+        df = df.drop(columns=reweight_branches)
 
         if xsec <= 0.0:
-            target_total = 0.0
             df["weight"] = 0.0
             log_warning(
                 f"{sample_name}: non-positive xsec={xsec}, zero weight"
             )
         else:
-            target_total = LUMI * xsec * total_entries / raw_entries
-            raw_w_sum = float(raw_w.sum())
-            if raw_w_sum <= 0.0:
-                raise RuntimeError(
-                    f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
-                )
-            df["weight"] = raw_w * (target_total / raw_w_sum)
+            df["weight"] = mc_weights.physics_weights(
+                raw_w, xsec, generated_sum, total_entries, n_loaded, lumi=LUMI
+            )
 
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
@@ -1390,10 +1366,12 @@ def write_root_output(
         root_file[f"{prefix}/covariance_total"] = (covariance_total, edges, edges)
 
     with uproot.recreate(root_path) as root_file:
-        root_file["metadata/signal_regions"] = {"bin_index": sr_ids}
-        root_file["metadata/abcd_closure"] = {
-            key: np.array([float(value)], dtype=float) for key, value in abcd_closure.items()
-        }
+        # combine.C reads both metadata objects as TTrees. Since uproot 5.7 assigning a dict
+        # writes an RNTuple, so the TTrees are created explicitly.
+        root_file.mktree("metadata/signal_regions", {"bin_index": np.int32}).extend({"bin_index": sr_ids})
+        root_file.mktree(
+            "metadata/abcd_closure", {key: np.float64 for key in abcd_closure}
+        ).extend({key: np.array([float(value)], dtype=np.float64) for key, value in abcd_closure.items()})
 
         for sample_name in sorted(sample_yields):
             _write_bundle(

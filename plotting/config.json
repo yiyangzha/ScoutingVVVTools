@@ -10,11 +10,11 @@
   "data_samples": ["2024G_UParT_v6"],
   "default_bins": 50,
   "event_reweight_branches": {
-    "boosted3": ["weight_pu"],
-    "boosted2_resolved": ["weight_pu"],
-    "boosted2_unresolved": ["weight_pu"],
-    "boosted2_leptonic_1lep": ["weight_pu"],
-    "boosted2_leptonic_2lep": ["weight_pu"]
+    "boosted3": ["genWeight", "weight_pu"],
+    "boosted2_resolved": ["genWeight", "weight_pu"],
+    "boosted2_unresolved": ["genWeight", "weight_pu"],
+    "boosted2_leptonic_1lep": ["genWeight", "weight_pu"],
+    "boosted2_leptonic_2lep": ["genWeight", "weight_pu"]
   },
   "theory_syst_json": "../selections/theory_weights/output/theory_syst_yields.json",
   "_note_n_workers": "n_workers: parallel pool size for pre-pass, streaming, and rendering. null = cpu_count.",

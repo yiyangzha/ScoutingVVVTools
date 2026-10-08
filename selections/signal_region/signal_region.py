@@ -60,6 +60,8 @@ _SELECTIONS_DIR = os.path.dirname(_SCRIPT_DIR)
 _BDT_DIR        = os.path.join(_SELECTIONS_DIR, "BDT")
 if _BDT_DIR not in sys.path:
     sys.path.insert(0, _BDT_DIR)
+sys.path.insert(0, os.path.join(_SELECTIONS_DIR, "mc_weight_common"))
+import mc_weights  # noqa: E402
 
 from model_io import (
     load_model as _shared_load_model,
@@ -163,8 +165,8 @@ TEST_REFERENCE_SIGNAL_REGION = os.path.join(BDT_ROOT, "test_reference_signal_reg
 SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
+        "rule":        _rule,
         "xsection":    _rule["xsection"],
-        "raw_entries": _rule.get("raw_entries", -1),
         "is_MC":       _rule["is_MC"],
         "is_signal":   _rule["is_signal"],
         "sample_ID":   _rule["sample_ID"],
@@ -326,10 +328,11 @@ def _refresh_test_segments(sample_name):
 def load_test_data(branches):
     """Load test events from test_ranges.json with physics-normalised weights.
 
-    For each sample:
-      raw_w            = product of event_reweight_branches (per event)
-      total_weight     = lumi * xsec * total_tree_entries / raw_entries
-      per_event_weight = raw_w * total_weight / sum(raw_w_loaded)
+    For each sample (selections/mc_weight_common/mc_weights.py):
+      raw_w            = product of event_reweight_branches (genWeight * weight_pu, per event)
+      per_event_weight = lumi * xsec * raw_w / S * total_tree_entries / n_loaded
+    with S the sum of raw_w over every processed generated event (sample.json
+    sum_genweight_pu), so the signed weights include the selection efficiency.
 
     The reweight branches come from the trained-model config copy in ``bdt_root`` and are
     read on raw values (before any clip/log/threshold). Weights are fixed here;
@@ -352,15 +355,11 @@ def load_test_data(branches):
             raise RuntimeError(f"Sample '{sample_name}' not in any class group")
 
         xsec          = float(info["xsection"])
-        raw_entries   = int(info["raw_entries"])
+        generated_sum = mc_weights.generated_weight_sum(info["rule"], reweight_branches)
         total_entries = int(sample_meta["total_entries"])
         test_segments = sample_meta["test_segments"]
         if any(_segment_stale(seg) for seg in test_segments):
             total_entries, test_segments = _refresh_test_segments(sample_name)
-        if raw_entries <= 0:
-            raise RuntimeError(
-                f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json"
-            )
 
         parts = []
         for seg in test_segments:
@@ -395,30 +394,19 @@ def load_test_data(branches):
         df      = pd.concat(parts, ignore_index=True)
         n_loaded = len(df)
 
-        if reweight_branches:
-            raw_w = np.ones(n_loaded, dtype=float)
-            for rb in reweight_branches:
-                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
-            df = df.drop(columns=reweight_branches)
-        else:
-            raw_w = np.ones(n_loaded, dtype=float)
+        raw_w = mc_weights.event_weight_product(df, reweight_branches)
+        df = df.drop(columns=reweight_branches)
 
         if xsec <= 0.0:
-            target_total = 0.0
             df["weight"] = 0.0
             log_warning(
                 f"  {sample_name}: non-positive xsec={xsec}, zero weight"
             )
         else:
-            # Normalize the sample total weight to lumi * xsec * total_tree_entries / raw_entries,
-            # then shape per-event weights by raw_w so sum(weight) stays at target_total.
-            target_total  = LUMI * xsec * total_entries / raw_entries
-            raw_w_sum = float(raw_w.sum())
-            if raw_w_sum <= 0.0:
-                raise RuntimeError(
-                    f"Sample '{sample_name}' has non-positive raw weight sum {raw_w_sum:.6g}"
-                )
-            df["weight"] = raw_w * (target_total / raw_w_sum)
+            df["weight"] = mc_weights.physics_weights(
+                raw_w, xsec, generated_sum, total_entries, n_loaded, lumi=LUMI
+            )
+        target_total = float(df["weight"].sum())
 
         df["class_idx"]   = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
@@ -426,7 +414,7 @@ def load_test_data(branches):
 
         log_message(
             f"  {sample_name}: n_loaded={n_loaded}, total_entries={total_entries}, "
-            f"raw_entries={raw_entries}, xsec={xsec:.6g}, target_total={target_total:.6g}, "
+            f"generated_weight_sum={generated_sum:.6g}, xsec={xsec:.6g}, target_total={target_total:.6g}, "
             f"class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
         )
 
@@ -492,9 +480,16 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
     if not np.array_equal(cur_class_idx, ref_class_idx):
         raise RuntimeError("Prediction reference mismatch for signal_region class labels")
 
-    # Weight check skipped: raw_entries in sample.json reflects current MC processing
-    # volume, which differs from what was used during training. The BDT predictions
-    # (proba) are independent of event weights, so only the proba check matters.
+    ref_weights = ref["weight"].astype(float) * LUMI
+    cur_weights = np.asarray(weights, dtype=float)
+    weight_rtol = float(ref["weight_rtol"])
+    weight_atol = float(ref["weight_atol"])
+    if not np.allclose(cur_weights, ref_weights, rtol=weight_rtol, atol=weight_atol):
+        diff = float(np.max(np.abs(cur_weights - ref_weights)))
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region weights: "
+            f"max_abs_diff={diff:.6g}, rtol={weight_rtol}, atol={weight_atol}"
+        )
 
     ref_proba = ref["proba"].astype(float)
     cur_proba = np.asarray(proba, dtype=float)
@@ -505,12 +500,12 @@ def _compare_prediction_reference(path, feature_names, sample_labels, class_idx,
             "Prediction reference mismatch for signal_region probabilities shape: "
             f"current={cur_proba.shape}, reference={ref_proba.shape}"
         )
-    #if not np.allclose(cur_proba, ref_proba, rtol=proba_rtol, atol=proba_atol):
-    #    diff = float(np.max(np.abs(cur_proba - ref_proba)))
-    #    raise RuntimeError(
-    #        "Prediction reference mismatch for signal_region probabilities: "
-    #        f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
-    #    )
+    if not np.allclose(cur_proba, ref_proba, rtol=proba_rtol, atol=proba_atol):
+        diff = float(np.max(np.abs(cur_proba - ref_proba)))
+        raise RuntimeError(
+            "Prediction reference mismatch for signal_region probabilities: "
+            f"max_abs_diff={diff:.6g}, rtol={proba_rtol}, atol={proba_atol}"
+        )
 
     log_message(f"Validated prediction reference: {path}")
 
@@ -610,6 +605,12 @@ def write_signal_region_csv(result):
         "bin_index",
         "significance",
         "significance_error",
+    ]
+    # signal_region_hist.py also reports the statistics-only significance.
+    has_stat = bool(result["top_bins"]) and "significance_stat" in result["top_bins"][0]
+    if has_stat:
+        base_columns.append("significance_stat")
+    base_columns += [
         "S",
         "S_err",
         "S_entries",
@@ -634,6 +635,8 @@ def write_signal_region_csv(result):
             "B_err": b["B_err"],
             "B_entries": b["B_entries"],
         }
+        if has_stat:
+            row["significance_stat"] = b["significance_stat"]
         for dim, axis_name in enumerate(b["axis_names"]):
             row[f"{axis_name}_low"] = float(b["thr_low"][dim])
             row[f"{axis_name}_high"] = float(b["thr_high"][dim])

@@ -40,7 +40,7 @@
     {
       "name": "ak4_resolved",
       "source": "ScoutingPFJetRecluster2",
-      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster2_nConstituents > 1 && ScoutingPFJetRecluster2_neHEF < 0.99 && ScoutingPFJetRecluster2_neEmEF < 0.90 && ScoutingPFJetRecluster2_chHadMultiplicity > 0 && ScoutingPFJetRecluster2_muEF < 0.80 && min_deltaR(self, ak8_kept2) > 0.8",
+      "selection": "pt(self) > 30 && abs(eta(self)) < 2.5 && ScoutingPFJetRecluster2_nConstituents > 1 && ScoutingPFJetRecluster2_neHEF < 0.99 && ScoutingPFJetRecluster2_neEmEF < 0.90 && ScoutingPFJetRecluster2_chHadMultiplicity > 0 && ScoutingPFJetRecluster2_muEF < 0.80 && size(ak8_kept2) >= 2 && deltaR(self, ak8_kept2[0]) > 0.8 && deltaR(self, ak8_kept2[1]) > 0.8",
       "sort": "pt(self) desc"
     },
     {

@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import json
 import shutil
@@ -24,6 +25,9 @@ from model_io import (
     predict_model_logits as _shared_predict_model_logits,
     predict_model_proba as _shared_predict_model_proba,
 )
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mc_weight_common"))
+import mc_weights  # noqa: E402
 
 plt.rcParams['mathtext.fontset'] = 'cm'
 plt.rcParams['mathtext.rm'] = 'serif'
@@ -131,8 +135,8 @@ if DECOR_LOSS_MODE not in {"smooth_cvm", "cvm"}:
 SAMPLE_INFO = {}
 for _rule in sample_cfg["sample"]:
     SAMPLE_INFO[_rule["name"]] = {
+        "rule":        _rule,
         "xsection":    _rule["xsection"],
-        "raw_entries": _rule.get("raw_entries", -1),
         "is_MC":       _rule["is_MC"],
         "is_signal":   _rule["is_signal"],
         "sample_ID":   _rule["sample_ID"],
@@ -496,14 +500,9 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle, tr
 
         plan = split_plans[sample_name]
         info = SAMPLE_INFO[sample_name]
-        raw_entries = int(info["raw_entries"])
         xsec = float(info["xsection"])
+        generated_sum = mc_weights.generated_weight_sum(info["rule"], reweight_branches)
         training_weight_scale = float(training_weight_scales.get(sample_name, 1.0))
-        if raw_entries <= 0:
-            raise RuntimeError(
-                f"Sample '{sample_name}' has raw_entries={raw_entries}; "
-                "fill src/sample.json before training."
-            )
 
         if split_name == "train":
             full_segments = plan["train_segments_full"]
@@ -521,52 +520,45 @@ def prepare_split_data(tree_name, branches, split_name, split_plans, shuffle, tr
                 f"Zero entries read for sample '{sample_name}' in split '{split_name}' of tree '{tree_name}'"
             )
 
-        # Raw per-event weight: product of the configured reweight branches.
-        # Computed on raw values before any clip/log/threshold so ratios between
-        # events within the sample follow raw_w. The sample is then renormalised
-        # so sum(weight) equals target_total, independent of raw_w's magnitude.
-        if reweight_branches:
-            raw_w = np.ones(n_read, dtype=float)
-            for rb in reweight_branches:
-                raw_w *= df[rb].to_numpy(dtype=float, copy=False)
-            df = df.drop(columns=reweight_branches)
-        else:
-            raw_w = np.ones(n_read, dtype=float)
+        # Physics weight (signed, before lumi): xsection * genWeight * weight_pu / S * N_tree / N_read
+        # (selections/mc_weight_common/mc_weights.py), computed on raw values before any
+        # clip/log/threshold. Each split is scaled to the yield of the whole tree.
+        raw_w = mc_weights.event_weight_product(df, reweight_branches)
+        df = df.drop(columns=reweight_branches)
 
         total_tree_entries = int(plan["total_entries"])
-        if xsec <= 0.0 or raw_entries <= 0:
-            target_total = 0.0
-        else:
-            target_total = xsec * (float(total_tree_entries) / float(raw_entries))
-        training_target_total = target_total * training_weight_scale
-
-        if target_total <= 0.0:
+        if xsec <= 0.0:
             df["weight_physics"] = 0.0
-            if xsec <= 0.0:
-                log_warning(
-                    f"sample '{sample_name}' has non-positive xsection={xsec:.6g}; assigning zero weight"
-                )
+            log_warning(
+                f"sample '{sample_name}' has non-positive xsection={xsec:.6g}; assigning zero weight"
+            )
         else:
-            raw_w_sum = float(raw_w.sum())
-            if raw_w_sum <= 0.0:
-                raise RuntimeError(
-                    f"Sample '{sample_name}' has non-positive raw weight sum "
-                    f"{raw_w_sum:.6g} in split '{split_name}' of tree '{tree_name}'"
-                )
-            df["weight_physics"] = raw_w * (target_total / raw_w_sum)
-        if "weight_physics" not in df.columns:
-            df["weight_physics"] = 0.0
+            df["weight_physics"] = mc_weights.physics_weights(
+                raw_w, xsec, generated_sum, total_tree_entries, n_read
+            )
         del raw_w
+        target_total = float(df["weight_physics"].sum())
+        if xsec > 0.0 and target_total <= 0.0:
+            # |w| * sum(w) / sum(|w|) has no non-negative representation of a non-positive total:
+            # the sample does not enter the classifier training, its physics weights stay signed.
+            log_warning(
+                f"sample '{sample_name}' has non-positive signed weight sum {target_total:.6g} "
+                f"in split '{split_name}' of tree '{tree_name}'; zero training weight"
+            )
+        training_target_total = max(target_total, 0.0) * training_weight_scale
 
         df["class_idx"] = SAMPLE_TO_CLASS[sample_name]
         df["sample_name"] = sample_name
-        df["weight"] = df["weight_physics"] * training_weight_scale
+        # Classifier training weight: rectified |w| * sum(w) / sum(|w|) (XGBoost accepts only
+        # non-negative weights); weight_physics keeps the signed weights.
+        df["weight"] = (mc_weights.training_weights(df["weight_physics"].to_numpy(dtype=float))
+                        * training_weight_scale if target_total > 0.0 else 0.0)
         sample_target_totals[sample_name] = training_target_total
         dfs.append(df)
 
         log_message(
             f"  {sample_name}: split={split_name}, tree_entries={plan['total_entries']}, "
-            f"split_entries={split_total_entries}, used_entries={n_read}, raw_entries={raw_entries}, "
+            f"split_entries={split_total_entries}, used_entries={n_read}, generated_weight_sum={generated_sum:.6g}, "
             f"target_total={target_total:.6g}, training_scale={training_weight_scale:.6g}, "
             f"training_target_total={training_target_total:.6g}, "
             f"class={CLASS_NAMES[SAMPLE_TO_CLASS[sample_name]]}"
@@ -1906,7 +1898,10 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     )
 
     hp = cfg.get(tree_name, {})
-    n_threads = max(1, min(32, os.cpu_count() or 1))
+    # CPUs this process may run on (the Slurm allocation's cpuset on a batch node; macOS has no
+    # affinity API).
+    available_cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    n_threads = max(1, min(32, available_cpus))
     n_estimators = int(hp.get("n_estimators", 200))
     n_estimators_decorr = int(hp.get("n_estimators_decorr", 1000))
     early_stopping_rounds = int(hp.get("early_stopping_rounds", 10))
@@ -1918,7 +1913,13 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     learning_rate_decorr = float(hp.get("learning_rate_decorr", 0.01))
     lr_reduce_patience = int(hp.get("lr_reduce_patience", 0))
     min_learning_rate = float(hp.get("min_learning_rate", 0.0))
-    log_message(f"Thread mode: XGBoost, threads = {n_threads}")
+    log_message(
+        f"Thread mode: XGBoost, threads = {n_threads}, "
+        f"CUDA build = {xgb.build_info().get('USE_CUDA', False)}"
+    )
+
+    def _booster_device(model):
+        return json.loads(model.save_config())["learner"]["generic_param"].get("device", "cpu")
 
     use_decor = Z_train.shape[1] > 0 and DECOR_LAMBDA > 0.0
     splits = (X_train_all, X_test_all, y_train, y_test, w_train, w_test)
@@ -2049,8 +2050,10 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
         )
         try:
             stage1_model, stage1_recorder, stage1_monitor = _run_stage1({"device": "cuda"})
-        except xgb.core.XGBoostError:
+        except xgb.core.XGBoostError as exc:
+            log_message(f"Stage 1 with device=cuda failed, rerunning on the CPU: {exc}")
             stage1_model, stage1_recorder, stage1_monitor = _run_stage1({})
+        log_message(f"Stage 1 XGBoost device: {_booster_device(stage1_model)}")
 
         stage1_best = stage1_monitor.best_iteration
         if stage1_best is None:
@@ -2159,8 +2162,10 @@ def train_multi_model(X_train_all, y_train, w_train, X_test_all, y_test, w_test,
     )
     try:
         stage2_model, stage2_recorder, stage2_monitor = _run_stage2({"device": "cuda"})
-    except xgb.core.XGBoostError:
+    except xgb.core.XGBoostError as exc:
+        log_message(f"Stage 2 with device=cuda failed, rerunning on the CPU: {exc}")
         stage2_model, stage2_recorder, stage2_monitor = _run_stage2({})
+    log_message(f"Stage 2 XGBoost device: {_booster_device(stage2_model)}")
 
     stage2_best = stage2_monitor.best_iteration  # stage-local index
     if stage2_best is None:

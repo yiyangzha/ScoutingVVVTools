@@ -99,7 +99,8 @@
         "run",
         "luminosityBlock",
         "event",
-        "weight_pu"
+        "weight_pu",
+        "genWeight"
       ],
       "boosted2_resolved": [
         "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -177,7 +178,8 @@
         "run",
         "luminosityBlock",
         "event",
-        "weight_pu"
+        "weight_pu",
+        "genWeight"
       ],
       "boosted2_unresolved": [
         "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -246,7 +248,8 @@
         "run",
         "luminosityBlock",
         "event",
-        "weight_pu"
+        "weight_pu",
+        "genWeight"
       ],
       "boosted2_leptonic_1lep": [
         "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -318,7 +321,8 @@
         "run",
         "luminosityBlock",
         "event",
-        "weight_pu"
+        "weight_pu",
+        "genWeight"
       ],
       "boosted2_leptonic_2lep": [
         "ScoutingFatPFJetRecluster_selected_pt_sum",
@@ -389,7 +393,8 @@
         "run",
         "luminosityBlock",
         "event",
-        "weight_pu"
+        "weight_pu",
+        "genWeight"
       ]
     }
   }

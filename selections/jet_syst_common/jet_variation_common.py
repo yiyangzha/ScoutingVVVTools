@@ -10,8 +10,13 @@ compares the weighted yield of a variation tree with that of the nominal tree
 in the same region, both evaluated with the nominal BDT model and
 signal-region definition.
 
-  <syst>_up   = sum(weight_branch on <tree>__<syst>_up)   / sum(weight_branch on <tree>)
-  <syst>_down = sum(weight_branch on <tree>__<syst>_down) / sum(weight_branch on <tree>)
+  <syst>_up   = sum(w on <tree>__<syst>_up)   / sum(w on <tree>)
+  <syst>_down = sum(w on <tree>__<syst>_down) / sum(w on <tree>)
+
+with w the signed product of event_reweight_branches (genWeight * weight_pu;
+the variation trees carry both), so negative generator weights enter with
+their sign (selections/mc_weight_common/mc_weights.py); the generated-event
+normalization is common to both trees and cancels.
 
 A variation without events in a region has ratio 0. Regions: the thresholds of
 the BDT selection.json (the ABCD window included) are applied with
@@ -41,6 +46,9 @@ _BDT_TOOLS_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "BDT"))
 if _BDT_TOOLS_DIR not in sys.path:
     sys.path.insert(0, _BDT_TOOLS_DIR)
 import model_io  # noqa: E402
+
+sys.path.insert(0, os.path.normpath(os.path.join(_THIS_DIR, "..", "mc_weight_common")))
+import mc_weights  # noqa: E402
 
 # Keys of the removed one-dataset-per-variation scheme.
 REMOVED_CONFIG_KEYS = ("input_root_up", "input_root_down")
@@ -271,8 +279,8 @@ def infer_proba(chunk, mask, ctx):
 # Weighted SR yield accumulation of one tree
 # ---------------------------------------------------------------------------
 
-def accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branch, chunk_size):
-    """Sum `weight_branch` inclusive (slot 0) and per SR (slots 1..N) over one
+def accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branches, chunk_size):
+    """Sum the product of `weight_branches` inclusive (slot 0) and per SR (slots 1..N) over one
     tree (nominal or variation) of the converted files. Returns
     {"inclusive": slot, "regions": {bin_id: slot} or None} with
     slot = {"sum": float, "n_events": int}."""
@@ -280,7 +288,7 @@ def accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branch, chunk_si
     enabled = ctx["regions_enabled"]
     n_slots = 1 + (len(ctx["bin_ids"]) if enabled else 0)
 
-    load_set = {weight_branch, *thresholds.keys()}
+    load_set = {*weight_branches, *thresholds.keys()}
     if enabled:
         load_set.update(ctx["feature_cols"])
     load_list = sorted(load_set)
@@ -304,7 +312,7 @@ def accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branch, chunk_si
                 if not mask.any():
                     continue
 
-                w = np.asarray(chunk[weight_branch], dtype=np.float64)[mask]
+                w = mc_weights.event_weight_product(chunk, weight_branches)[mask]
                 sum_w[0] += float(w.sum())
                 n_events[0] += int(mask.sum())
 
@@ -386,7 +394,7 @@ def run(syst, script_dir, config_env):
     chunk_size = cfg.get("chunk_size", "200 MB")
     bdt_root_cfg = cfg.get("bdt_root", None)
     sr_csv_cfg = cfg.get("signal_region_csv", None)
-    weight_branch = cfg.get("weight_branch", "weight_pu")
+    weight_branches = list(cfg["event_reweight_branches"])
     min_region_events = int(cfg["min_region_events"])
 
     sample_cfg = load_json(resolve_path(script_dir, cfg["sample_config"]))
@@ -422,10 +430,10 @@ def run(syst, script_dir, config_env):
                     f"No converted files for MC sample {sample_name} under {input_root} "
                     f"(pattern {input_pattern}); convert it or leave it out of submit_samples"
                 )
-            nominal = accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branch, chunk_size)
-            up = accumulate_weighted_sr_yields(files, f"{tree_name}__{up_key}", ctx, weight_branch,
+            nominal = accumulate_weighted_sr_yields(files, tree_name, ctx, weight_branches, chunk_size)
+            up = accumulate_weighted_sr_yields(files, f"{tree_name}__{up_key}", ctx, weight_branches,
                                                chunk_size)
-            down = accumulate_weighted_sr_yields(files, f"{tree_name}__{down_key}", ctx, weight_branch,
+            down = accumulate_weighted_sr_yields(files, f"{tree_name}__{down_key}", ctx, weight_branches,
                                                  chunk_size)
 
             if nominal["inclusive"]["n_events"] < 1 or nominal["inclusive"]["sum"] <= 0.0:

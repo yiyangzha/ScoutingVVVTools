@@ -1,0 +1,135 @@
+{
+  "campaign": "fasrc_20261008",
+  "objective": "Complete the fresh Part B framework campaign on FASRC Cannon from registered MC and 2024G_UParT_v6 data.",
+  "created_at": "2026-10-08T10:14:23-04:00",
+  "timezone": "America/New_York",
+  "source_commit": "fbe3bc40214ede6366d999605d5b06b361679179",
+  "phase": "Server decision: Cannon + SSH-driven IHEP conversion (2026-10-08T20:20-04:00); commit to branch fasrc-campaign-20261008",
+  "pipeline_code_modified": true,
+  "pipeline_run": false,
+  "local_tests_run": false,
+  "jobs_submitted": [
+    {
+      "id": "51318524",
+      "purpose": "read-only CPU worker environment inventory",
+      "partition": "test"
+    },
+    {
+      "id": "51318526",
+      "purpose": "read-only GPU worker environment inventory",
+      "partition": "iaifi_gpu"
+    },
+    {
+      "id": "51324935",
+      "purpose": "pixi default install+import check",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51324936",
+      "purpose": "pixi gpu install + CUDA XGBoost check",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51326197",
+      "purpose": "container build test (wrapper quoting failure)",
+      "state": "FAILED"
+    },
+    {
+      "id": "51326376",
+      "purpose": "container build test convert/weight/mix",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51327134",
+      "purpose": "source metadata v1",
+      "state": "crashed at ww (OSError)"
+    },
+    {
+      "id": "51333038",
+      "purpose": "source metadata v2",
+      "state": "CANCELLED"
+    },
+    {
+      "id": "51333130",
+      "purpose": "source metadata v3",
+      "state": "COMPLETED (ww/wz/zz unreadable)"
+    },
+    {
+      "id": "51384204",
+      "purpose": "PU production driver (82 samples)",
+      "state": "62 COMPLETED, 20 FAILED (TLS key, then Purdue unreadable files)"
+    },
+    {
+      "id": "51384423",
+      "purpose": "CR data pilot",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51416201",
+      "purpose": "PU rerun driver (19 samples)",
+      "state": "all 19 FAILED: Purdue [3014] Network is unreachable (source)"
+    },
+    {
+      "id": "51412072",
+      "purpose": "xrdfs stat of all 20539 in-scope MC files",
+      "state": "all OK"
+    },
+    {
+      "id": "51425009",
+      "purpose": "cceos / Purdue route diagnostics",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51427427",
+      "purpose": "IHEP files through Purdue XCache",
+      "state": "COMPLETED"
+    },
+    {
+      "id": "51427192",
+      "purpose": "Purdue open scan",
+      "state": "CANCELLED at user request"
+    }
+  ],
+  "new_dependencies_installed": "pixi default+gpu envs (approved card 1): scikit-learn, scipy, zstandard, py-xgboost-cpu/gpu",
+  "remote_dataset_inputs_opened": "metadata only, one file per sample (approved scope)",
+  "question_card": {
+    "feature_setting_present": true,
+    "synchronous_card_answer_received": true,
+    "answer": "Default step output directories; external singular ntuple directory is the new write-scope exemption."
+  },
+  "write_scope": [
+    "/n/holystore01/LABS/iaifi_lab/Lab/yiyangz/CMS_Run3_VVV_Scouting/ScoutingVVVTools",
+    "/n/netscratch/iaifi_lab/Lab/yiyangz/CMS_Run3_VVV_Scouting",
+    "/n/holystore01/LABS/iaifi_lab/Lab/yiyangz/CMS_Run3_VVV_Scouting/ntuple"
+  ],
+  "deletion_policy": "Preserve every file; collect any necessary intermediate-deletion proposals for one final explicit decision.",
+  "proxy": {
+    "backup": "build/fasrc/credentials/cms-20261008T101031-0400/x509up",
+    "directory_mode": "700",
+    "file_mode": "600",
+    "byte_equality_verified": true,
+    "vo": "cms",
+    "source_proxy_timeleft_at_inspection_seconds": 690231,
+    "source_voms_actimeleft_at_inspection_seconds": 690231,
+    "expiration_preserved": true,
+    "git_ignored": true
+  },
+  "orientation_reading": {
+    "current_prompt_AGENTS_README": "complete, truncated ranges reread",
+    "historical_plan_log_progress_backup": "complete",
+    "IAIFI_PDF_and_lep_calib_site_handoff": "complete",
+    "current_full_pipeline_sources": "incomplete; pixi.toml and all 942 lines of run.py read completely"
+  },
+  "worker_environment_verified": true,
+  "full_record_checkpoint": "complete at 2026-10-08T10:27:35-04:00: entire requirements, plan, log, progress, 659-line prompt, and 437-line AGENTS reread",
+  "known_incident": "codex --version emitted an automatic stale arg0-directory cleanup failure warning; affected-file/deletion scope unknown; further such CLI queries avoided.",
+  "next_action": "Commit/push branch; user adds ~/.ssh/id_ed25519.pub to IHEP authorized_keys; then read-only IHEP inventory (quotas, CVMFS/CMSSW, batch system, proxy) and an IHEP layout/plan card; Purdue-MC plan card.",
+  "agent": "Claude Code (claude-opus-5-5) since 2026-10-08T10:42-04:00",
+  "paused": false,
+  "decisions": {
+    "card1": "default output dirs; ntuples on scratch then ../ntuples after completion; CMSSW container + pixi + CVMFS combine v11.1.0; remote scope approved",
+    "card2": "converter internal temp cleanup allowed; AK4 cleaning vs two leading AK8 (implemented); mix then train on mixed",
+    "card3_4": "signed absolute MC weights (design confirmed); training |w|*sum w/sum|w|; theory ratios absolute; CR VV -> eight exclusive VV samples",
+    "card8_to_12": "SR variance per-nuisance correlated; data access measured; AF considered then superseded; server = Cannon + SSH-driven IHEP (publickey, user yiyangzhao, /ihepfs/cms_thu/yiyangzhao/Research/claude/); commit to new branch and push"
+  }
+}

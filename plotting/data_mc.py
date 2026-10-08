@@ -37,6 +37,9 @@ from model_io import (
     predict_model_proba as _shared_predict_model_proba,
 )
 
+sys.path.insert(0, os.path.join(_ROOT_DIR, "selections", "mc_weight_common"))
+import mc_weights  # noqa: E402
+
 # -------------------- Style --------------------
 plt.rcParams["mathtext.fontset"] = "cm"
 plt.rcParams["mathtext.rm"] = "serif"
@@ -373,8 +376,9 @@ def _prepass(files, tree_name, auto_range_branches, reweight_branches, branch_lo
     for chunk in _iter_chunks(files, tree_name, prepass_cols, strict=strict):
         raw_w = np.ones(len(chunk), dtype=float)
         for rb in reweight_branches:
-            if rb in chunk.columns:
-                raw_w *= chunk[rb].to_numpy(dtype=float, copy=False)
+            if rb not in chunk.columns:
+                raise KeyError(f"MC reweight branch '{rb}' missing in tree '{tree_name}'")
+            raw_w *= chunk[rb].to_numpy(dtype=float, copy=False)
         raw_w_sum += float(raw_w.sum())
 
         for b in auto_range_branches:
@@ -423,8 +427,9 @@ def _stream_hists(files, tree_name, branch_edges, target_total, raw_w_sum,
         # Compute per-event weights before any filtering.
         raw_w = np.ones(len(chunk), dtype=float)
         for rb in reweight_branches:
-            if rb in chunk.columns:
-                raw_w *= chunk[rb].to_numpy(dtype=float, copy=False)
+            if rb not in chunk.columns:
+                raise KeyError(f"MC reweight branch '{rb}' missing in tree '{tree_name}'")
+            raw_w *= chunk[rb].to_numpy(dtype=float, copy=False)
         weight = raw_w * (target_total / raw_w_sum) if raw_w_sum > 0 else np.zeros(len(chunk))
 
         # Drop reweight columns — they are not plot variables.
@@ -513,8 +518,9 @@ def _stream_theory_shape(files, tree_name, branch_edges, target_total, raw_w_sum
                 n = len(chunk["LHEPdfWeight"])
                 raw_w = np.ones(n, dtype=float)
                 for rb in reweight_branches:
-                    if rb in chunk:
-                        raw_w *= np.asarray(chunk[rb], dtype=float)
+                    if rb not in chunk:
+                        raise KeyError(f"MC reweight branch '{rb}' missing in {fpath}:{tree_name}")
+                    raw_w *= np.asarray(chunk[rb], dtype=float)
                 weight = raw_w * (target_total / raw_w_sum) if raw_w_sum > 0 else np.zeros(n)
 
                 # Reuse the pandas threshold/clip helpers on the scalar columns.
@@ -881,19 +887,14 @@ def _assign_test_split_mc_weight(df, sample_name, total_entries, reweight_branch
 
     info = SAMPLE_INFO[sample_name]
     xsec = float(info.get("xsection", 0.0))
-    raw_entries = float(info.get("raw_entries", 0.0))
-    if raw_entries <= 0.0:
-        raise RuntimeError(f"Sample '{sample_name}' has raw_entries={raw_entries}; fill src/sample.json")
+    generated_sum = mc_weights.generated_weight_sum(info, reweight_branches)
     if n_loaded == 0 or total_entries == 0 or xsec <= 0.0:
         df["weight"] = 0.0
         return df
-    raw_w_sum = float(raw_w.sum())
-    if raw_w_sum <= 0.0:
-        raise RuntimeError(
-            f"Sample '{sample_name}' has non-positive score raw weight sum {raw_w_sum:.6g}"
-        )
-    target_total = LUMI_TOTAL * xsec * float(total_entries) / raw_entries
-    df["weight"] = raw_w * (target_total / raw_w_sum)
+    # Signed, absolutely normalized weights (selections/mc_weight_common/mc_weights.py).
+    df["weight"] = mc_weights.physics_weights(
+        raw_w, xsec, generated_sum, total_entries, n_loaded, lumi=LUMI_TOTAL
+    )
     return df
 
 
@@ -1511,7 +1512,7 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
                 prepass_mins[b] = min(prepass_mins[b], lo)
                 prepass_maxs[b] = max(prepass_maxs[b], hi)
             if kind == 'mc':
-                mc_raw_w_sums[sname] = rw_sum if rw_sum > 0 else float(mc_n_totals[sname])
+                mc_raw_w_sums[sname] = rw_sum
                 log_message(f"  {sname}: n_total={mc_n_totals[sname]}, raw_w_sum={mc_raw_w_sums[sname]:.6g}")
             else:
                 log_message(f"  data {sname}: pre-pass done")
@@ -1622,14 +1623,14 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
         if not ref_proba_parts:
             raise RuntimeError(f"No MC score events after filtering for tree '{tree_name}'")
         score_proba_ref = np.concatenate(ref_proba_parts, axis=0)
-        #_compare_score_reference(
-        #    os.path.join(bdt_root_dir, "test_reference_signal_region.npz"),
-        #    ref_feature_names,
-        #    ref_sample_labels,
-        #    ref_class_idx,
-        #    ref_weights,
-        #    score_proba_ref,
-        #)
+        _compare_score_reference(
+            os.path.join(bdt_root_dir, "test_reference_signal_region.npz"),
+            ref_feature_names,
+            ref_sample_labels,
+            ref_class_idx,
+            ref_weights,
+            score_proba_ref,
+        )
         del ref_sample_labels, ref_class_idx, ref_weights, ref_proba_parts, score_proba_ref, proba_all
 
         if DATA_SAMPLES:
@@ -1684,6 +1685,7 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
     mc_target_totals = {}
     stream_tasks  = []
     stream_labels = []  # ('mc', cls_name, sname, target_total) or ('data', sname, ...)
+    mc_weight_scales = {}
 
     for cls_name, samples in class_groups.items():
         for sname in samples:
@@ -1691,14 +1693,16 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
                 continue
             info = SAMPLE_INFO[sname]
             xsec = float(info.get("xsection", 0.0))
-            raw_entries = float(info.get("raw_entries", 0.0))
-            n_total  = mc_n_totals[sname]
-            raw_w_sum = mc_raw_w_sums[sname]
-            target_total = (LUMI_TOTAL * xsec * float(n_total) / raw_entries
-                            if raw_entries > 0 else 0.0)
+            # Per-event weight lumi * xsec * raw_w / S (selections/mc_weight_common/mc_weights.py):
+            # the streams get this scale with a unit divisor, so no signed sum is divided by;
+            # target_total, the sample's signed yield in the tree, is reported and weights the
+            # flat theory band.
+            weight_scale = LUMI_TOTAL * xsec / mc_weights.generated_weight_sum(info, reweight_branches)
+            target_total = weight_scale * mc_raw_w_sums[sname]
             mc_target_totals[sname] = target_total
+            mc_weight_scales[sname] = weight_scale
             stream_tasks.append((mc_sample_files[sname], tree_name, branch_edges,
-                                   target_total, raw_w_sum, reweight_branches,
+                                   weight_scale, 1.0, reweight_branches,
                                    plot_thresholds, plot_clip_ranges, not no_selection))
             stream_labels.append(('mc', cls_name, sname, target_total))
 
@@ -1755,7 +1759,7 @@ def _process_tree(tree_name, no_selection=False, use_cached_ranges=False, save_h
     if theory_samples and branch_edges:
         th_tasks = [
             (mc_sample_files[sname], tree_name, branch_edges,
-             mc_target_totals.get(sname, 0.0), mc_raw_w_sums[sname],
+             mc_weight_scales[sname], 1.0,
              reweight_branches, plot_thresholds, plot_clip_ranges, not no_selection)
             for sname in theory_samples
         ]

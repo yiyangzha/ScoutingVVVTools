@@ -17,7 +17,7 @@ because the scouting MC has no GenPart collection — the W enrichment comes fro
 Run:  pixi run python selections/jms_jmr/jms_jmr_fit.py
 Requires the convert to have been re-skimmed with the probe branches.
 """
-import os, json, argparse
+import os, sys, json, argparse
 import numpy as np
 import uproot
 from scipy.optimize import curve_fit
@@ -28,6 +28,8 @@ import mplhep as hep
 plt.style.use(hep.style.CMS)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "mc_weight_common"))
+import mc_weights  # noqa: E402
 
 
 def _resolve(p, base):
@@ -87,7 +89,8 @@ def main():
     plot_cfg = json.load(open(_resolve(cfg["samples_from"], _HERE)))
     info = {s["name"]: s for s in json.load(open(_resolve(cfg["sample_config"], _HERE)))["sample"]}
     tree = cfg["tree"]
-    mass_br, tag_br, w_br = cfg["mass_branch"], cfg["tag_branch"], cfg["weight_branch"]
+    mass_br, tag_br = cfg["mass_branch"], cfg["tag_branch"]
+    reweight_branches = list(cfg["event_reweight_branches"])
     wp = float(cfg["tag_wp"])
     window = tuple(cfg["fit_window"]); nb = int(cfg["n_bins"])
     sel = {k: (tuple(v) if isinstance(v, list) else v) for k, v in cfg["selection"].items()}
@@ -111,15 +114,20 @@ def main():
         for s in samples:
             f = _file(s)
             if not os.path.exists(f):
-                print(f"[WARN] missing {f}"); continue
-            cols = read + ([w_br] if is_mc else [])
+                raise FileNotFoundError(f"missing converted control-region file {f}")
+            cols = read + (reweight_branches if is_mc else [])
             a = uproot.open(f)[tree].arrays(cols, library="np")
             m = _mask(a, sel)
             if is_mc:
-                xs = float(info[s].get("xsection", 0)); raw = float(info[s].get("raw_entries", 0))
-                if xs <= 0 or raw <= 0:
-                    continue
-                wgt = (np.asarray(a[w_br], float) if w_br in a else np.ones(len(m)))[m] * (lumi * xs / raw)
+                xs = float(info[s].get("xsection", 0))
+                if xs <= 0:
+                    raise RuntimeError(f"MC sample {s} has non-positive xsection {xs}")
+                # Signed, absolutely normalized weights of the whole tree
+                # (selections/mc_weight_common/mc_weights.py): lumi * xs * genWeight * weight_pu / S.
+                raw_w = mc_weights.event_weight_product(a, reweight_branches)
+                wgt = mc_weights.physics_weights(
+                    raw_w, xs, mc_weights.generated_weight_sum(info[s], reweight_branches), 1, 1, lumi
+                )[m]
             else:
                 wgt = np.ones(int(m.sum()))
             mass = np.asarray(a[mass_br])[m]; tag = np.asarray(a[tag_br])[m]

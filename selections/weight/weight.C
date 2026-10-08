@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -699,10 +700,21 @@ void printFileProgress(const string& sample, size_t done, size_t total) {
     }
 }
 
+// Opens are serialised: concurrent TFile::Open of root:// URLs from OpenMP threads races in
+// TNetXNGFile::SetEnv (getenv/setenv), as in convert_branch.C.
+mutex& inputOpenMutex() {
+    static mutex instance;
+    return instance;
+}
+
 void processInputFile(const string& inputFileName,
                       const AppConfig& appConfig,
                       TH1* localHist) {
-    unique_ptr<TFile> inputFile(TFile::Open(inputFileName.c_str(), "READ"));
+    unique_ptr<TFile> inputFile;
+    {
+        lock_guard<mutex> lock(inputOpenMutex());
+        inputFile.reset(TFile::Open(inputFileName.c_str(), "READ"));
+    }
     if (!inputFile || inputFile->IsZombie()) {
         throw runtime_error("Error opening input file " + inputFileName);
     }

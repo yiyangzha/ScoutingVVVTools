@@ -40,6 +40,9 @@ PS uncertainty: PSWeight is [0] isr.murfac=2.0; [1] fsr.murfac=2.0;
 Regions: the BDT thresholds (the ABCD window included) are applied with
   qcd_est.py's semantics (sentinel values fail), so each SR is the ABCD A
   region; a configured but missing input is an error.
+Weights: every ratio is sum(w * w_var) / sum(w) with the signed event weight
+  w = genWeight * weight_pu, so a ratio includes the variation's change of the
+  cross section as well as of the acceptance.
 
 Outputs (written to output_dir):
   theory_syst_yields.json  -- per-sample/tree dict; inclusive ratios at the top
@@ -463,7 +466,7 @@ def _compute_ratios(sample_name, ctx):
     # LHEPdfWeightAlphaS is optional (only present after re-running mode 0 with
     # the alpha_s branch); folded into the PDF uncertainty when available.
     theory_branches = ["LHEPdfWeight", "LHEScaleWeight", "PSWeight"]
-    load_set = {"weight_pu", *theory_branches, *thresholds.keys()}
+    load_set = {"genWeight", "weight_pu", *theory_branches, *thresholds.keys()}
     if enabled:
         load_set.update(ctx["feature_cols"])
     load_list = sorted(load_set)
@@ -502,7 +505,10 @@ def _compute_ratios(sample_name, ctx):
                 mask = _threshold_mask(chunk, thresholds)
                 if not mask.any():
                     continue
-                w_pu    = np.asarray(chunk["weight_pu"],      dtype=np.float64)[mask]
+                # Signed event weight genWeight * weight_pu (selections/mc_weight_common/mc_weights.py);
+                # the theory member weights are w_var / w_nominal.
+                w_pu    = (np.asarray(chunk["genWeight"], dtype=np.float64)
+                           * np.asarray(chunk["weight_pu"], dtype=np.float64))[mask]
                 pdf_w   = np.asarray(chunk["LHEPdfWeight"],   dtype=np.float64)[mask]
                 scale_w = np.asarray(chunk["LHEScaleWeight"], dtype=np.float64)[mask]
                 ps_w    = np.asarray(chunk["PSWeight"],       dtype=np.float64)[mask]

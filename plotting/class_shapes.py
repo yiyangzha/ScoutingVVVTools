@@ -227,7 +227,6 @@ def _process_tree_shapes(tree_name, no_selection=False, stat_band=False, n_worke
             mc_sample_files[sname] = files
 
     # ---- Step 2: parallel pre-pass (ranges + reweight sums) ----
-    mc_raw_w_sums = {}
     prepass_mins  = {b:  np.inf for b in auto_range_branches}
     prepass_maxs  = {b: -np.inf for b in auto_range_branches}
     tasks, labels = [], []
@@ -241,11 +240,10 @@ def _process_tree_shapes(tree_name, no_selection=False, stat_band=False, n_worke
             results = pool.map(dm._prepass_worker, tasks)
     else:
         results = [dm._prepass(*t) for t in tasks]
-    for sname, (rw_sum, ranges) in zip(labels, results):
+    for sname, (_rw_sum, ranges) in zip(labels, results):
         for b, (lo, hi) in ranges.items():
             prepass_mins[b] = min(prepass_mins[b], lo)
             prepass_maxs[b] = max(prepass_maxs[b], hi)
-        mc_raw_w_sums[sname] = rw_sum if rw_sum > 0 else float(mc_n_totals[sname])
 
     merged_ranges = {}
     for b in auto_range_branches:
@@ -273,12 +271,10 @@ def _process_tree_shapes(tree_name, no_selection=False, stat_band=False, n_worke
                 continue
             info = dm.SAMPLE_INFO[sname]
             xsec = float(info.get("xsection", 0.0))
-            raw_entries = float(info.get("raw_entries", 0.0))
-            n_total = mc_n_totals[sname]
-            target_total = (dm.LUMI_TOTAL * xsec * float(n_total) / raw_entries
-                            if raw_entries > 0 else 0.0)
+            # Per-event weight lumi * xsec * raw_w / S, streamed with a unit divisor as in data_mc.py.
+            weight_scale = dm.LUMI_TOTAL * xsec / dm.mc_weights.generated_weight_sum(info, reweight_branches)
             stream_tasks.append((mc_sample_files[sname], tree_name, branch_edges,
-                                 target_total, mc_raw_w_sums[sname], reweight_branches,
+                                 weight_scale, 1.0, reweight_branches,
                                  plot_thresholds, plot_clip_ranges, not no_selection))
             stream_labels.append((cls_name, sname))
     log_message(f"Streaming histograms: {len(stream_tasks)} samples ({n_workers} workers)")

@@ -7,6 +7,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,7 @@ MODES = {
     2: dict(label="bdt_train", subdir="selections/BDT",
             script="train.py", config_env="BDT_CONFIG_PATH"),
     3: dict(label="signal_region", subdir="selections/signal_region",
-            script="signal_region.py", config_env="SCAN_CONFIG_PATH"),
+            script="signal_region_hist.py", config_env="SR_HIST_CONFIG_PATH"),
     4: dict(label="data_mc", subdir="plotting",
             script="data_mc.py", config_env="PLOT_CONFIG_PATH"),
     5: dict(label="qcd_est", subdir="background_estimation",
@@ -61,6 +62,62 @@ SAMPLE_MODES = frozenset({0, 1, 6})
 
 ROOT_DIR = Path(__file__).resolve().parent
 
+# ---------------------------------------------------------------------------
+# Site profiles
+# ---------------------------------------------------------------------------
+# How a cluster provides the environments of the C++ tools (CMSSW with correctionlib), the
+# Python tools and CMS combine, how jobs get the grid proxy, and where Slurm submissions
+# start. Add a cluster by adding a profile.
+#   slurm_account     default for --slurm-account
+#   proxy             "purdue_depot_copy": copy /tmp/x509up_u<uid> to the Purdue depot;
+#                     "explicit": use --x509-proxy or $X509_USER_PROXY as is
+#   cxx_wrapper       command prefix running the C++ compiler, ROOT tools, correctionlib
+#                     detection and the C++ binaries (None: the current environment)
+#   combine_wrapper   command prefix running the combine.C build and combine (None: current)
+#   python_cmd        Python interpreter command for the Python modes and the Slurm driver;
+#                     "{pixi_env}" is replaced by --python-env
+#   openmp_flags      (cflags, ldflags) of the site compiler, or None to probe for them
+#   submit_from_worker  with --slurm on a login node, submit run.py itself as a Slurm job
+#                     (compilation, DAS queries and submissions then run on a worker)
+#   keep_binaries     build content-hashed binaries for local runs too and never delete them
+#   scratch_env       environment variable naming the scratch directory for TMPDIR and caches
+#   driver            resources of the Slurm driver job of the sample modes
+FASRC_COMBINE_IMAGE = "/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/cms-cloud/combine-standalone:latest"
+SITES = {
+    # Purdue: tools on PATH of the submitting shell, proxy copied to the depot.
+    "purdue": dict(
+        slurm_account="cms-express",
+        proxy="purdue_depot_copy",
+        cxx_wrapper=None,
+        combine_wrapper=None,
+        python_cmd=["python3"],
+        openmp_flags=None,
+        submit_from_worker=False,
+        keep_binaries=False,
+        scratch_env=None,
+        driver=None,
+    ),
+    # FASRC Cannon: Rocky 8 hosts; CMSSW_16_1_0_pre4 (el9) through the CVMFS cmssw-el9
+    # container, Python through the repository pixi environments, combine (CombinedLimit
+    # v11.1.0) through the CVMFS combine-standalone image.
+    "fasrc": dict(
+        slurm_account="iaifi_lab",
+        proxy="explicit",
+        cxx_wrapper=["/cvmfs/cms.cern.ch/common/cmssw-el9", "--command-to-run",
+                     str(ROOT_DIR / "sites" / "fasrc" / "cmssw_exec.sh")],
+        # The image's environment scripts keep host LD_LIBRARY_PATH/PYTHONPATH/ROOTSYS when set.
+        combine_wrapper=["env", "-u", "LD_LIBRARY_PATH", "-u", "PYTHONPATH", "-u", "ROOTSYS",
+                         "singularity", "exec", "--bind", "/n", FASRC_COMBINE_IMAGE],
+        python_cmd=["pixi", "run", "--manifest-path", str(ROOT_DIR / "pixi.toml"), "--frozen",
+                    "-e", "{pixi_env}", "python3"],
+        openmp_flags=("-fopenmp", ""),
+        submit_from_worker=True,
+        keep_binaries=True,
+        scratch_env="VVV_SCRATCH",
+        driver=dict(partition="test", cpus=2, mem="8G", time="06:00:00"),
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,6 +129,109 @@ def timestamp():
 
 def log(msg):
     print(f"[{timestamp()}] {msg}", flush=True)
+
+
+def wrapped(prefix, cmd):
+    """Return the command list cmd run through a site wrapper prefix (None: unchanged)."""
+    return list(prefix or []) + [str(tok) for tok in cmd]
+
+
+def python_command(site, pixi_env):
+    return [tok.replace("{pixi_env}", pixi_env) for tok in site["python_cmd"]]
+
+
+def apply_site_environment(site):
+    """Point temporary files and tool caches of this process and its children (local runs,
+    Slurm jobs, which inherit the environment) to the site scratch directory instead of
+    node-local /tmp and $HOME, and size the thread pools to the Slurm allocation."""
+    if site["scratch_env"]:
+        scratch = os.environ.get(site["scratch_env"], "")
+        if not scratch or not os.path.isabs(scratch):
+            sys.exit(f"{site['scratch_env']} must be set to an absolute scratch directory for this site")
+        scratch_dirs = {
+            "TMPDIR": os.path.join(scratch, "tmp"),
+            "MPLCONFIGDIR": os.path.join(scratch, "cache", "matplotlib"),
+            "XDG_CACHE_HOME": os.path.join(scratch, "cache"),
+            "PIXI_CACHE_DIR": os.path.join(scratch, "pixi-cache"),
+            "SINGULARITY_CACHEDIR": os.path.join(scratch, "cache", "singularity"),
+        }
+        for name, path in scratch_dirs.items():
+            os.makedirs(path, exist_ok=True)
+            os.environ[name] = path
+    cpus = os.environ.get("SLURM_CPUS_PER_TASK", "")
+    if cpus.isdigit():
+        for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+            os.environ[name] = cpus
+
+
+def resolve_proxy(site, args):
+    """Return the grid proxy path to export to the jobs (None when not needed)."""
+    if site["proxy"] == "purdue_depot_copy":
+        if not args.slurm:
+            return None
+        uid      = os.getuid()
+        x509_src = Path(f"/tmp/x509up_u{uid}")
+        x509_dst = Path(f"/depot/cms/users/{os.environ['USER']}/x509up_u{uid}")
+        if not x509_src.exists():
+            sys.exit(f"Certificate not found: {x509_src}")
+        shutil.copy2(x509_src, x509_dst)
+        print(f"[{timestamp()}] copied certificate {x509_src} -> {x509_dst}", flush=True)
+        return x509_dst
+    proxy = args.x509_proxy or os.environ.get("X509_USER_PROXY", "")
+    if not proxy:
+        return None
+    proxy_path = Path(proxy).resolve()
+    if not proxy_path.is_file():
+        sys.exit(f"grid proxy not found: {proxy_path}")
+    os.environ["X509_USER_PROXY"] = str(proxy_path)
+    # The proxy is the jobs' only credential: with X509_USER_CERT/KEY set, the XRootD TLS
+    # client tries the passphrase-protected user key instead and fails.
+    for name in ("X509_USER_CERT", "X509_USER_KEY"):
+        os.environ.pop(name, None)
+    return proxy_path
+
+
+def submit_driver_job(site, args, work_dir, label):
+    """Submit this run.py invocation as a Slurm job and return its job id. Sample modes keep
+    --slurm, so the job compiles, queries DAS and submits the sample jobs from a worker; the
+    other modes run inside the job, which gets the --slurm-* resources."""
+    # The job runs from ROOT_DIR, so a relative config path is passed as its absolute path.
+    config_abs = str(resolve_config(args.config_input, work_dir))
+    argv = [config_abs if tok == args.config_input else tok for tok in sys.argv[1:]]
+    sample_mode = args.mode in SAMPLE_MODES
+    if sample_mode:
+        res = site["driver"]
+        partition, cpus, mem, time_limit, extra = res["partition"], res["cpus"], res["mem"], res["time"], ""
+    else:
+        argv = [tok for tok in argv if tok != "--slurm"]
+        partition, cpus, mem, time_limit, extra = (
+            args.slurm_partition, args.slurm_cpus, args.slurm_mem, args.slurm_time, args.slurm_extra)
+    job_name = f"{label}_driver" if sample_mode else f"{label}_job"
+    cmd = [
+        "sbatch", "--parsable",
+        f"--job-name={job_name}",
+        f"--output={work_dir}/{job_name}_%j.out",
+        f"--error={work_dir}/{job_name}_%j.out",
+        f"--chdir={ROOT_DIR}",
+        "--ntasks=1",
+        f"--cpus-per-task={cpus}",
+        f"--mem={mem}",
+        f"--time={time_limit}",
+    ]
+    if args.slurm_account:
+        cmd.append(f"--account={args.slurm_account}")
+    if partition:
+        cmd.append(f"--partition={partition}")
+    if args.slurm_exclude:
+        cmd.append(f"--exclude={args.slurm_exclude}")
+    if extra:
+        cmd.extend(extra.split())
+    inner = python_command(site, "default") + [str(ROOT_DIR / "run.py")] + argv
+    cmd.append("--wrap=" + " ".join(shlex.quote(tok) for tok in inner))
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        sys.exit(f"sbatch failed for {job_name}: {r.stderr.decode().strip()}")
+    return r.stdout.decode().strip().split(";")[0]
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +248,7 @@ Modes:
   0  selections/convert/convert_branch.C  (per-sample, batch-parallel)
   1  selections/weight/weight.C           (per-sample)
   2  selections/BDT/train.py             (no samples)
-  3  selections/signal_region/signal_region.py  (no samples)
+  3  selections/signal_region/signal_region_hist.py  (no samples)
   4  plotting/data_mc.py                 (no samples)
   5  background_estimation/qcd_est.py   (no samples)
   6  selections/mix/mix.C               (per-sample)
@@ -113,8 +273,14 @@ Sample selection for modes 0, 1, 6:
                    help="Optional: [config.json] [sample1 sample2 ...]")
     p.add_argument("--slurm", action="store_true",
                    help="Submit jobs to SLURM instead of running locally")
-    p.add_argument("--slurm-account", default="cms-express", metavar="NAME",
-                   help="SLURM account passed as sbatch --account (default: cms-express)")
+    p.add_argument("--site", default="purdue", choices=sorted(SITES),
+                   help="Cluster profile: environments, proxy handling and submission (default: purdue)")
+    p.add_argument("--slurm-account", default=None, metavar="NAME",
+                   help="SLURM account passed as sbatch --account (default: the site's, cms-express on purdue)")
+    p.add_argument("--x509-proxy", default="", metavar="PATH",
+                   help="Grid proxy exported to the jobs on sites with explicit proxies (default: $X509_USER_PROXY)")
+    p.add_argument("--python-env", default="default", metavar="NAME",
+                   help="pixi environment of the Python modes on sites using pixi (default: default; gpu for GPU training)")
     p.add_argument("--slurm-partition", default="", metavar="NAME",
                    help="SLURM partition passed as sbatch --partition (default: cluster default)")
     p.add_argument("--slurm-time", default="24:00:00", metavar="HH:MM:SS")
@@ -298,7 +464,7 @@ def detect_openmp():
 # Compilation
 # ---------------------------------------------------------------------------
 
-def detect_correctionlib():
+def detect_correctionlib(cxx_wrapper=None):
     """Return (cflags, ldflags, libdir) for correctionlib's C++ API, or
     ('', '', '') if the package isn't importable. Located dynamically (rather
     than a hardcoded cvmfs path) via `python3 -c "import correctionlib"` so
@@ -307,10 +473,11 @@ def detect_correctionlib():
     without LD_LIBRARY_PATH (local runs, the mode-0 batch-count query)."""
     try:
         pkg_dir = subprocess.check_output(
-            ["python3", "-c", "import correctionlib, os; print(os.path.dirname(correctionlib.__file__))"],
+            wrapped(cxx_wrapper, ["python3", "-c",
+                                  "import correctionlib, os; print(os.path.dirname(correctionlib.__file__))"]),
             text=True, stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        ).strip().splitlines()[-1]
+    except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
         return "", "", ""
     incdir = os.path.join(pkg_dir, "include")
     libdir = os.path.join(pkg_dir, "lib")
@@ -319,17 +486,23 @@ def detect_correctionlib():
     return f"-I{incdir}", f"-L{libdir} -Wl,-rpath,{libdir} -lcorrectionlib", libdir
 
 
-def compile_binary(work_dir, source, bin_path, omp_cflags, omp_ldflags):
-    for tool in ("c++", "root-config"):
-        if not shutil.which(tool):
-            sys.exit(f"{tool} is required but not found in PATH")
+def root_config(cxx_wrapper, *flags):
+    out = subprocess.check_output(wrapped(cxx_wrapper, ["root-config", *flags]), text=True)
+    return out.strip().splitlines()[-1].strip()
 
-    root_cflags  = subprocess.check_output(["root-config", "--cflags"],  text=True).strip()
-    root_libs    = subprocess.check_output(["root-config", "--libs"],    text=True).strip()
-    root_libdir  = subprocess.check_output(["root-config", "--libdir"],  text=True).strip()
-    corrlib_cflags, corrlib_ldflags, corrlib_libdir = detect_correctionlib()
 
-    cmd = (
+def compile_binary(work_dir, source, bin_path, omp_cflags, omp_ldflags, cxx_wrapper=None):
+    if cxx_wrapper is None:
+        for tool in ("c++", "root-config"):
+            if not shutil.which(tool):
+                sys.exit(f"{tool} is required but not found in PATH")
+
+    root_cflags  = root_config(cxx_wrapper, "--cflags")
+    root_libs    = root_config(cxx_wrapper, "--libs")
+    root_libdir  = root_config(cxx_wrapper, "--libdir")
+    corrlib_cflags, corrlib_ldflags, corrlib_libdir = detect_correctionlib(cxx_wrapper)
+
+    cmd = wrapped(cxx_wrapper,
         ["c++", "-O3", "-DNDEBUG", "-std=c++17"]
         + root_cflags.split()
         + (corrlib_cflags.split() if corrlib_cflags else [])
@@ -417,10 +590,10 @@ def copy_log_to_output_dirs(mode, config_path, work_dir, log_path):
 # Python-script modes (2-5)
 # ---------------------------------------------------------------------------
 
-def run_python_mode(mode_cfg, config_path, work_dir, passthrough=None):
+def run_python_mode(mode_cfg, config_path, work_dir, passthrough=None, python_cmd=("python3",)):
     env = {**os.environ, mode_cfg["config_env"]: str(config_path)}
     script = mode_cfg["script"]
-    cmd = ["python3", f"./{script}", *(passthrough or [])]
+    cmd = [*python_cmd, f"./{script}", *(passthrough or [])]
     log(f"run: env {mode_cfg['config_env']}={config_path} {' '.join(cmd)}")
     r = subprocess.run(cmd, env=env, cwd=work_dir)
     return r.returncode
@@ -430,10 +603,10 @@ def run_python_mode(mode_cfg, config_path, work_dir, passthrough=None):
 # C++ single-run mode (mode 7)
 # ---------------------------------------------------------------------------
 
-def run_combine_mode(mode_cfg, config_path, bin_path, work_dir):
+def run_combine_mode(mode_cfg, config_path, bin_path, work_dir, wrapper=None):
     env = {**os.environ, mode_cfg["config_env"]: str(config_path)}
     log(f"run: env {mode_cfg['config_env']}={config_path} {bin_path}")
-    r = subprocess.run([str(bin_path)], env=env, cwd=work_dir)
+    r = subprocess.run(wrapped(wrapper, [bin_path]), env=env, cwd=work_dir)
     return r.returncode
 
 
@@ -442,7 +615,7 @@ def run_combine_mode(mode_cfg, config_path, bin_path, work_dir):
 # ---------------------------------------------------------------------------
 
 def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work_dir_str,
-                         golden_json_path=None):
+                         golden_json_path=None, cxx_wrapper=None):
     """Runs the convert batch loop in a subprocess — forked by launch_job_local."""
     config_path = Path(config_path_str)
     bin_path    = Path(bin_path_str)
@@ -454,7 +627,7 @@ def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work
     # A new submission re-queries DAS and rewrites the per-sample file-list snapshot that all
     # batches and the merge then share.
     r = subprocess.run(
-        [str(bin_path), sample, "--batch-count"],
+        wrapped(cxx_wrapper, [bin_path, sample, "--batch-count"]),
         env={**env_base, "CONVERT_REFRESH_FILE_LIST": "1"}, cwd=work_dir,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
@@ -477,7 +650,7 @@ def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work
             "CONVERT_DEFER_FINAL_MERGE": "1",
         }
         r = subprocess.run(
-            [str(bin_path), sample, str(batch_index)],
+            wrapped(cxx_wrapper, [bin_path, sample, batch_index]),
             env=env, cwd=work_dir,
         )
         if r.returncode != 0:
@@ -501,7 +674,7 @@ def _run_convert_batches(sample, config_env, config_path_str, bin_path_str, work
 
     log(f"running sample={sample} final merge")
     r = subprocess.run(
-        [str(bin_path), sample, "--merge-successful-batches"],
+        wrapped(cxx_wrapper, [bin_path, sample, "--merge-successful-batches"]),
         env=env_base,
         cwd=work_dir,
     )
@@ -537,13 +710,13 @@ class _ProcHandle:
 # ---------------------------------------------------------------------------
 
 def launch_job_local(sample, mode, mode_cfg, config_path, bin_path, work_dir,
-                     golden_json_path=None):
+                     golden_json_path=None, cxx_wrapper=None):
     if mode == 0:
         proc = multiprocessing.Process(
             target=_run_convert_batches,
             args=(sample, mode_cfg["config_env"],
                   str(config_path), str(bin_path), str(work_dir),
-                  golden_json_path),
+                  golden_json_path, cxx_wrapper),
             daemon=False,
         )
         proc.start()
@@ -551,7 +724,7 @@ def launch_job_local(sample, mode, mode_cfg, config_path, bin_path, work_dir,
 
     # Modes 1 and 6: subprocess inherits dup2'd fd 1/2 → output goes to log
     env = {**os.environ, mode_cfg["config_env"]: str(config_path)}
-    return subprocess.Popen([str(bin_path), sample], env=env, cwd=work_dir)
+    return subprocess.Popen(wrapped(cxx_wrapper, [bin_path, sample]), env=env, cwd=work_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -579,8 +752,12 @@ def build_retry_wrap(cmd, retries, delay, label=""):
     )
 
 
+def shell_join(cmd):
+    return " ".join(shlex.quote(str(tok)) for tok in cmd)
+
+
 def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
-                     root_libdir=""):
+                     root_libdir="", cxx_wrapper=None):
     config_env = mode_cfg["config_env"]
     label      = mode_cfg["label"]
 
@@ -605,13 +782,11 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
     # OpenMP sizes its thread pool from the node, not the allocation, unless told otherwise.
     ldpath_prefix += "export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}; "
     retry_cmd = build_retry_wrap(
-        f"env {config_env}={config_path} {bin_path} {sample}",
+        f"env {config_env}={config_path} {shell_join(wrapped(cxx_wrapper, [bin_path, sample]))}",
         args.slurm_retries, args.slurm_retry_delay, label=f"{label}_{sample}",
     )
-    sbatch_args.append(
-        f"--wrap={ldpath_prefix}export X509_USER_PROXY={x509_dst}; "
-        f"{retry_cmd}"
-    )
+    x509_prefix = f"export X509_USER_PROXY={x509_dst}; " if x509_dst else ""
+    sbatch_args.append(f"--wrap={ldpath_prefix}{x509_prefix}{retry_cmd}")
 
     r = subprocess.run(sbatch_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
     if r.returncode != 0:
@@ -626,7 +801,7 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
 # ---------------------------------------------------------------------------
 
 def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
-                       golden_json_path=None, root_libdir=""):
+                       golden_json_path=None, root_libdir="", cxx_wrapper=None):
     """Submit one SLURM job per ~files-per-job-sized batch, plus a dependency merge job.
 
     The local --batch-count query refreshes the sample's input file-list snapshot, which every
@@ -642,7 +817,7 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
 
     # Query batch count locally so we know how many SLURM jobs to submit.
     r = subprocess.run(
-        [str(bin_path), sample, "--batch-count"],
+        wrapped(cxx_wrapper, [bin_path, sample, "--batch-count"]),
         env={**os.environ, config_env: str(config_path),
              "CONVERT_FILES_PER_BATCH": str(files_per_job),
              "CONVERT_REFRESH_FILE_LIST": "1"},
@@ -708,14 +883,14 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
         job_name = f"{label}_{sample}_{idx}"
         job_id = _sbatch(
             job_name,
-            f"CONVERT_DEFER_FINAL_MERGE=1 {bin_path} {sample} {idx}",
+            f"CONVERT_DEFER_FINAL_MERGE=1 {shell_join(wrapped(cxx_wrapper, [bin_path, sample, idx]))}",
         )
         batch_ids.append(job_id)
         log(f"submitted sample={sample} batch={idx + 1}/{n_batches} slurm_job_id={job_id}")
 
     merge_id = _sbatch(
         f"{label}_{sample}_merge",
-        f"{bin_path} {sample} --merge-successful-batches",
+        shell_join(wrapped(cxx_wrapper, [bin_path, sample, "--merge-successful-batches"])),
         depends_on=batch_ids,
     )
     log(f"submitted sample={sample} merge slurm_job_id={merge_id}")
@@ -775,7 +950,8 @@ def reap_slurm(running, failed_jobs):
 # ---------------------------------------------------------------------------
 
 def dispatch_jobs(samples, mode, mode_cfg, config_path, bin_path, work_dir, args,
-                  x509_dst=None, golden_json_path=None, sample_mc_map=None, root_libdir=""):
+                  x509_dst=None, golden_json_path=None, sample_mc_map=None, root_libdir="",
+                  cxx_wrapper=None):
     failed_jobs = 0
 
     def _sample_golden(sample):
@@ -791,10 +967,11 @@ def dispatch_jobs(samples, mode, mode_cfg, config_path, bin_path, work_dir, args
             if mode == 0:
                 launch_mode0_slurm(sample, mode_cfg, config_path, bin_path,
                                    work_dir, args, x509_dst, _sample_golden(sample),
-                                   root_libdir=root_libdir)
+                                   root_libdir=root_libdir, cxx_wrapper=cxx_wrapper)
             else:
                 launch_job_slurm(sample, mode_cfg, config_path, bin_path,
-                                 work_dir, args, x509_dst, root_libdir=root_libdir)
+                                 work_dir, args, x509_dst, root_libdir=root_libdir,
+                                 cxx_wrapper=cxx_wrapper)
         log("all jobs submitted to SLURM")
         return 0
 
@@ -805,7 +982,7 @@ def dispatch_jobs(samples, mode, mode_cfg, config_path, bin_path, work_dir, args
             if not any_finished:
                 time.sleep(2)
         handle = launch_job_local(sample, mode, mode_cfg, config_path, bin_path, work_dir,
-                                  _sample_golden(sample))
+                                  _sample_golden(sample), cxx_wrapper)
         running.append({"proc": handle, "sample": sample})
         log(f"started sample={sample} pid={handle.pid}")
 
@@ -839,16 +1016,24 @@ def main():
     log_name = "log.txt" if config_path.stem == "config" else f"log_{config_path.stem}.txt"
     log_path = work_dir / log_name
 
-    # X509 cert copy happens before log redirect so errors go to terminal
-    x509_dst = None
-    if args.slurm:
-        uid      = os.getuid()
-        x509_src = Path(f"/tmp/x509up_u{uid}")
-        x509_dst = Path(f"/depot/cms/users/{os.environ['USER']}/x509up_u{uid}")
-        if not x509_src.exists():
-            sys.exit(f"Certificate not found: {x509_src}")
-        shutil.copy2(x509_src, x509_dst)
-        print(f"[{timestamp()}] copied certificate {x509_src} -> {x509_dst}", flush=True)
+    site = SITES[args.site]
+    if args.slurm_account is None:
+        args.slurm_account = site["slurm_account"]
+    apply_site_environment(site)
+
+    # Proxy handling happens before the log redirect so errors go to the terminal.
+    x509_dst = resolve_proxy(site, args)
+
+    if args.slurm and site["submit_from_worker"] and not os.environ.get("SLURM_JOB_ID"):
+        # Compilation, DAS queries and submissions run on a worker, never on a login node.
+        job_id = submit_driver_job(site, args, work_dir, label)
+        message = (f"[{timestamp()}] submitted mode={mode} ({label}) as Slurm job {job_id}; "
+                   f"output {work_dir}/{label}_*_{job_id}.out")
+        print(message, flush=True)
+        with open(log_path, "a") as fh:
+            fh.write(message + "\n")
+        sys.exit(0)
+
     print (log_path)
     # Redirect stdout/stderr to the log file, appending so consecutive submissions keep their
     # history; mirrors bash `exec >> log 2>&1`
@@ -864,53 +1049,64 @@ def main():
     # Python-only modes — no compilation, no sample loop
     if mode in PYTHON_MODES:
         log(f"mode={mode} ({label})")
+        log(f"site={args.site}")
         log(f"work_dir={work_dir}")
         log(f"config={config_path}")
         log(f"started job={label} pid={os.getpid()}")
-        status = run_python_mode(mode_cfg, config_path, work_dir, args.passthrough)
+        status = run_python_mode(mode_cfg, config_path, work_dir, args.passthrough,
+                                 python_command(site, args.python_env))
         log(f"finished job={label} pid={os.getpid()} status={status}")
         sys.exit(status)
 
     # C++ modes — detect OpenMP, compile
-    omp_cflags, omp_ldflags = detect_openmp()
+    cxx_wrapper = site["combine_wrapper"] if mode == 7 else site["cxx_wrapper"]
+    omp_cflags, omp_ldflags = site["openmp_flags"] or detect_openmp()
     bin_path = work_dir / mode_cfg["bin_name"]
     reuse_binary = False
-    if args.slurm:
+    if args.slurm or site["keep_binaries"]:
         # Queued SLURM jobs run long after submission: give every distinct build (source,
-        # shared JSON header, compiler and correctionlib flags) its own binary, so a later
-        # run.py invocation can neither overwrite nor delete the binary those jobs will execute.
+        # shared JSON header, environment, compiler and correctionlib flags) its own binary, so
+        # a later run.py invocation can neither overwrite nor delete the binary those jobs will
+        # execute. Sites with keep_binaries build local runs the same way and keep the binary.
         digest = hashlib.sha256()
         digest.update((work_dir / mode_cfg["source"]).read_bytes())
         digest.update((ROOT_DIR / "src" / "simple_json.h").read_bytes())
         digest.update(f"{omp_cflags}|{omp_ldflags}".encode())
-        digest.update("|".join(detect_correctionlib()).encode())
-        digest.update(subprocess.check_output(["root-config", "--cflags", "--libs"]))
+        digest.update("|".join(cxx_wrapper or []).encode())
+        digest.update("|".join(detect_correctionlib(cxx_wrapper)).encode())
+        digest.update(subprocess.check_output(wrapped(cxx_wrapper, ["root-config", "--cflags", "--libs"])))
         bin_path = work_dir / f"{mode_cfg['bin_name']}_{digest.hexdigest()[:12]}"
         reuse_binary = bin_path.exists()
 
     log(f"mode={mode} ({label})")
+    log(f"site={args.site}")
     log(f"work_dir={work_dir}")
     log(f"config={config_path}")
     log(f"max_concurrent_jobs={args.max_jobs}")
     if args.samples:
         log(f"cli_samples={' '.join(args.samples)}")
 
-    if not args.slurm:
+    if not args.slurm and not site["keep_binaries"]:
         atexit.register(cleanup_build_artifacts, bin_path)
 
     if reuse_binary:
-        root_libdir = subprocess.check_output(["root-config", "--libdir"], text=True).strip()
-        corrlib_libdir = detect_correctionlib()[2]
+        root_libdir = root_config(cxx_wrapper, "--libdir")
+        corrlib_libdir = detect_correctionlib(cxx_wrapper)[2]
         if corrlib_libdir:
             root_libdir = f"{root_libdir}:{corrlib_libdir}"
         log(f"reusing binary {bin_path} (same source and build flags)")
     else:
-        root_libdir = compile_binary(work_dir, mode_cfg["source"], bin_path, omp_cflags, omp_ldflags)
+        root_libdir = compile_binary(work_dir, mode_cfg["source"], bin_path, omp_cflags, omp_ldflags,
+                                     cxx_wrapper)
+    if cxx_wrapper:
+        # The wrapper sets the library paths inside its environment; exporting the container's
+        # ROOT libraries on the host would affect the host's container runtime.
+        root_libdir = ""
 
     # Mode 7 — single run, no sample loop
     if mode == 7:
         log(f"started job={label} pid={os.getpid()}")
-        status = run_combine_mode(mode_cfg, config_path, bin_path, work_dir)
+        status = run_combine_mode(mode_cfg, config_path, bin_path, work_dir, cxx_wrapper)
         log(f"finished job={label} pid={os.getpid()} status={status}")
         sys.exit(status)
 
@@ -933,7 +1129,7 @@ def main():
     failed = dispatch_jobs(
         samples, mode, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
         golden_json_path=golden_json_path, sample_mc_map=sample_mc_map,
-        root_libdir=root_libdir,
+        root_libdir=root_libdir, cxx_wrapper=cxx_wrapper,
     )
     sys.exit(1 if failed else 0)
 

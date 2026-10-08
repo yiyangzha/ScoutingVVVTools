@@ -8,8 +8,8 @@ convert_branch.C writes this variation as the <tree>__jms_up and
 <tree>__jms_down trees next to the nominal trees, and
 selections/jet_syst_common/jet_variation_common.py computes
 
-  jms_up   = sum(weight_branch on <tree>__jms_up)   / sum(weight_branch on <tree>)
-  jms_down = sum(weight_branch on <tree>__jms_down) / sum(weight_branch on <tree>)
+  jms_up   = sum(genWeight * weight_pu on <tree>__jms_up)   / sum(genWeight * weight_pu on <tree>)
+  jms_down = sum(genWeight * weight_pu on <tree>__jms_down) / sum(genWeight * weight_pu on <tree>)
 
 in the same regions as qcd_est.py.
 

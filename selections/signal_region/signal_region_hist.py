@@ -1,25 +1,40 @@
-"""Histogram-based coarse-to-fine signal-region optimizer.
+"""Histogram-based coarse-to-fine signal-region optimizer (run.py mode 3).
 
-A standalone alternative to ``signal_region.py``. It finds N non-overlapping
-two-sided score rectangles maximising the same asymptotic significance
-``Z = sqrt(2[(S+B)ln(1+S/B) - S])``, but uses a lean grid-based search instead of
-the original multi-stage heuristic:
+It finds N non-overlapping two-sided score rectangles maximising the combined
+significance sqrt(sum Z_i^2), where each region's Z is the Asimov significance
+with a background uncertainty (Cowan et al., arXiv:1007.1727, Eq. 97)
 
-  1. Coarse pass: coordinate-descent beam search on a uniform 0.05 grid.
-  2. Fine pass: refine each surviving boundary on the 0.01 grid, locally, within
-     +/- ``fine_refine_window`` of its coarse value.
-  3. Selection: exact branch-and-bound picking N mutually non-overlapping
-     rectangles that maximise sum(Z_i^2).
+    Z_A = sqrt(2 [(S+B) ln((S+B)(B+V) / (B^2+(S+B)V)) - (B^2/V) ln(1 + V S / (B (B+V)))])
+
+with V = sum_k (sum_c delta_kc B_c)^2 + sum_bkg w^2: delta_kc is the signed
+relative shift of background class c under nuisance k (lumi, trigger, and the
+inclusive theory, pileup, JES, JER, JMS, and JMR ratios of the configured
+*_syst_yields.json files, yield-weighted over the class's samples), each
+nuisance fully correlated across the classes as in the combine cards, and
+sum w^2 the MC statistical variance. Steps:
+
+  1. Coarse pass: coordinate-descent beam search on a uniform grid (a finer grid
+     on the QCD axis), repeated with disjoint re-seeding.
+  2. Event-mask deduplication: every candidate is shrunk to the smallest box
+     selecting the same events, and candidates selecting identical events are
+     merged.
+  3. Selection: branch-and-bound (OpenMP helper openmp_region_select.cpp, or
+     Python) picking N mutually non-overlapping rectangles that maximise
+     sum(Z_i^2); a stopped search reports its upper-bound certificate.
+  4. Fine pass: refine each selected boundary on the fine grid, locally, with the
+     full acceptance constraints.
+  5. Boundaries inside empty score gaps: each region is shrunk to its events
+     again, then signal-class axis upper bounds are raised and background-class
+     axis lower bounds lowered into MC-empty space, so signal-axis bounds sit as
+     high and background-axis bounds as low as the same events allow, without
+     overlapping another region.
 
 Data loading, model inference, per-bin statistics layout, text reporting and all
-plotting are reused unchanged from ``signal_region.py`` (imported as ``sr``). Only
-the candidate generator and the global selection are reimplemented here, because
-in the original they live as nested closures that cannot be imported.
+plotting are reused from ``signal_region.py`` (imported as ``sr``).
 
-The script and ``signal_region.py`` share one config file. Pass its path as the
-first command-line argument (``python signal_region_hist.py path/to/config.json``),
-or set the env var ``SR_HIST_CONFIG_PATH`` (default: ``config_hist.json`` next to
-this file) as a fallback.
+The script and ``signal_region.py`` share one config file: the first
+command-line argument, else ``SR_HIST_CONFIG_PATH``, else ``config.json`` next
+to this file.
 """
 
 import os
@@ -27,6 +42,9 @@ import sys
 import json
 import gc
 import time
+import ctypes
+import hashlib
+import subprocess
 
 # -- Config sharing: signal_region.py loads its config at import time from
 #    SCAN_CONFIG_PATH and never reloads, so we must set it BEFORE importing. We
@@ -38,7 +56,7 @@ if len(sys.argv) > 1:
     HIST_CFG_PATH = os.path.abspath(sys.argv[1])
 else:
     HIST_CFG_PATH = os.path.abspath(
-        os.environ.get("SR_HIST_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config_hist.json"))
+        os.environ.get("SR_HIST_CONFIG_PATH", os.path.join(_SCRIPT_DIR, "config.json"))
     )
 os.environ["SCAN_CONFIG_PATH"] = HIST_CFG_PATH
 
@@ -59,13 +77,27 @@ TOP_K          = max(1, int(_hist_cfg.get("top_intervals_per_axis", 8)))
 ROUNDS         = max(1, int(_hist_cfg.get("coordinate_rounds", 6)))
 FINE_PASSES    = max(1, int(_hist_cfg.get("fine_refine_passes", 2)))
 GLOBAL_BEAM    = max(1, int(_hist_cfg.get("global_beam_width", 512)))
-MAX_SEL_CANDS  = max(1, int(_hist_cfg.get("max_selection_candidates", 400)))
-SEL_PER_AXIS   = max(0, int(_hist_cfg.get("selection_reps_per_axis", 60)))
-BNB_MAX_NODES  = max(0, int(_hist_cfg.get("branch_bound_max_nodes", 2000000)))
-BNB_TIME_LIMIT = max(0.0, float(_hist_cfg.get("branch_bound_time_limit_seconds", 60.0)))
+BNB_MAX_NODES  = max(0, int(_hist_cfg.get("branch_bound_max_nodes", 0)))
+BNB_TIME_LIMIT = max(0.0, float(_hist_cfg.get("branch_bound_time_limit_seconds", 14400.0)))
 MAX_THREADS    = max(1, int(_hist_cfg.get("max_threads", sr.MAX_THREADS)))
 PROGRESS_EVERY = float(_hist_cfg.get("progress_every_seconds", 30.0))
-VALIDATE_REF   = bool(_hist_cfg.get("validate_prediction_reference", False))
+VALIDATE_REF   = bool(_hist_cfg.get("validate_prediction_reference", True))
+
+# Background systematic uncertainties of the objective: the inclusive (no signal
+# region) *_syst_yields.json of modes 8, 9, 11-14 for this tree, plus the flat
+# lumi and trigger fractions of the combine card.
+BKG_SYST_JSONS = dict(_hist_cfg["background_syst_jsons"])
+LUMI_UNC       = float(_hist_cfg["lumi_unc"])
+TRIGGER_UNC    = float(_hist_cfg["trigger_unc"])
+SYST_RATIO_KEYS = {
+    "theory": (("pdf_up", "pdf_down"), ("scale_up", "scale_down"),
+               ("ps_isr_up", "ps_isr_down"), ("ps_fsr_up", "ps_fsr_down")),
+    "pileup": (("pu_up", "pu_down"),),
+    "jes": (("jes_up", "jes_down"),),
+    "jer": (("jer_up", "jer_down"),),
+    "jms": (("jms_up", "jms_down"),),
+    "jmr": (("jmr_up", "jmr_down"),),
+}
 
 # Optional finer grid just for the QCD axis (its score is sharply peaked near 0,
 # and the exhaustive box search separates signal-rich bins with QCD cuts far
@@ -212,11 +244,80 @@ def prepare_inputs():
     return proba, y, w, sample_labels, list(X_model.columns)
 
 
+# -------------------- Background systematic shifts --------------------
+def _resolve_cfg_path(path):
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(_SCRIPT_DIR, path))
+
+
+def background_syst_shifts(y, w, sample_labels):
+    """Signed relative background shifts delta[k, c] of every nuisance k for every
+    background class c of this tree (rows: lumi, trigger, then each up/down pair of
+    SYST_RATIO_KEYS; columns follow sr.BACKGROUND_CLASS_INDICES).
+
+    The class ratio of a nuisance is the yield-weighted mean of its samples'
+    inclusive ratios (the combine kappa convention; a sample without theory weights
+    counts with ratio 1 under the theory nuisances; a sample without an entry is
+    skipped when its test-split yield is not positive, otherwise an error). With
+    u = R_up - 1 and d = R_down - 1, delta = u if |u| >= |d| else -d: the larger
+    deviation, signed along the up variation. Every nuisance is fully correlated
+    across the classes, as in the combine cards. Yields are the test-split weights
+    after the thresholds.
+    """
+    missing = [name for name in SYST_RATIO_KEYS if name not in BKG_SYST_JSONS]
+    if missing:
+        raise KeyError(f"background_syst_jsons lacks {missing}")
+    ratios = {name: sr._load_json(_resolve_cfg_path(BKG_SYST_JSONS[name])) for name in SYST_RATIO_KEYS}
+    labels = np.asarray(sample_labels)
+    nuisances = [("lumi", None, None), ("trigger", None, None)]
+    nuisances += [(name, up_key, down_key)
+                  for name, pairs in SYST_RATIO_KEYS.items() for up_key, down_key in pairs]
+    shifts = np.zeros((len(nuisances), len(sr.BACKGROUND_CLASS_INDICES)), dtype=float)
+    for c, cls_idx in enumerate(sr.BACKGROUND_CLASS_INDICES):
+        cls_name = sr.CLASS_NAMES[cls_idx]
+        yields = {}
+        for sample in sr.CLASS_GROUPS[cls_name]:
+            m = labels == sample
+            if np.any(m):
+                yields[sample] = float(w[m].sum())
+        total = float(sum(yields.values()))
+        shifts[0, c] = LUMI_UNC
+        shifts[1, c] = TRIGGER_UNC
+        if total <= 0.0:
+            log_warning(f"Background class {cls_name} has no positive yield; lumi/trigger shifts only")
+            continue
+        for k, (name, up_key, down_key) in enumerate(nuisances[2:], start=2):
+            r_up = r_down = 0.0
+            for sample, y_s in yields.items():
+                entry = ratios[name].get(sample, {}).get(sr.TREE_NAME)
+                if entry is None:
+                    if name == "theory" and not sr.SAMPLE_INFO[sample]["rule"].get("has_theory_weights", False):
+                        entry = {up_key: 1.0, down_key: 1.0}
+                    elif y_s <= 0.0:
+                        # The syst scripts write no entry for a non-positive signed sum;
+                        # such a sample adds no positive yield (combine's convention).
+                        continue
+                    else:
+                        raise KeyError(
+                            f"{BKG_SYST_JSONS[name]} has no entry for sample {sample}, tree {sr.TREE_NAME}"
+                        )
+                r_up += y_s * float(entry[up_key])
+                r_down += y_s * float(entry[down_key])
+            u = r_up / total - 1.0
+            d = r_down / total - 1.0
+            shifts[k, c] = u if abs(u) >= abs(d) else -d
+        log_message(
+            f"  Background shifts {cls_name}: "
+            + ", ".join(f"{(n if u_ is None else u_[:-3])}={shifts[k, c]:+.4f}"
+                        for k, (n, u_, _d) in enumerate(nuisances))
+        )
+    return shifts
+
+
 # -------------------- Scan context --------------------
 class Ctx:
     """Per-run event arrays and precomputed reference tables for the scan."""
 
-    def __init__(self, proba, y, w):
+    def __init__(self, proba, y, w, bkg_shifts):
         n_cls = int(proba.shape[1])
         if n_cls != sr.NUM_CLASSES:
             raise RuntimeError(f"Model returned {n_cls} classes, expected {sr.NUM_CLASSES}")
@@ -229,6 +330,8 @@ class Ctx:
         )  # (N, D)
         self.n_events, self.D = self.score_axes.shape
         self.axis_names = axis_names
+        # A scan axis is a signal-score axis when every class it sums is a signal class.
+        self.signal_axis = [all(i in sr.SIGNAL_CLASS_INDICES for i in idxs) for idxs in index_groups]
 
         self.is_sig = np.isin(self.y, sr.SIGNAL_CLASS_INDICES)
         self.is_bkg = np.isin(self.y, sr.BACKGROUND_CLASS_INDICES)
@@ -236,6 +339,14 @@ class Ctx:
         self.w_bkg = np.where(self.is_bkg, self.w, 0.0)
         self.S_total = float(self.w_sig.sum())
         self.B_total = float(self.w_bkg.sum())
+        # Per background class weights (rows follow sr.BACKGROUND_CLASS_INDICES), the
+        # signed relative shifts of every nuisance (nuisance x class), and the background
+        # MC-statistics weights w^2.
+        self.w_bkg_cls = np.vstack(
+            [np.where(self.y == c, self.w, 0.0) for c in sr.BACKGROUND_CLASS_INDICES]
+        )
+        self.bkg_shifts = np.asarray(bkg_shifts, dtype=float)
+        self.w2_bkg = self.w_bkg ** 2
 
         # 1-D tail reference tables for per-bin tail efficiencies
         # (signal_region.py lines ~993-1011, T_REF=200, p_exp=0.005).
@@ -275,26 +386,48 @@ class Ctx:
             self._last[0] = now
 
 
-# -------------------- Significance (copies of sr closures) --------------------
-def calc_Z_val(S, B):
-    if S <= 0.0 or B <= 0.0:
-        return 0.0
-    f = (S + B) * np.log(1.0 + S / B) - S
-    return float(np.sqrt(2.0 * max(0.0, f)))
+# -------------------- Significance --------------------
+def za2(S, B, V):
+    """Elementwise Z_A^2 with background variance V (Cowan et al., arXiv:1007.1727);
+    the statistics-only 2[(S+B)ln(1+S/B) - S] where V is negligible; 0 where S <= 0
+    or B <= 0."""
+    S, B, V = np.broadcast_arrays(np.asarray(S, dtype=float), np.asarray(B, dtype=float),
+                                  np.maximum(np.asarray(V, dtype=float), 0.0))
+    valid = (S > 0.0) & (B > 0.0)
+    Ss = np.where(valid, S, 0.0)
+    Bs = np.where(valid, B, 1.0)
+    syst = valid & (V > 1e-12 * Bs * Bs)
+    Vs = np.where(syst, V, 1.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        stat_term = (Ss + Bs) * np.log1p(Ss / Bs) - Ss
+        syst_term = ((Ss + Bs) * np.log((Ss + Bs) * (Bs + Vs) / (Bs * Bs + (Ss + Bs) * Vs))
+                     - (Bs * Bs / Vs) * np.log1p(Vs * Ss / (Bs * (Bs + Vs))))
+    f = np.where(syst, syst_term, stat_term)
+    return np.where(valid & np.isfinite(f) & (f > 0.0), 2.0 * f, 0.0)
 
 
-def calc_Z(S, B, sS, sB):
-    if S <= 0.0 or B <= 0.0:
+def calc_Z_val(S, B, V=0.0):
+    return float(np.sqrt(za2(S, B, V)))
+
+
+def calc_Z(S, B, V, sS, sB):
+    """Z_A and its error from the S and B statistical errors (numerical derivatives
+    at fixed V)."""
+    Z = calc_Z_val(S, B, V)
+    if Z <= 0.0:
         return 0.0, 0.0
-    f = (S + B) * np.log(1.0 + S / B) - S
-    if f <= 0.0:
-        return 0.0, 0.0
-    Z = float(np.sqrt(2.0 * f))
-    ln1sb = np.log(1.0 + S / B)
-    dZ_dS = ln1sb / Z
-    dZ_dB = (ln1sb - S / B) / Z
+    hS = 1e-6 * max(abs(S), 1e-12)
+    hB = 1e-6 * max(abs(B), 1e-12)
+    dZ_dS = (calc_Z_val(S + hS, B, V) - calc_Z_val(S - hS, B, V)) / (2.0 * hS)
+    dZ_dB = (calc_Z_val(S, B + hB, V) - calc_Z_val(S, B - hB, V)) / (2.0 * hB)
     sZ = float(np.sqrt((dZ_dS * sS) ** 2 + (dZ_dB * sB) ** 2))
     return Z, sZ
+
+
+def background_variance(ctx, mask):
+    """V = sum_k (sum_c delta_kc B_c)^2 + sum_bkg w^2 of the events in mask."""
+    B_cls = ctx.w_bkg_cls[:, mask].sum(axis=1)
+    return float(np.sum((ctx.bkg_shifts @ B_cls) ** 2) + ctx.w2_bkg[mask].sum())
 
 
 def _qcd_axis(ctx):
@@ -322,7 +455,7 @@ def rect_mask(ctx, lo, hi):
 
 
 def rect_stats(ctx, lo, hi):
-    """Return (S, sS, B, sB, S_entries, B_entries) for rectangle [lo, hi)."""
+    """Return (S, sS, B, sB, S_entries, B_entries, V) for rectangle [lo, hi)."""
     m = rect_mask(ctx, lo, hi)
     ms = m & ctx.is_sig
     mb = m & ctx.is_bkg
@@ -335,6 +468,7 @@ def rect_stats(ctx, lo, hi):
         float(np.sqrt((wB ** 2).sum())),
         int(ms.sum()),
         int(mb.sum()),
+        background_variance(ctx, m),
     )
 
 
@@ -364,14 +498,14 @@ def _parallel_map_ordered(fn, items):
 
 
 # -------------------- Candidate evaluation --------------------
-def evaluate_region(ctx, lo, hi, S_v=None, B_v=None):
+def evaluate_region(ctx, lo, hi, S_v=None, B_v=None, V_v=None, S_e=None, B_e=None):
     """Build a candidate dict, or None if it fails the acceptance constraints.
 
-    Fast path: ``top_intervals_on_axis`` already returns the exact weighted S and
-    B of each child rectangle (the other-axes mask is applied and the interval is
-    half-open identically to ``rect_mask``), so when they are supplied and no
-    entry-count thresholds are active we skip the O(N*D) ``rect_stats`` recompute.
-    Mirrors signal_region.py:_evaluate_region(S_v, B_v) (~1043-1066).
+    Fast path: ``top_intervals_on_axis`` already returns the exact weighted S, B
+    and background variance V of each child rectangle (the other-axes mask is
+    applied and the interval is half-open identically to ``rect_mask``), so when
+    they are supplied and no entry-count thresholds are active we skip the
+    O(N*D) ``rect_stats`` recompute.
     """
     lo = [float(v) for v in lo]
     hi = [float(v) for v in hi]
@@ -381,30 +515,29 @@ def evaluate_region(ctx, lo, hi, S_v=None, B_v=None):
         for flo, fhi in ctx.forbidden:
             if overlap(lo, hi, flo, fhi, ctx.D):
                 return None
-    need_stats = (S_v is None or B_v is None) or \
-        MIN_SIGNAL_ENTRIES > 0 or MIN_BKG_ENTRIES > 0
-    if need_stats:
-        S, _sS, B, _sB, S_e, B_e = rect_stats(ctx, lo, hi)
+    if S_v is None or B_v is None or V_v is None or S_e is None or B_e is None:
+        S, _sS, B, _sB, S_e, B_e, V = rect_stats(ctx, lo, hi)
     else:
-        S, B, S_e, B_e = float(S_v), float(B_v), -1, -1
+        S, B, V, S_e, B_e = float(S_v), float(B_v), float(V_v), int(S_e), int(B_e)
     if B < MIN_BKG_WEIGHT or S <= MIN_SIGNAL_WEIGHT:
         return None
     if (MIN_SIGNAL_ENTRIES > 0 and S_e < MIN_SIGNAL_ENTRIES) or \
        (MIN_BKG_ENTRIES > 0 and B_e < MIN_BKG_ENTRIES):
         return None
-    Z = calc_Z_val(S, B)
+    Z = calc_Z_val(S, B, V)
     if Z <= 0.0:
         return None
-    return {"lo": lo, "hi": hi, "S": S, "B": B, "Z": Z,
+    return {"lo": lo, "hi": hi, "S": S, "B": B, "V": V, "Z": Z,
             "S_entries": S_e, "B_entries": B_e}
 
 
 def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
     """Top [edges[a], edges[b]) intervals on axis d, with the other axes fixed.
 
-    Reimplementation of signal_region.py:_top_intervals_on_axis (~1080-1148).
-    Cost is O(n_events) for the other-axes mask plus a small K x K vectorised
-    Z^2 grid (K = len(edges)).
+    Reimplementation of signal_region.py:_top_intervals_on_axis with the
+    background-variance significance Z_A. Cost is O(n_events) for the other-axes
+    mask plus K x K vectorised grids (K = len(edges)) of S, B, the background
+    class yields and sum w^2.
     """
     m = np.ones(ctx.n_events, dtype=bool)
     for dd in range(ctx.D):
@@ -423,24 +556,40 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
         return []
 
     v_d = ctx.score_axes[:, d]
-    hS, _ = np.histogram(v_d[m], bins=edges, weights=ctx.w_sig[m])
-    hB, _ = np.histogram(v_d[m], bins=edges, weights=ctx.w_bkg[m])
-    pS = np.r_[0.0, np.cumsum(hS)]
-    pB = np.r_[0.0, np.cumsum(hB)]
+    v_m = v_d[m]
+
+    def _prefix(weights):
+        h, _ = np.histogram(v_m, bins=edges, weights=weights[m])
+        return np.r_[0.0, np.cumsum(h)]
+
+    pS = _prefix(ctx.w_sig)
+    pB = _prefix(ctx.w_bkg)
+    pNS = _prefix(ctx.is_sig.astype(float))
+    pNB = _prefix(ctx.is_bkg.astype(float))
     K = pS.size
     a_idx = np.arange(K).reshape(-1, 1)
     b_idx = np.arange(K).reshape(1, -1)
     tri = b_idx > a_idx
     S_mat = pS[b_idx] - pS[a_idx]
     B_mat = pB[b_idx] - pB[a_idx]
-    valid = tri & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > MIN_SIGNAL_WEIGHT)
+    NS_mat = np.rint(pNS[b_idx] - pNS[a_idx])
+    NB_mat = np.rint(pNB[b_idx] - pNB[a_idx])
+    valid = (tri & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > MIN_SIGNAL_WEIGHT)
+             & (NS_mat >= MIN_SIGNAL_ENTRIES) & (NB_mat >= MIN_BKG_ENTRIES))
     if not valid.any():
         return []
-    Bsafe = np.where(valid, B_mat, 1.0)
-    Ssafe = np.where(valid, S_mat, 0.0)
-    f = (Ssafe + Bsafe) * np.log1p(Ssafe / Bsafe) - Ssafe
-    f = np.where(valid & (f > 0.0), f, 0.0)
-    Z2 = np.where(valid, 2.0 * f, -np.inf)
+    pW2 = _prefix(ctx.w2_bkg)
+    V_mat = pW2[b_idx] - pW2[a_idx]
+    B_cls_mats = []
+    for c in range(ctx.w_bkg_cls.shape[0]):
+        pC = _prefix(ctx.w_bkg_cls[c])
+        B_cls_mats.append(pC[b_idx] - pC[a_idx])
+    for k in range(ctx.bkg_shifts.shape[0]):
+        shift_k = np.zeros_like(V_mat)
+        for c, B_c in enumerate(B_cls_mats):
+            shift_k += ctx.bkg_shifts[k, c] * B_c
+        V_mat += shift_k ** 2
+    Z2 = np.where(valid, za2(S_mat, B_mat, V_mat), -np.inf)
     valid_count = int(np.count_nonzero(np.isfinite(Z2) & (Z2 > 0.0)))
     if valid_count == 0:
         return []
@@ -470,7 +619,10 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
             float(edges[b_best]),
             float(S_mat[a_best, b_best]),
             float(B_mat[a_best, b_best]),
+            float(V_mat[a_best, b_best]),
             float(np.sqrt(Z2[a_best, b_best])),
+            int(NS_mat[a_best, b_best]),
+            int(NB_mat[a_best, b_best]),
         ))
         if len(intervals) >= take:
             break
@@ -582,22 +734,22 @@ def coarse_beam_search(ctx, forbidden_boxes=()):
                 ctx, d, item["lo"], item["hi"], axis_edges[d], TOP_K
             )
             children = []
-            for low_d, high_d, S_v, B_v, _Z in intervals:
+            for low_d, high_d, S_v, B_v, V_v, _Z, S_e, B_e in intervals:
                 lo = list(item["lo"])
                 hi = list(item["hi"])
                 lo[d] = low_d
                 hi[d] = high_d
-                children.append((lo, hi, S_v, B_v))
+                children.append((lo, hi, S_v, B_v, V_v, S_e, B_e))
             return children
 
         produced = []
         for children in _parallel_map_ordered(_task, tasks):
-            for lo, hi, S_v, B_v in children:
+            for lo, hi, S_v, B_v, V_v, S_e, B_e in children:
                 key = _region_key(lo, hi)
                 if key in pool:
                     produced.append(pool[key])
                     continue
-                item = evaluate_region(ctx, lo, hi, S_v, B_v)
+                item = evaluate_region(ctx, lo, hi, S_v, B_v, V_v, S_e, B_e)
                 if item is not None:
                     pool[key] = item
                     produced.append(item)
@@ -679,6 +831,150 @@ def find_regions(ctx, target_n):
     return list(pool.values()), chain
 
 
+# -------------------- Event-preserving boxes and event-mask deduplication --------------------
+def _next_interval_hi(value, original_hi):
+    if _hi_to_open(original_hi) and float(value) >= 1.0 - EPS:
+        return 1.0
+    return min(float(original_hi), float(np.nextafter(float(value), np.inf)))
+
+
+def event_preserving_shrink(ctx, lo, hi, mask):
+    """Smallest box selecting the same events as mask (port of signal_region.py's
+    _event_preserving_shrink): every lower bound rises to its events' minimum and
+    every upper bound drops to just above their maximum. The original box is
+    returned when the shrunk one would select other events."""
+    if not np.any(mask):
+        return list(map(float, lo)), list(map(float, hi))
+    lo_new, hi_new = [], []
+    min_width = 2.0 * EPS
+    for d in range(ctx.D):
+        orig_lo = float(lo[d])
+        orig_hi = float(hi[d])
+        vals = ctx.score_axes[mask, d]
+        sel_min = float(np.min(vals))
+        sel_max = float(np.max(vals))
+        new_hi = _next_interval_hi(sel_max, orig_hi)
+        new_lo = max(orig_lo, min(sel_min, orig_hi - min_width))
+        if new_hi - new_lo <= EPS:
+            new_hi = min(orig_hi, max(new_hi, new_lo + min_width))
+            if new_hi <= sel_max or new_hi - new_lo <= EPS:
+                new_lo, new_hi = orig_lo, orig_hi
+        lo_new.append(float(new_lo))
+        hi_new.append(float(new_hi))
+    if not np.array_equal(rect_mask(ctx, lo_new, hi_new), mask):
+        return list(map(float, lo)), list(map(float, hi))
+    return lo_new, hi_new
+
+
+def _hypervolume(lo, hi):
+    return float(np.prod([max(0.0, float(h) - float(l)) for l, h in zip(lo, hi)]))
+
+
+def dedupe_by_event_mask(ctx, items):
+    """Shrink every candidate to its event-preserving box and keep one candidate per
+    selected event set (identical events give identical S, B, V and Z; the smallest
+    box is kept). Each item gets "mask_key", a digest of its event mask. Returns the
+    unique items sorted by decreasing Z."""
+    def _one(item):
+        mask = rect_mask(ctx, item["lo"], item["hi"])
+        key = hashlib.blake2b(np.packbits(mask).tobytes(), digest_size=16).digest()
+        lo, hi = event_preserving_shrink(ctx, item["lo"], item["hi"], mask)
+        out = dict(item)
+        out["lo"], out["hi"], out["mask_key"] = lo, hi, key
+        return out
+
+    best = {}
+    done = 0
+    for out in _parallel_map_ordered(_one, items):
+        done += 1
+        prev = best.get(out["mask_key"])
+        if prev is None or _hypervolume(out["lo"], out["hi"]) < _hypervolume(prev["lo"], prev["hi"]) - 1e-15:
+            best[out["mask_key"]] = out
+        ctx.progress(f"Event-mask dedupe: processed {done}/{len(items)}, kept={len(best)}")
+    unique = sorted(best.values(),
+                    key=lambda it: (-it["Z"], _hypervolume(it["lo"], it["hi"]), _region_key(it["lo"], it["hi"])))
+    log_message(f"  Event-mask dedupe: input={len(items)}, kept={len(unique)}")
+    return unique
+
+
+def place_boundaries(ctx, los, his):
+    """Final boundaries of the selected regions inside empty score gaps: each region
+    is shrunk to its events, then signal-axis upper bounds rise and background-axis
+    lower bounds drop into space that is empty in MC under the region's other-axis
+    cuts, as far as the box stays non-overlapping with every other region (port of
+    signal_region.py's empty-bin expansion). Signal-axis bounds thus sit as high and
+    background-axis bounds as low as the same events allow."""
+    n_sr = len(los)
+    los = [list(map(float, l)) for l in los]
+    his = [list(map(float, h)) for h in his]
+    masks = [rect_mask(ctx, los[i], his[i]) for i in range(n_sr)]
+    for i in range(n_sr):
+        los[i], his[i] = event_preserving_shrink(ctx, los[i], his[i], masks[i])
+
+    def _other_axis_separates(lo_a, hi_a, lo_b, hi_b, skip):
+        # Same strict half-open test as overlap().
+        for dd in range(ctx.D):
+            if dd != skip and (lo_a[dd] >= hi_b[dd] or lo_b[dd] >= hi_a[dd]):
+                return True
+        return False
+
+    raised = lowered = 0
+    for i in range(n_sr):
+        lo_i, hi_i = los[i], his[i]
+        for d in range(ctx.D):
+            other = np.ones(ctx.n_events, dtype=bool)
+            for dd in range(ctx.D):
+                if dd == d:
+                    continue
+                v_dd = ctx.score_axes[:, dd]
+                other &= (v_dd >= lo_i[dd]) if _hi_to_open(hi_i[dd]) else ((v_dd >= lo_i[dd]) & (v_dd < hi_i[dd]))
+            v_d = ctx.score_axes[:, d]
+            if ctx.signal_axis[d]:
+                if hi_i[d] >= 1.0 - EPS:
+                    continue
+                cand = other & (v_d >= hi_i[d])
+                limit = float(np.min(v_d[cand])) if np.any(cand) else 1.0
+                for j in range(n_sr):
+                    if j != i and not _other_axis_separates(lo_i, hi_i, los[j], his[j], d) \
+                            and los[j][d] >= hi_i[d] - EPS:
+                        limit = min(limit, float(los[j][d]))
+                if np.any(cand) and limit >= 1.0 - EPS:
+                    # Events at the top edge: an upper bound there would be open and
+                    # include them, so stop just below it.
+                    limit = 1.0 - 2.0 * EPS
+                if limit > hi_i[d] + EPS:
+                    hi_i[d] = min(limit, 1.0)
+                    raised += 1
+            else:
+                if lo_i[d] <= EPS:
+                    continue
+                cand = other & (v_d < lo_i[d])
+                limit = float(np.nextafter(float(np.max(v_d[cand])), np.inf)) if np.any(cand) else 0.0
+                for j in range(n_sr):
+                    if j != i and not _other_axis_separates(lo_i, hi_i, los[j], his[j], d) \
+                            and lo_i[d] >= his[j][d] - EPS:
+                        limit = max(limit, float(his[j][d]))
+                if limit < lo_i[d] - EPS:
+                    lo_i[d] = max(limit, 0.0)
+                    lowered += 1
+        if not np.array_equal(rect_mask(ctx, lo_i, hi_i), masks[i]):
+            raise RuntimeError(f"Boundary placement changed the events of SR{i + 1}")
+    log_message(
+        f"  Boundary placement: signal-axis high bounds raised={raised}, "
+        f"background-axis low bounds lowered={lowered}"
+    )
+    return los, his
+
+
+def check_no_overlap(ctx, los, his):
+    """Geometric and event-level non-overlap of the selected regions."""
+    masks = [rect_mask(ctx, los[i], his[i]) for i in range(len(los))]
+    for ia in range(len(los)):
+        for ib in range(ia + 1, len(los)):
+            if overlap(los[ia], his[ia], los[ib], his[ib], ctx.D) or np.any(masks[ia] & masks[ib]):
+                raise RuntimeError(f"Selected signal regions overlap ({ia + 1},{ib + 1})")
+
+
 # -------------------- Fine refinement (selected regions only) --------------------
 def fine_refine_selected(ctx, sel_los, sel_his):
     """Sharpen the chosen regions' boundaries onto the fine grid.
@@ -727,14 +1023,17 @@ def fine_refine_selected(ctx, sel_los, sel_his):
         for _ in range(FINE_PASSES):
             changed = False
             for d in range(ctx.D):
+                current = evaluate_region(ctx, los[i], his[i])
+                current_z = current["Z"] if current is not None else 0.0
                 edges = _local_edges(los[i][d], his[i][d], d)
                 intervals = top_intervals_on_axis(ctx, d, los[i], his[i], edges, TOP_K)
-                for low_d, high_d, S_v, B_v, _Z in intervals:
-                    if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
-                        continue
+                for low_d, high_d, _S_v, _B_v, _V_v, _Z, _S_e, _B_e in intervals:
                     lo_alt = list(los[i]); hi_alt = list(his[i])
                     lo_alt[d] = low_d; hi_alt[d] = high_d
-                    if not _valid_region(lo_alt, hi_alt, ctx.D):
+                    # Full acceptance (weight and entry minima of evaluate_region), and never
+                    # below the region's current significance.
+                    alt = evaluate_region(ctx, lo_alt, hi_alt)
+                    if alt is None or alt["Z"] < current_z - 1e-12:
                         continue
                     if _others_ok(i, lo_alt, hi_alt):
                         if abs(low_d - los[i][d]) > 1e-12 or abs(high_d - his[i][d]) > 1e-12:
@@ -752,57 +1051,24 @@ def fine_refine_selected(ctx, sel_los, sel_his):
 def select_branch_bound(ctx, candidates, target_n, incumbent=None):
     """Pick target_n non-overlapping rectangles maximising sum(Z^2), exactly.
 
-    Standalone port of signal_region.py:_select_regions_beam_python (~1709) plus
-    _select_regions_branch_bound_python (~1747-1835), minus the OpenMP path.
-    Candidates are sorted by Z^2 descending so the greedy optimistic bound is
-    admissible. ``incumbent`` is a known feasible set (the disjoint chain) used
-    to seed pruning and guarantee a result; its regions are always kept through
-    the candidate cap.
+    Python fallback of select_regions_openmp: multi-start greedy incumbent plus
+    an exact bitset branch-and-bound over all (deduplicated) candidates, sorted
+    by Z^2 descending so the greedy optimistic bound is admissible.
+    ``incumbent`` is a known feasible set (the disjoint chain, matched by event
+    mask) used to seed pruning.
     """
-    items_sorted = sorted(candidates, key=lambda it: -(it["Z"] ** 2))
-    if len(items_sorted) < target_n:
+    items = sorted(candidates, key=lambda it: -(it["Z"] ** 2))
+    if len(items) < target_n:
         raise RuntimeError(
-            f"Only {len(items_sorted)} candidate signal regions are available; "
+            f"Only {len(items)} candidate signal regions are available; "
             f"requested {target_n}"
         )
-    # Diversity-preserving cap: top-Z reps would all cluster on one corner and
-    # crowd out a low-Z-but-disjoint corner the selection needs. So also keep the
-    # top reps per dominant high-cut axis, plus the incumbent chain.
-    kept = list(items_sorted[:MAX_SEL_CANDS])
-    present = {_region_key(it["lo"], it["hi"]) for it in kept}
-
-    def _augment(extra):
-        for it in extra:
-            key = _region_key(it["lo"], it["hi"])
-            if key not in present:
-                kept.append(it)
-                present.add(key)
-
-    if SEL_PER_AXIS > 0:
-        by_axis = {}
-        for it in items_sorted:
-            lo_ = it["lo"]
-            d = int(np.argmax(lo_))
-            if lo_[d] > EPS:
-                bucket = by_axis.setdefault(d, [])
-                if len(bucket) < SEL_PER_AXIS:
-                    bucket.append(it)
-        for d in by_axis:
-            _augment(by_axis[d])
-    if incumbent:
-        _augment(incumbent)
-    if len(kept) != len(items_sorted):
-        log_message(
-            f"  Selection pool: {len(items_sorted)} -> {len(kept)} "
-            f"(top-Z + per-axis diversity + incumbent)"
-        )
-    items = sorted(kept, key=lambda it: -(it["Z"] ** 2))
     n = len(items)
     los = [it["lo"] for it in items]
     his = [it["hi"] for it in items]
     Z2 = np.array([it["Z"] ** 2 for it in items], dtype=float)
     D = ctx.D
-    key_to_idx = {_region_key(it["lo"], it["hi"]): i for i, it in enumerate(items)}
+    key_to_idx = {it["mask_key"]: i for i, it in enumerate(items)}
 
     def _compatible(i, picks):
         return all(not overlap(los[i], his[i], los[j], his[j], D) for j in picks)
@@ -839,11 +1105,14 @@ def select_branch_bound(ctx, candidates, target_n, incumbent=None):
 
     # Also try the supplied feasible chain (its regions are retained in items).
     if incumbent:
-        chain_idx = [key_to_idx[_region_key(it["lo"], it["hi"])]
-                     for it in incumbent
-                     if _region_key(it["lo"], it["hi"]) in key_to_idx]
-        if chain_idx:
-            _record(chain_idx)
+        chain_idx = [key_to_idx[it["mask_key"]] for it in incumbent if it["mask_key"] in key_to_idx]
+        # Keep a mutually compatible subset: deduplication may have replaced a chain box.
+        compatible_chain = []
+        for i in chain_idx:
+            if _compatible(i, compatible_chain):
+                compatible_chain.append(i)
+        if compatible_chain:
+            _record(compatible_chain)
 
     if not best_by_size:
         raise RuntimeError("Global selection found no valid signal-region set")
@@ -854,20 +1123,17 @@ def select_branch_bound(ctx, candidates, target_n, incumbent=None):
     # non-overlapping regions, then higher combined significance, up to target_n.
     LO = np.asarray(los, dtype=float)  # (n, D)
     HI = np.asarray(his, dtype=float)
-    overlap_all = np.ones((n, n), dtype=bool)
-    for d in range(D):
-        lod = LO[:, d]
-        hid = HI[:, d]
-        # boxes i,j overlap on axis d iff lo_i < hi_j and lo_j < hi_i (half-open).
-        overlap_all &= (lod[:, None] < hid[None, :]) & (lod[None, :] < hid[:, None])
-    compat_mat = ~overlap_all
-    np.fill_diagonal(compat_mat, False)
+    # One compatibility row at a time (memory O(n)): boxes i,j overlap iff
+    # lo_i < hi_j and lo_j < hi_i on every axis (half-open); the row's bitset is
+    # built from the packed boolean row.
     compat = [0] * n
     for i in range(n):
-        m = 0
-        for j in np.flatnonzero(compat_mat[i]):
-            m |= (1 << int(j))
-        compat[i] = m
+        overlap_row = np.ones(n, dtype=bool)
+        for d in range(D):
+            overlap_row &= (LO[i, d] < HI[:, d]) & (LO[:, d] < HI[i, d])
+        compat_row = ~overlap_row
+        compat_row[i] = False
+        compat[i] = int.from_bytes(np.packbits(compat_row, bitorder="little").tobytes(), "little")
     full_mask = (1 << n) - 1
 
     seed_size = max(best_by_size)
@@ -965,12 +1231,104 @@ def select_branch_bound(ctx, candidates, target_n, incumbent=None):
     return picks, [los[i] for i in picks], [his[i] for i in picks], summary
 
 
+def _build_openmp_selector():
+    """Compile (if needed) and load openmp_region_select.cpp, as signal_region.py does."""
+    src = os.path.join(_SCRIPT_DIR, "openmp_region_select.cpp")
+    build_dir = os.path.join(sr.OUTPUT_DIR, ".openmp")
+    os.makedirs(build_dir, exist_ok=True)
+    lib = os.path.join(build_dir, "openmp_region_select.so")
+    if not os.path.exists(lib) or os.path.getmtime(lib) < os.path.getmtime(src):
+        attempts = [
+            ("Homebrew libomp",
+             ["-Xpreprocessor", "-fopenmp", "-D_OPENMP=201511", "-I/opt/homebrew/opt/libomp/include"],
+             ["-L/opt/homebrew/opt/libomp/lib", "-lomp"]),
+            ("Homebrew libomp (/usr/local)",
+             ["-Xpreprocessor", "-fopenmp", "-D_OPENMP=201511", "-I/usr/local/opt/libomp/include"],
+             ["-L/usr/local/opt/libomp/lib", "-lomp"]),
+            ("generic -fopenmp", ["-fopenmp"], []),
+        ]
+        errors = []
+        for label, cflags, ldflags in attempts:
+            cmd = ["c++", "-O3", "-std=c++17", "-fPIC", "-shared"] + cflags + [src, "-o", lib] + ldflags
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+            except OSError as exc:
+                errors.append(f"{label}: {exc}")
+                continue
+            if proc.returncode == 0:
+                log_message(f"  OpenMP selector built with {label}")
+                break
+            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            errors.append(f"{label}: {detail[-1] if detail else proc.returncode}")
+        else:
+            log_warning("OpenMP selector build failed; using the Python branch-and-bound. " + " | ".join(errors))
+            return None
+    try:
+        fn = ctypes.CDLL(lib).select_regions_branch_bound_openmp
+    except Exception as exc:
+        log_warning(f"OpenMP selector load failed; using the Python branch-and-bound: {exc}")
+        return None
+    fn.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_double,
+        ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+    ]
+    fn.restype = ctypes.c_int
+    return fn
+
+
+def select_regions_openmp(ctx, candidates, target_n):
+    """Beam incumbent plus branch-and-bound of openmp_region_select.cpp over all
+    candidates (sorted by Z^2 descending); None when the helper is unavailable."""
+    if MAX_THREADS <= 1 or target_n > 16:
+        return None
+    fn = _build_openmp_selector()
+    if fn is None:
+        return None
+    items = sorted(candidates, key=lambda it: -(it["Z"] ** 2))
+    n = len(items)
+    lows = np.ascontiguousarray([it["lo"] for it in items], dtype=np.float64)
+    highs = np.ascontiguousarray([it["hi"] for it in items], dtype=np.float64)
+    z2 = np.ascontiguousarray([it["Z"] ** 2 for it in items], dtype=np.float64)
+    out = np.full(target_n, -1, dtype=np.int32)
+    stats = np.zeros(6, dtype=np.float64)
+    ctx.progress(f"OpenMP branch-and-bound start: candidates={n}, target_bins={target_n}, "
+                 f"beam_width={GLOBAL_BEAM}, time_limit={BNB_TIME_LIMIT}s", force=True)
+    ret = fn(n, ctx.D, target_n, GLOBAL_BEAM, BNB_MAX_NODES, BNB_TIME_LIMIT,
+             lows.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+             highs.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+             z2.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+             out.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
+             stats.ctypes.data_as(ctypes.POINTER(ctypes.c_double)), MAX_THREADS)
+    if ret < 0:
+        log_warning(f"OpenMP branch-and-bound returned {ret}; using the Python branch-and-bound")
+        return None
+    picks = [int(v) for v in out[:ret] if int(v) >= 0]
+    summary = {
+        "selector": "OpenMP branch-and-bound",
+        "completed": bool(stats[3] > 0.5),
+        "nodes": int(round(stats[2])),
+        "objective_sum_z2": float(stats[0]),
+        "objective_upper_bound_sum_z2": float(max(stats[0], stats[1])),
+        "geometry_overlap_pairs": 0,
+        "event_overlap_pairs": 0,
+        "candidate_count": int(n),
+    }
+    if not summary["completed"]:
+        log_warning(
+            f"OpenMP branch-and-bound stopped before exhausting the search: "
+            f"Z_best={np.sqrt(summary['objective_sum_z2']):.4f}, "
+            f"Z_upper_bound<={np.sqrt(summary['objective_upper_bound_sum_z2']):.4f}"
+        )
+    return picks, [items[i]["lo"] for i in picks], [items[i]["hi"] for i in picks], summary
+
+
 # -------------------- Per-bin reports --------------------
 def build_top_bins(ctx, sel_los, sel_his):
     """Build the top_bins list with the exact schema sr.* reporting expects.
 
-    Port of signal_region.py per-bin block (~2141-2223). The optional empty-bin
-    expansion (~2038-2139) is intentionally omitted.
+    Port of signal_region.py's per-bin block; significance is Z_A (background
+    variance V), significance_stat the statistics-only Z.
     """
     top_bins = []
     for k, (thr_low_vec, thr_high_vec) in enumerate(zip(sel_los, sel_his)):
@@ -986,7 +1344,9 @@ def build_top_bins(ctx, sel_los, sel_his):
         sB_bin = float(np.sqrt((wB ** 2).sum()))
         S_e = int((m_bin & ctx.is_sig).sum())
         B_e = int((m_bin & ctx.is_bkg).sum())
-        Z_bin, sZ_bin = calc_Z(S_bin, B_bin, sS_bin, sB_bin)
+        V_bin = background_variance(ctx, m_bin)
+        Z_bin, sZ_bin = calc_Z(S_bin, B_bin, V_bin, sS_bin, sB_bin)
+        Z_stat_bin = calc_Z_val(S_bin, B_bin)
 
         W_bin = S_bin + B_bin
         w2_bin = sS_bin ** 2 + sB_bin ** 2
@@ -998,7 +1358,7 @@ def build_top_bins(ctx, sel_los, sel_his):
             sS_j = float(np.sqrt((wC ** 2).sum()))
             B_j = W_bin - S_j
             sB_j = float(np.sqrt(max(0.0, w2_bin - sS_j ** 2)))
-            Z_j, sZ_j = calc_Z(S_j, B_j, sS_j, sB_j)
+            Z_j, sZ_j = calc_Z(S_j, B_j, 0.0, sS_j, sB_j)
             cat_data.append({
                 "name": cls_name,
                 "S": S_j, "S_err": sS_j,
@@ -1039,6 +1399,8 @@ def build_top_bins(ctx, sel_los, sel_his):
             "axis_names":                list(ctx.axis_names),
             "significance":              Z_bin,
             "significance_error":        sZ_bin,
+            "significance_stat":         Z_stat_bin,
+            "background_variance":       V_bin,
             "S":                         S_bin,  "S_err": sS_bin, "S_entries": S_e,
             "B":                         B_bin,  "B_err": sB_bin, "B_entries": B_e,
             "categories":                cat_data,
@@ -1050,8 +1412,9 @@ def build_top_bins(ctx, sel_los, sel_his):
         })
 
         log_message(
-            f"  Bin {k + 1}: Z={Z_bin:.4f}+/-{sZ_bin:.4f}, "
-            f"S={S_bin:.4g}+/-{sS_bin:.4g}, B={B_bin:.4g}+/-{sB_bin:.4g}"
+            f"  Bin {k + 1}: Z_A={Z_bin:.4f}+/-{sZ_bin:.4f} (stat-only Z={Z_stat_bin:.4f}), "
+            f"S={S_bin:.4g}+/-{sS_bin:.4g}, B={B_bin:.4g}+/-{sB_bin:.4g}, "
+            f"sigma_B={np.sqrt(V_bin):.4g}"
         )
 
     return top_bins
@@ -1064,7 +1427,9 @@ def main():
     log_message("Plotting score distributions")
     sr.plot_score_distributions(proba, y, w)
 
-    ctx = Ctx(proba, y, w)
+    log_message("Computing background systematic shifts")
+    bkg_shifts = background_syst_shifts(y, w, sample_labels)
+    ctx = Ctx(proba, y, w, bkg_shifts)
     log_message(f"  S_total={ctx.S_total:.4g}, B_total={ctx.B_total:.4g}")
     log_message(f"  Scan dimensions D={ctx.D}, axes={ctx.axis_names}")
     log_message(
@@ -1087,24 +1452,29 @@ def main():
             "No signal region found; lower min_bkg_weight or check inputs"
         )
 
-    # Exact selection over the pool (multi-start incumbent + branch-and-bound).
-    # The selector picks as many non-overlapping regions as the pool supports,
-    # up to target_n. The chain is passed so its regions survive the candidate
-    # cap and seed the incumbent.
-    picks, sel_los, sel_his, summary = select_branch_bound(
-        ctx, candidates, target_n, incumbent=chain
-    )
+    # Candidates with identical events are merged into their event-preserving boxes.
+    candidates = dedupe_by_event_mask(ctx, candidates)
+    chain = dedupe_by_event_mask(ctx, chain)
 
-    # Sharpen the chosen regions onto the 0.01 grid (non-overlap preserved).
+    # Global selection over every candidate: OpenMP branch-and-bound, else Python.
+    selection = select_regions_openmp(ctx, candidates, target_n)
+    if selection is None:
+        selection = select_branch_bound(ctx, candidates, target_n, incumbent=chain)
+    picks, sel_los, sel_his, summary = selection
+    if len(picks) < target_n:
+        message = (f"Global selection found only {len(picks)} non-overlapping regions; "
+                   f"requested {target_n}")
+        if sr.REQUIRE_EXACT_N_REGIONS:
+            raise RuntimeError(message)
+        log_warning(message)
+    check_no_overlap(ctx, sel_los, sel_his)
+
+    # Sharpen the chosen regions on the fine grid (non-overlap and acceptance preserved),
+    # then place the boundaries inside empty score gaps.
     sel_los, sel_his = fine_refine_selected(ctx, sel_los, sel_his)
-
-    # Verify non-overlap (geometry) after refinement.
-    for ia in range(len(sel_los)):
-        for ib in range(ia + 1, len(sel_los)):
-            if overlap(sel_los[ia], sel_his[ia], sel_los[ib], sel_his[ib], ctx.D):
-                raise RuntimeError(
-                    f"Selected signal regions overlap ({ia + 1},{ib + 1})"
-                )
+    sel_los, sel_his = place_boundaries(ctx, sel_los, sel_his)
+    check_no_overlap(ctx, sel_los, sel_his)
+    log_message("  Non-overlap check passed (geometry and events)")
 
     top_bins = build_top_bins(ctx, sel_los, sel_his)
 
@@ -1117,8 +1487,9 @@ def main():
     z_best = float(np.sqrt(refined_sum_z2))
     log_message(
         f"  Selected {len(top_bins)} signal regions, "
-        f"sum(Z^2)={refined_sum_z2:.6g}, Z_comb={z_best:.4f}, "
-        f"nodes={summary['nodes']}, selector={summary['selector']}"
+        f"sum(Z_A^2)={refined_sum_z2:.6g}, Z_comb={z_best:.4f}, "
+        f"stat-only Z_comb={np.sqrt(sum(b['significance_stat'] ** 2 for b in top_bins)):.4f}, "
+        f"nodes={summary['nodes']}, selector={summary['selector']}, completed={summary['completed']}"
     )
 
     result = sr._make_signal_region_result(top_bins, ctx.S_total, ctx.B_total, summary)

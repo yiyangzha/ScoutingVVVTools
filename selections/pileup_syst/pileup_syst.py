@@ -2,7 +2,8 @@
 """pileup_syst.py  (mode 9)
 
 Computes pileup reweighting variation yield ratios for all MC samples.
-The converted ROOT files must include branches added by mode 1 / weight.C:
+The converted ROOT files must include genWeight and the branches added by
+mode 1 / weight.C:
   weight_pu      -- nominal pileup weight
   weight_pu_up   -- +1sigma PU-profile variation
   weight_pu_down -- -1sigma PU-profile variation
@@ -12,8 +13,13 @@ For each (sample, tree) reports:
   - per-signal-region ratios in a ``regions`` sub-dict (when bdt_root and
     signal_region_csv are configured for the tree)
 
-  pu_up   = sum(weight_pu_up)   / sum(weight_pu)
-  pu_down = sum(weight_pu_down) / sum(weight_pu)
+  pu_up   = [sum(genWeight * weight_pu_up)   / S_up]   / [sum(genWeight * weight_pu) / S]
+  pu_down = [sum(genWeight * weight_pu_down) / S_down] / [sum(genWeight * weight_pu) / S]
+
+with S, S_up, S_down the sums of genWeight * weight_pu{,_up,_down} over every
+processed generated event (sample.json sum_genweight_pu{,_up,_down}), so each
+variation keeps the cross section and the ratio is its acceptance effect
+(selections/mc_weight_common/mc_weights.py).
 
 Region assignment uses the same BDT model + per-class rectangle definition
 as qcd_est.py (via selections/BDT/model_io.py), and the BDT thresholds
@@ -47,6 +53,9 @@ _BDT_TOOLS_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "BDT"))
 if _BDT_TOOLS_DIR not in sys.path:
     sys.path.insert(0, _BDT_TOOLS_DIR)
 import model_io  # noqa: E402
+
+sys.path.insert(0, os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "mc_weight_common")))
+import mc_weights  # noqa: E402
 
 
 def log(msg):
@@ -362,7 +371,7 @@ def _compute_ratios(sample_name, ctx):
     enabled    = ctx["regions_enabled"]
     n_slots    = 1 + (len(ctx["bin_ids"]) if enabled else 0)
 
-    load_set = {"weight_pu", "weight_pu_up", "weight_pu_down", *thresholds.keys()}
+    load_set = {"genWeight", "weight_pu", "weight_pu_up", "weight_pu_down", *thresholds.keys()}
     if enabled:
         load_set.update(ctx["feature_cols"])
     load_list = sorted(load_set)
@@ -388,9 +397,10 @@ def _compute_ratios(sample_name, ctx):
                 if not mask.any():
                     continue
 
-                w    = np.asarray(chunk["weight_pu"],      dtype=np.float64)[mask]
-                w_up = np.asarray(chunk["weight_pu_up"],   dtype=np.float64)[mask]
-                w_dn = np.asarray(chunk["weight_pu_down"], dtype=np.float64)[mask]
+                g    = np.asarray(chunk["genWeight"],      dtype=np.float64)[mask]
+                w    = g * np.asarray(chunk["weight_pu"],      dtype=np.float64)[mask]
+                w_up = g * np.asarray(chunk["weight_pu_up"],   dtype=np.float64)[mask]
+                w_dn = g * np.asarray(chunk["weight_pu_down"], dtype=np.float64)[mask]
 
                 sum_w[0]    += float(w.sum())
                 sum_w_up[0] += float(w_up.sum())
@@ -410,6 +420,11 @@ def _compute_ratios(sample_name, ctx):
                             sum_w_dn[j + 1] += float(w_dn[rmask].sum())
                             n_events[j + 1] += int(rmask.sum())
 
+    info   = SAMPLE_INFO[sample_name]
+    s_nom  = mc_weights.generated_weight_sum(info, ["genWeight", "weight_pu"])
+    s_up   = mc_weights.generated_weight_sum(info, ["genWeight", "weight_pu_up"])
+    s_down = mc_weights.generated_weight_sum(info, ["genWeight", "weight_pu_down"])
+
     def _slot_ratios(slot):
         w = sum_w[slot]
         n = int(n_events[slot])
@@ -418,8 +433,8 @@ def _compute_ratios(sample_name, ctx):
         return {
             "nom_sum":  float(w),
             "n_events": n,
-            "pu_up":    float(sum_w_up[slot] / w),
-            "pu_down":  float(sum_w_dn[slot] / w),
+            "pu_up":    float((sum_w_up[slot] / s_up) / (w / s_nom)),
+            "pu_down":  float((sum_w_dn[slot] / s_down) / (w / s_nom)),
         }
 
     inclusive = _slot_ratios(0)

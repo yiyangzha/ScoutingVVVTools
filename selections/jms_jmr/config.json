@@ -7,7 +7,7 @@
   "mass_branch": "Probe_msoftdrop_1",
   "tag_branch": "Probe_WvsQCD_1",
   "tag_wp": 0.2,
-  "weight_branch": "weight_pu",
+  "event_reweight_branches": ["genWeight", "weight_pu"],
   "selection": {
     "ScoutingMuonVtx_pt_1": [
       30,

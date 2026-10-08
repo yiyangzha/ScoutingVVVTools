@@ -24,9 +24,14 @@
       "twminus_lnu2q"
     ],
     "VV": [
-      "ww",
-      "wz",
-      "zz"
+      "WWTo4Q",
+      "WWToLNu2Q",
+      "WZto2L2Q",
+      "WZto2Nu2Q",
+      "WZto4Q",
+      "WZtoLNu2Q",
+      "ZZto2L2Q",
+      "ZZto4Q"
     ],
     "Wlnu": [
       "wlnu_h100to400_m0to120",
@@ -66,6 +71,7 @@
   "default_bins": 50,
   "event_reweight_branches": {
     "ttbar_cr": [
+      "genWeight",
       "weight_pu"
     ]
   },

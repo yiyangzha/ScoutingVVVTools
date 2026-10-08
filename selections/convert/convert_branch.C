@@ -721,6 +721,12 @@ struct BatchTempCollection {
     long double sumWeightPu = 0.L;
     long double sumWeightPuUp = 0.L;
     long double sumWeightPuDown = 0.L;
+    // MC: genWeight sums over every processed generated event (before any selection), the
+    // denominators of the signed, absolutely normalized MC event weights downstream.
+    long double sumGenWeight = 0.L;
+    long double sumGenWeightPu = 0.L;
+    long double sumGenWeightPuUp = 0.L;
+    long double sumGenWeightPuDown = 0.L;
     vector<string> skippedFiles;
     set<pair<UInt_t, UInt_t>> lumis;
 };
@@ -3861,6 +3867,12 @@ struct BatchMeta {
     long double sumWeightPu = 0.L;
     long double sumWeightPuUp = 0.L;
     long double sumWeightPuDown = 0.L;
+    // MC: genWeight sums over every processed generated event (before any selection), the
+    // denominators of the signed, absolutely normalized MC event weights downstream.
+    long double sumGenWeight = 0.L;
+    long double sumGenWeightPu = 0.L;
+    long double sumGenWeightPuUp = 0.L;
+    long double sumGenWeightPuDown = 0.L;
     vector<string> skippedFiles;
 };
 
@@ -3902,7 +3914,11 @@ void writeBatchMeta(const fs::path& batchOutputPath, const BatchMeta& meta) {
        << "raw_entries=" << meta.rawEntries << "\n"
        << "sum_weight_pu=" << meta.sumWeightPu << "\n"
        << "sum_weight_pu_up=" << meta.sumWeightPuUp << "\n"
-       << "sum_weight_pu_down=" << meta.sumWeightPuDown << "\n";
+       << "sum_weight_pu_down=" << meta.sumWeightPuDown << "\n"
+       << "sum_genweight=" << meta.sumGenWeight << "\n"
+       << "sum_genweight_pu=" << meta.sumGenWeightPu << "\n"
+       << "sum_genweight_pu_up=" << meta.sumGenWeightPuUp << "\n"
+       << "sum_genweight_pu_down=" << meta.sumGenWeightPuDown << "\n";
     for (const auto& file : meta.skippedFiles) {
         os << "skipped_file=" << file << "\n";
     }
@@ -3934,6 +3950,10 @@ bool readBatchMeta(const fs::path& batchOutputPath, BatchMeta& meta, string& rea
             else if (key == "sum_weight_pu") meta.sumWeightPu = stold(value);
             else if (key == "sum_weight_pu_up") meta.sumWeightPuUp = stold(value);
             else if (key == "sum_weight_pu_down") meta.sumWeightPuDown = stold(value);
+            else if (key == "sum_genweight") meta.sumGenWeight = stold(value);
+            else if (key == "sum_genweight_pu") meta.sumGenWeightPu = stold(value);
+            else if (key == "sum_genweight_pu_up") meta.sumGenWeightPuUp = stold(value);
+            else if (key == "sum_genweight_pu_down") meta.sumGenWeightPuDown = stold(value);
             else if (key == "skipped_file") meta.skippedFiles.push_back(value);
         }
     } catch (const exception& ex) {
@@ -4936,6 +4956,12 @@ struct FileProcessResult {
     long double sumWeightPu = 0.L;
     long double sumWeightPuUp = 0.L;
     long double sumWeightPuDown = 0.L;
+    // MC: genWeight sums over every processed generated event (before any selection), the
+    // denominators of the signed, absolutely normalized MC event weights downstream.
+    long double sumGenWeight = 0.L;
+    long double sumGenWeightPu = 0.L;
+    long double sumGenWeightPuUp = 0.L;
+    long double sumGenWeightPuDown = 0.L;
     // Data: processed (run, lumi) pairs passing the lumi mask.
     set<pair<UInt_t, UInt_t>> lumis;
 };
@@ -5946,13 +5972,14 @@ FileProcessResult processInputFile(const string& inputFileName,
 
     // An entry is read completely only if it passes the event preselection. Before that, only
     // the branches of the scalars the preselection reads are read, plus what the all-event
-    // bookkeeping below needs: Pileup_nTrueInt (MC pileup-weight sums) and, for data without a
+    // bookkeeping below needs: Pileup_nTrueInt and genWeight (MC weight sums) and, for data without a
     // LuminosityBlocks tree, run/luminosityBlock (processed lumis). Rejected entries skip
     // decompressing and unpacking all other branches.
     set<int> preselectionSlots;
     collectVarSlots(selectionConfig.eventPreselection, preselectionSlots);
     if (sampleMeta.isMC) {
         preselectionSlots.insert(varLayout.puTrueInt);
+        preselectionSlots.insert(varLayout.genWeight);
     } else if (!lumisFromTree) {
         preselectionSlots.insert(varLayout.run);
         preselectionSlots.insert(varLayout.luminosityBlock);
@@ -6038,6 +6065,11 @@ FileProcessResult processInputFile(const string& inputFileName,
             result.sumWeightPu += baseVars.values[varLayout.weightPu];
             result.sumWeightPuUp += baseVars.values[varLayout.weightPuUp];
             result.sumWeightPuDown += baseVars.values[varLayout.weightPuDown];
+            const long double genWeight = baseVars.values[varLayout.genWeight];
+            result.sumGenWeight += genWeight;
+            result.sumGenWeightPu += genWeight * baseVars.values[varLayout.weightPu];
+            result.sumGenWeightPuUp += genWeight * baseVars.values[varLayout.weightPuUp];
+            result.sumGenWeightPuDown += genWeight * baseVars.values[varLayout.weightPuDown];
         } else if (!lumisFromTree) {
             result.lumis.emplace(static_cast<UInt_t>(requireEventVar(baseVars, varLayout.run, "run")),
                                  static_cast<UInt_t>(requireEventVar(baseVars, varLayout.luminosityBlock, "luminosityBlock")));
@@ -6220,6 +6252,10 @@ void processInputBatchToTempFile(const vector<string>& batchInputFiles,
                     batchMeta.sumWeightPu += fileResult.sumWeightPu;
                     batchMeta.sumWeightPuUp += fileResult.sumWeightPuUp;
                     batchMeta.sumWeightPuDown += fileResult.sumWeightPuDown;
+                    batchMeta.sumGenWeight += fileResult.sumGenWeight;
+                    batchMeta.sumGenWeightPu += fileResult.sumGenWeightPu;
+                    batchMeta.sumGenWeightPuUp += fileResult.sumGenWeightPuUp;
+                    batchMeta.sumGenWeightPuDown += fileResult.sumGenWeightPuDown;
                     batchLumis.insert(fileResult.lumis.begin(), fileResult.lumis.end());
                 }
                 const size_t done = processedFiles.fetch_add(1) + 1;
@@ -6324,6 +6360,10 @@ BatchTempCollection collectSuccessfulBatchTempFiles(const AppConfig& appConfig,
         collection.sumWeightPu += meta.sumWeightPu;
         collection.sumWeightPuUp += meta.sumWeightPuUp;
         collection.sumWeightPuDown += meta.sumWeightPuDown;
+        collection.sumGenWeight += meta.sumGenWeight;
+        collection.sumGenWeightPu += meta.sumGenWeightPu;
+        collection.sumGenWeightPuUp += meta.sumGenWeightPuUp;
+        collection.sumGenWeightPuDown += meta.sumGenWeightPuDown;
         collection.skippedFiles.insert(collection.skippedFiles.end(),
                                        meta.skippedFiles.begin(), meta.skippedFiles.end());
         if (!sampleMeta.isMC) {
@@ -6451,6 +6491,11 @@ int finalizeSuccessfulBatches(const AppConfig& appConfig,
     // sample.json and the processed-lumi list are written only once every output exists.
     try {
         if (appConfig.updateRawEntries) {
+            // Checked before any sample.json write, so a failure leaves the entry untouched.
+            if (sampleMeta.isMC && batchFiles.rawEntries > 0 && batchFiles.sumGenWeightPu <= 0.L) {
+                throw runtime_error("non-positive sum of genWeight * weight_pu over the processed events of " +
+                                    sampleMeta.sample);
+            }
             writeSampleRawEntries(appConfig.sampleConfigPath, sampleMeta.sample, batchFiles.rawEntries);
             cout << "Updated raw_entries in " << appConfig.sampleConfigPath
                  << " for sample = " << sampleMeta.sample
@@ -6466,6 +6511,20 @@ int finalizeSuccessfulBatches(const AppConfig& appConfig,
                     {"weight_pu_down_mean", batchFiles.sumWeightPuDown / n},
                 };
                 for (const auto& item : means) {
+                    ostringstream value;
+                    value << setprecision(17) << static_cast<double>(item.second);
+                    writeSampleNumericField(appConfig.sampleConfigPath, sampleMeta.sample, item.first, value.str());
+                    cout << "Updated " << item.first << " = " << value.str() << endl;
+                }
+                // Signed generator-weight sums over the same processed generated events: the
+                // denominators S of the MC event weights L * xsection * genWeight * weight_pu / S.
+                const vector<pair<string, long double>> sums = {
+                    {"sum_genweight", batchFiles.sumGenWeight},
+                    {"sum_genweight_pu", batchFiles.sumGenWeightPu},
+                    {"sum_genweight_pu_up", batchFiles.sumGenWeightPuUp},
+                    {"sum_genweight_pu_down", batchFiles.sumGenWeightPuDown},
+                };
+                for (const auto& item : sums) {
                     ostringstream value;
                     value << setprecision(17) << static_cast<double>(item.second);
                     writeSampleNumericField(appConfig.sampleConfigPath, sampleMeta.sample, item.first, value.str());
