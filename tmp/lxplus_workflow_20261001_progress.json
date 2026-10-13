@@ -1,0 +1,90 @@
+{
+  "campaign": "lxplus_full_workflow_20261001",
+  "objective": "Rebuild ntuples and the complete analysis from registered MC and 2024G_UParT_v6 data with the new systematic settings.",
+  "phase": "source_audit_and_first_decision_round",
+  "execution_status": "second_round_received_metadata_investigation_and_audit_completion",
+  "pipeline_code_modified": false,
+  "pipeline_run": false,
+  "jobs_submitted": [],
+  "local_tests_run": false,
+  "dependencies_installed_or_downloaded": false,
+  "remote_dataset_inputs_opened": false,
+  "proxy": {
+    "backup": "build/credentials/grid_proxy_20261001",
+    "directory_mode": "700",
+    "file_mode": "600",
+    "identical_to_source_verified": true,
+    "git_ignored": true,
+    "expiration_preserved": true
+  },
+  "eossubmit": {
+    "module": "lxbatch/eossubmit",
+    "schedd_at_inspection": "bigbird24.cern.ch",
+    "user_jobs_at_inspection": 0,
+    "gpu_nodes_advertised": 95,
+    "gpus_advertised": 130,
+    "gpu_job_matching_verified": false
+  },
+  "records": {
+    "plan": "tmp/lxplus_workflow_20261001_plan.md",
+    "log": "tmp/lxplus_workflow_20261001_log.md",
+    "progress": "tmp/lxplus_workflow_20261001_progress.json",
+    "requirements": "AGENTS.md",
+    "full_checkpoint_review": "complete again after restart: entire AGENTS.md (422 lines), entire plan, entire log, and entire progress reread"
+  },
+  "confirmed_decisions": {
+    "expected_luminosity_fb": 255.8,
+    "original_data_luminosity_fb": 27.51,
+    "data_sample": "2024G_UParT_v6",
+    "data_projection": "Normalize the selected v6 G data from 27.51 to the 255.8 fb^-1 target; optional control-fit scope card returned no answers.",
+    "pileup_profile": "2024 C-I original reference",
+    "official_pileup_root_downloads": "explicitly_authorized_three_README_links",
+    "dy_alias_policy": "Verify the cross section first; canonical name/value pending.",
+    "mc_normalization": "Inspect metadata and propose consistent correction for confirmation.",
+    "ak4_cleaning": "Avoid only the two retained AK8 jets.",
+    "sr_optimizer": "Compare existing methods fairly and select best validated result; objective pending."
+  },
+  "pending_decisions": [
+    "DY duplicate dataset: verify the correct cross section and canonical name.",
+    "Keep the control-region fit/data display projection scope explicit; follow-up card returned no answers.",
+    "Classify and resolve remaining recorded physics/functional audit findings before affected implementation."
+  ],
+  "audit_coverage": {
+    "principal_pipeline_sources": "read; findings in log and plan",
+    "all_repository_files": "incomplete",
+    "remaining": [
+      "Read remaining main selection formulas and exact per-tree output ordering.",
+      "Finish hybrid and b-veto-study branch/selection configuration variants."
+    ],
+    "standalone_sources_and_README": "completed"
+  },
+  "authorization": {
+    "normal_campaign_execution": true,
+    "compilation_and_submission": true,
+    "straightforward_adaptations_and_bug_fixes": true,
+    "physics_functionality_or_category_changes": "require_confirmation",
+    "specific_downloads": "require_explicit_permission",
+    "local_tests": "prohibited"
+  },
+  "question_tool": {
+    "plan_tool_result": "request_user_input is unavailable in Default mode",
+    "asynchronous_questions_seen_by_user": false,
+    "visible_cards_work_after_restart": true,
+    "first_round_answers_received": true,
+    "optional_data_projection_scope_answer": "empty",
+    "fallback": "Present clear consolidated questions/options, then stop execution until the user responds.",
+    "retry_result": "request_user_input is unavailable in Default mode",
+    "installed_codex_release": "0.159.3",
+    "feature_supported_by_binary_and_official_schema": "default_mode_request_user_input",
+    "user_level_setting_present_at_inspection": false,
+    "configuration_edit_owner": "user",
+    "requested_setting": "[features] default_mode_request_user_input = true"
+  },
+  "next_action": "Finish source/config audit; inspect existing CMSSW/Python software; prepare source metadata jobs; clarify SR objective.",
+  "external_calibration_downloads": [
+    "tmp/lxplus_full_20261001/inputs/pileup/dataPileupHistogram-2024CDEFGHI_Golden-66000ub.root",
+    "tmp/lxplus_full_20261001/inputs/pileup/dataPileupHistogram-2024CDEFGHI_Golden-69200ub.root",
+    "tmp/lxplus_full_20261001/inputs/pileup/dataPileupHistogram-2024CDEFGHI_Golden-72400ub.root"
+  ],
+  "dataset_metadata_queried": true
+}

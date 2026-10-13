@@ -1,0 +1,1952 @@
+{
+ "results": [
+  {
+   "pileup_dataset_name": "/Neutrino_E-10_gun/RunIIISummer24PrePremix-Premixlib2024_140X_mcRun3_2024_realistic_v26-v1/PREMIX",
+   "mcdb_id": -1,
+   "pwg": "GEN",
+   "extension": 0,
+   "cadi_line": "",
+   "notes": "",
+   "memory": 8000,
+   "ppd_tags": [],
+   "_rev": "482-5d184d2c296761079d0d15fe98ae2237",
+   "events_per_lumi": 0,
+   "input_dataset": "",
+   "size_event": [
+    1200,
+    550
+   ],
+   "type": "MCReproc",
+   "sequences": [
+    {
+     "custom_conditions": "",
+     "magField": "",
+     "runsScenarioForMC": "",
+     "inputEventContent": "",
+     "himix": false,
+     "dropDescendant": false,
+     "pileup": "",
+     "particle_table": "",
+     "harvesting": "",
+     "repacked": "",
+     "processName": "",
+     "scenario": "",
+     "era": "Run3_2024",
+     "inputCommands": "",
+     "extra": "",
+     "hltProcess": "",
+     "slhc": "",
+     "nThreads": "4",
+     "donotDropOnInput": "",
+     "customise": "",
+     "inline_custom": false,
+     "procModifiers": "premix_stage2",
+     "runsAndWeightsForMC": "",
+     "index": -1,
+     "nStreams": 0,
+     "beamspot": "",
+     "restoreRNDSeeds": "",
+     "datamix": "PreMix",
+     "triggerResultsProcess": "",
+     "filtername": "",
+     "step": [
+      "DIGI",
+      "DATAMIX",
+      "L1",
+      "DIGI2RAW",
+      "HLT:2024v14"
+     ],
+     "gflash": "",
+     "geometry": "DB:Extended",
+     "outputCommand": "",
+     "conditions": "140X_mcRun3_2024_realistic_v26",
+     "customise_commands": "",
+     "datatier": [
+      "GEN-SIM-RAW"
+     ],
+     "eventcontent": [
+      "PREMIXRAW"
+     ]
+    },
+    {
+     "custom_conditions": "",
+     "magField": "",
+     "runsScenarioForMC": "",
+     "inputEventContent": "",
+     "himix": false,
+     "dropDescendant": false,
+     "pileup": "",
+     "particle_table": "",
+     "harvesting": "",
+     "repacked": "",
+     "processName": "",
+     "scenario": "",
+     "era": "Run3_2024",
+     "inputCommands": "",
+     "extra": "",
+     "hltProcess": "",
+     "slhc": "",
+     "nThreads": "4",
+     "donotDropOnInput": "",
+     "customise": "",
+     "inline_custom": false,
+     "procModifiers": "",
+     "runsAndWeightsForMC": "",
+     "index": -1,
+     "nStreams": 0,
+     "beamspot": "",
+     "restoreRNDSeeds": "",
+     "datamix": "",
+     "triggerResultsProcess": "",
+     "filtername": "",
+     "step": [
+      "RAW2DIGI",
+      "L1Reco",
+      "RECO",
+      "RECOSIM"
+     ],
+     "gflash": "",
+     "geometry": "DB:Extended",
+     "outputCommand": "",
+     "conditions": "140X_mcRun3_2024_realistic_v26",
+     "customise_commands": "",
+     "datatier": [
+      "AODSIM"
+     ],
+     "eventcontent": [
+      "AODSIM"
+     ]
+    }
+   ],
+   "reqmgr_name": [
+    {
+     "name": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "content": {}
+    },
+    {
+     "name": "cmsunified_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_083100_5145",
+     "content": {
+      "pdmv_submission_time": "083100",
+      "pdmv_monitor_time": "Sat May 30 10:13:16 2026",
+      "pdmv_present_priority": 110000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "StepChain",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260519",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    },
+    {
+     "name": "cmsunified_ACDC0_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260523_093328_7995",
+     "content": {
+      "pdmv_submission_time": "093328",
+      "pdmv_monitor_time": "Tue May 26 02:41:52 2026",
+      "pdmv_present_priority": 220000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "Resubmission",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260523",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    }
+   ],
+   "flown_with": "flowRunIII2024Summer24DRPremix",
+   "generator_parameters": [],
+   "name_of_fragment": "",
+   "time_event": [
+    30,
+    6
+   ],
+   "prepid": "GEN-RunIII2024Summer24DRPremix-00584",
+   "cmssw_release": "CMSSW_14_0_22",
+   "process_string": "",
+   "fragment_tag": "",
+   "validation": {
+    "valid": false,
+    "content": "all"
+   },
+   "energy": 13.6,
+   "total_events": 2000000,
+   "completed_events": 1775774,
+   "pilot": false,
+   "transient_output_modules": [
+    [],
+    []
+   ],
+   "approval": "submit",
+   "block_black_list": [],
+   "block_white_list": [],
+   "history": [
+    {
+     "action": "created",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "join chain",
+     "step": "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "Task_RunIII2024Summer24wmLHEGS-00640",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "none",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "new",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "notify",
+     "step": "The dataset /DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v2/AODSIM (GEN-RunIII2024Summer24DRPremix-00584) was set INVALID due to invalidation in McM\n\n\n This is an automated message \n\n https://cms-pdmv-prod.web.cern.ch/mcm/requests?prepid=GEN-RunIII2024Summer24DRPremix-00584\n",
+     "updater": {
+      "author_name": "CMS Unified account",
+      "submission_date": "2026-05-11-11-20",
+      "author_email": "cmsunified@cern.ch",
+      "author_username": "cmsunified"
+     }
+    },
+    {
+     "action": "update",
+     "step": "total_events",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-28",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "done",
+     "updater": {
+      "author_name": "PdmV Service",
+      "submission_date": "2026-05-24-00-08",
+      "author_email": "pdmv.service@cern.ch",
+      "author_username": "pdmvserv"
+     }
+    }
+   ],
+   "priority": 110000,
+   "dataset_name": "DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8",
+   "version": 4,
+   "analysis_id": [],
+   "member_of_campaign": "RunIII2024Summer24DRPremix",
+   "keep_output": [
+    false,
+    true
+   ],
+   "tags": [],
+   "fragment": "",
+   "member_of_chain": [
+    "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459"
+   ],
+   "config_id": [
+    "f9d6701382a5ec47cab7935a3b58da94",
+    "f9d6701382a5ec47cab7935a3b58e313"
+   ],
+   "generators": [
+    "MadGraph5_aMCatNLO"
+   ],
+   "interested_pwg": [
+    "GEN"
+   ],
+   "_id": "GEN-RunIII2024Summer24DRPremix-00584",
+   "output_dataset": [
+    "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM"
+   ],
+   "status": "done"
+  },
+  {
+   "pileup_dataset_name": "",
+   "mcdb_id": -1,
+   "pwg": "GEN",
+   "extension": 0,
+   "cadi_line": "",
+   "notes": "",
+   "memory": 8000,
+   "ppd_tags": [],
+   "_rev": "59-0253243c27b1069b2062a2613acdda54",
+   "events_per_lumi": 0,
+   "input_dataset": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+   "size_event": [
+    150
+   ],
+   "type": "MCReproc",
+   "sequences": [
+    {
+     "custom_conditions": "",
+     "magField": "",
+     "runsScenarioForMC": "",
+     "inputEventContent": "",
+     "himix": false,
+     "dropDescendant": false,
+     "pileup": "",
+     "particle_table": "",
+     "harvesting": "",
+     "repacked": "",
+     "processName": "",
+     "scenario": "",
+     "era": "Run3_2024",
+     "inputCommands": "",
+     "extra": "",
+     "hltProcess": "",
+     "slhc": "",
+     "nThreads": "4",
+     "donotDropOnInput": "",
+     "customise": "",
+     "inline_custom": false,
+     "procModifiers": "",
+     "runsAndWeightsForMC": "",
+     "index": -1,
+     "nStreams": 0,
+     "beamspot": "",
+     "restoreRNDSeeds": "",
+     "datamix": "",
+     "triggerResultsProcess": "",
+     "filtername": "",
+     "step": [
+      "PAT"
+     ],
+     "gflash": "",
+     "geometry": "DB:Extended",
+     "outputCommand": "",
+     "conditions": "150X_mcRun3_2024_realistic_v2",
+     "customise_commands": "",
+     "datatier": [
+      "MINIAODSIM"
+     ],
+     "eventcontent": [
+      "MINIAODSIM1"
+     ]
+    }
+   ],
+   "reqmgr_name": [
+    {
+     "name": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "content": {}
+    },
+    {
+     "name": "cmsunified_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_083100_5145",
+     "content": {
+      "pdmv_submission_time": "083100",
+      "pdmv_monitor_time": "Sat May 30 10:13:16 2026",
+      "pdmv_present_priority": 110000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "StepChain",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260519",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    },
+    {
+     "name": "cmsunified_ACDC0_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260523_093328_7995",
+     "content": {
+      "pdmv_submission_time": "093328",
+      "pdmv_monitor_time": "Tue May 26 02:41:52 2026",
+      "pdmv_present_priority": 220000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "Resubmission",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260523",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    }
+   ],
+   "flown_with": "flowRunIII2024Summer24MiniAODv6",
+   "generator_parameters": [],
+   "name_of_fragment": "",
+   "time_event": [
+    1
+   ],
+   "prepid": "GEN-RunIII2024Summer24MiniAODv6-00583",
+   "cmssw_release": "CMSSW_15_0_17",
+   "process_string": "",
+   "fragment_tag": "",
+   "validation": {
+    "valid": false,
+    "content": "all"
+   },
+   "energy": 13.6,
+   "total_events": 2000000,
+   "completed_events": 1775774,
+   "pilot": false,
+   "transient_output_modules": [
+    []
+   ],
+   "approval": "submit",
+   "block_black_list": [],
+   "block_white_list": [],
+   "history": [
+    {
+     "action": "created",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "join chain",
+     "step": "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "Task_RunIII2024Summer24wmLHEGS-00640",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "none",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "new",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "notify",
+     "step": "The dataset /DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v2/MINIAODSIM (GEN-RunIII2024Summer24MiniAODv6-00583) was set INVALID due to invalidation in McM\n\n\n This is an automated message \n\n https://cms-pdmv-prod.web.cern.ch/mcm/requests?prepid=GEN-RunIII2024Summer24MiniAODv6-00583\n",
+     "updater": {
+      "author_name": "CMS Unified account",
+      "submission_date": "2026-05-11-11-20",
+      "author_email": "cmsunified@cern.ch",
+      "author_username": "cmsunified"
+     }
+    },
+    {
+     "action": "update",
+     "step": "total_events",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-28",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "done",
+     "updater": {
+      "author_name": "PdmV Service",
+      "submission_date": "2026-05-24-00-14",
+      "author_email": "pdmv.service@cern.ch",
+      "author_username": "pdmvserv"
+     }
+    }
+   ],
+   "priority": 110000,
+   "dataset_name": "DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8",
+   "version": 4,
+   "analysis_id": [],
+   "member_of_campaign": "RunIII2024Summer24MiniAODv6",
+   "keep_output": [
+    true
+   ],
+   "tags": [],
+   "fragment": "",
+   "member_of_chain": [
+    "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459"
+   ],
+   "config_id": [
+    "f9d6701382a5ec47cab7935a3b5b3bbd"
+   ],
+   "generators": [
+    "MadGraph5_aMCatNLO"
+   ],
+   "interested_pwg": [
+    "GEN"
+   ],
+   "_id": "GEN-RunIII2024Summer24MiniAODv6-00583",
+   "output_dataset": [
+    "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM"
+   ],
+   "status": "done"
+  },
+  {
+   "pileup_dataset_name": "",
+   "mcdb_id": -1,
+   "pwg": "GEN",
+   "extension": 0,
+   "cadi_line": "",
+   "notes": "",
+   "memory": 8000,
+   "ppd_tags": [],
+   "_rev": "62-9c06ee873b8c0e6a1b9564a65988b4ea",
+   "events_per_lumi": 0,
+   "input_dataset": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+   "size_event": [
+    30
+   ],
+   "type": "MCReproc",
+   "sequences": [
+    {
+     "custom_conditions": "",
+     "magField": "",
+     "runsScenarioForMC": "",
+     "inputEventContent": "",
+     "himix": false,
+     "dropDescendant": false,
+     "pileup": "",
+     "particle_table": "",
+     "harvesting": "",
+     "repacked": "",
+     "processName": "",
+     "scenario": "pp",
+     "era": "Run3_2024",
+     "inputCommands": "",
+     "extra": "",
+     "hltProcess": "",
+     "slhc": "",
+     "nThreads": "4",
+     "donotDropOnInput": "",
+     "customise": "",
+     "inline_custom": false,
+     "procModifiers": "",
+     "runsAndWeightsForMC": "",
+     "index": -1,
+     "nStreams": 0,
+     "beamspot": "",
+     "restoreRNDSeeds": "",
+     "datamix": "",
+     "triggerResultsProcess": "",
+     "filtername": "",
+     "step": [
+      "NANO"
+     ],
+     "gflash": "",
+     "geometry": "",
+     "outputCommand": "",
+     "conditions": "150X_mcRun3_2024_realistic_v2",
+     "customise_commands": "",
+     "datatier": [
+      "NANOAODSIM"
+     ],
+     "eventcontent": [
+      "NANOEDMAODSIM1"
+     ]
+    }
+   ],
+   "reqmgr_name": [
+    {
+     "name": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "content": {}
+    },
+    {
+     "name": "cmsunified_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_083100_5145",
+     "content": {
+      "pdmv_submission_time": "083100",
+      "pdmv_monitor_time": "Sat May 30 10:13:16 2026",
+      "pdmv_present_priority": 110000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "StepChain",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260519",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    },
+    {
+     "name": "cmsunified_ACDC0_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260523_093328_7995",
+     "content": {
+      "pdmv_submission_time": "093328",
+      "pdmv_monitor_time": "Tue May 26 02:41:52 2026",
+      "pdmv_present_priority": 220000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "Resubmission",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260523",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    }
+   ],
+   "flown_with": "flowRunIII2024Summer24NanoAODv15",
+   "generator_parameters": [],
+   "name_of_fragment": "",
+   "time_event": [
+    0.3
+   ],
+   "prepid": "GEN-RunIII2024Summer24NanoAODv15-00681",
+   "cmssw_release": "CMSSW_15_0_17",
+   "process_string": "",
+   "fragment_tag": "",
+   "validation": {
+    "valid": false,
+    "content": "all"
+   },
+   "energy": 13.6,
+   "total_events": 2000000,
+   "completed_events": 1775774,
+   "pilot": false,
+   "transient_output_modules": [
+    []
+   ],
+   "approval": "submit",
+   "block_black_list": [],
+   "block_white_list": [],
+   "history": [
+    {
+     "action": "created",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "join chain",
+     "step": "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "Task_RunIII2024Summer24wmLHEGS-00640",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "none",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "new",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "notify",
+     "step": "The workflow cmsunified_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_251203_224828_5104 (GEN-RunIII2024Summer24NanoAODv15-00681) was rejected due to invalidation in McM\n\nThe workflow pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_251203_182139_4506 (GEN-RunIII2024Summer24NanoAODv15-00681) was rejected due to invalidation in McM\n\nThe workflow pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_251203_182139_4506 (GEN-RunIII2024Summer24NanoAODv15-00681) is already archived, acknowledging invalidation request\n\n\n This is an automated message \n\n https://cms-pdmv-prod.web.cern.ch/mcm/requests?prepid=GEN-RunIII2024Summer24NanoAODv15-00681\n",
+     "updater": {
+      "author_name": "CMS Unified account",
+      "submission_date": "2026-05-11-10-20",
+      "author_email": "cmsunified@cern.ch",
+      "author_username": "cmsunified"
+     }
+    },
+    {
+     "action": "notify",
+     "step": "The dataset /DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v2/NANOAODSIM (GEN-RunIII2024Summer24NanoAODv15-00681) was set INVALID due to invalidation in McM\n\n\n This is an automated message \n\n https://cms-pdmv-prod.web.cern.ch/mcm/requests?prepid=GEN-RunIII2024Summer24NanoAODv15-00681\n",
+     "updater": {
+      "author_name": "CMS Unified account",
+      "submission_date": "2026-05-11-11-20",
+      "author_email": "cmsunified@cern.ch",
+      "author_username": "cmsunified"
+     }
+    },
+    {
+     "action": "update",
+     "step": "total_events",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-28",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "done",
+     "updater": {
+      "author_name": "PdmV Service",
+      "submission_date": "2026-05-24-00-59",
+      "author_email": "pdmv.service@cern.ch",
+      "author_username": "pdmvserv"
+     }
+    }
+   ],
+   "priority": 110000,
+   "dataset_name": "DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8",
+   "version": 4,
+   "analysis_id": [],
+   "member_of_campaign": "RunIII2024Summer24NanoAODv15",
+   "keep_output": [
+    true
+   ],
+   "tags": [],
+   "fragment": "",
+   "member_of_chain": [
+    "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459"
+   ],
+   "config_id": [
+    "f9d6701382a5ec47cab7935a3b5b5cbd"
+   ],
+   "generators": [
+    "MadGraph5_aMCatNLO"
+   ],
+   "interested_pwg": [
+    "GEN"
+   ],
+   "_id": "GEN-RunIII2024Summer24NanoAODv15-00681",
+   "output_dataset": [
+    "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+   ],
+   "status": "done"
+  },
+  {
+   "pileup_dataset_name": "",
+   "mcdb_id": -1,
+   "pwg": "GEN",
+   "extension": 0,
+   "cadi_line": "",
+   "notes": "",
+   "memory": 8000,
+   "ppd_tags": [],
+   "_rev": "76-1c1f553dc16169d568b9ee4a09ea8949",
+   "events_per_lumi": 0,
+   "input_dataset": "",
+   "size_event": [
+    800
+   ],
+   "type": "Prod",
+   "sequences": [
+    {
+     "custom_conditions": "",
+     "magField": "",
+     "runsScenarioForMC": "",
+     "inputEventContent": "",
+     "himix": false,
+     "dropDescendant": false,
+     "pileup": "",
+     "particle_table": "",
+     "harvesting": "",
+     "repacked": "",
+     "processName": "",
+     "scenario": "",
+     "era": "Run3_2024",
+     "inputCommands": "",
+     "extra": "",
+     "hltProcess": "",
+     "slhc": "",
+     "nThreads": "4",
+     "donotDropOnInput": "",
+     "customise": "",
+     "inline_custom": false,
+     "procModifiers": "",
+     "runsAndWeightsForMC": "",
+     "index": -1,
+     "nStreams": 0,
+     "beamspot": "DBrealistic",
+     "restoreRNDSeeds": "",
+     "datamix": "",
+     "triggerResultsProcess": "",
+     "filtername": "",
+     "step": [
+      "LHE",
+      "GEN",
+      "SIM"
+     ],
+     "gflash": "",
+     "geometry": "DB:Extended",
+     "outputCommand": "",
+     "conditions": "140X_mcRun3_2024_realistic_v26",
+     "customise_commands": "",
+     "datatier": [
+      "GEN-SIM",
+      "LHE"
+     ],
+     "eventcontent": [
+      "RAWSIM",
+      "LHE"
+     ]
+    }
+   ],
+   "reqmgr_name": [
+    {
+     "name": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "content": {}
+    },
+    {
+     "name": "cmsunified_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_083100_5145",
+     "content": {
+      "pdmv_submission_time": "083100",
+      "pdmv_monitor_time": "Sat May 30 10:13:16 2026",
+      "pdmv_present_priority": 110000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "StepChain",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260519",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    },
+    {
+     "name": "cmsunified_ACDC0_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260523_093328_7995",
+     "content": {
+      "pdmv_submission_time": "093328",
+      "pdmv_monitor_time": "Tue May 26 02:41:52 2026",
+      "pdmv_present_priority": 220000,
+      "pdmv_dataset_name": "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+      "pdmv_type": "Resubmission",
+      "pdmv_status_from_reqmngr": "normal-archived",
+      "pdmv_submission_date": "260523",
+      "pdmv_dataset_statuses": {
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       },
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM": {
+        "pdmv_evts_in_DAS": 1775774,
+        "pdmv_open_evts_in_DAS": 0,
+        "pdmv_status_in_DAS": "VALID"
+       }
+      },
+      "pdmv_status_in_DAS": "VALID",
+      "pdmv_status_history_from_reqmngr": [
+       "new",
+       "assignment-approved",
+       "assigned",
+       "staging",
+       "staged",
+       "acquired",
+       "running-open",
+       "running-closed",
+       "completed",
+       "closed-out",
+       "announced",
+       "normal-archived"
+      ],
+      "pdmv_evts_in_DAS": 1775774,
+      "pdmv_dataset_list": [
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24DRPremix-140X_mcRun3_2024_realistic_v26-v4/AODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24MiniAODv6-150X_mcRun3_2024_realistic_v2-v4/MINIAODSIM",
+       "/DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8/RunIII2024Summer24NanoAODv15-150X_mcRun3_2024_realistic_v2-v4/NANOAODSIM"
+      ],
+      "pdmv_open_evts_in_DAS": 0,
+      "pdmv_prep_id": "task_GEN-RunIII2024Summer24wmLHEGS-00585"
+     }
+    }
+   ],
+   "flown_with": "",
+   "generator_parameters": [
+    {
+     "match_efficiency_error": 0,
+     "filter_efficiency_error": 0,
+     "filter_efficiency": 0.07,
+     "negative_weights_fraction": 0,
+     "submission_details": {
+      "author_name": "Taehee Kim",
+      "submission_date": "2024-08-17-05-15",
+      "author_email": "taehee.k@cern.ch",
+      "author_username": "taehee"
+     },
+     "version": 0,
+     "cross_section": 1,
+     "match_efficiency": 1
+    },
+    {
+     "match_efficiency_error": 0,
+     "filter_efficiency_error": 0,
+     "filter_efficiency": 0.07,
+     "negative_weights_fraction": 0,
+     "submission_details": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-09-32",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     },
+     "version": 1,
+     "cross_section": 1,
+     "match_efficiency": 1
+    }
+   ],
+   "name_of_fragment": "",
+   "time_event": [
+    3.54495
+   ],
+   "prepid": "GEN-RunIII2024Summer24wmLHEGS-00585",
+   "cmssw_release": "CMSSW_14_0_21_patch4",
+   "process_string": "",
+   "fragment_tag": "",
+   "validation": {
+    "valid": false,
+    "results": {
+     "1": [
+      {
+       "total_events": 100,
+       "cpu_efficiency": 0.9778318125053687,
+       "cpu_name": "AMD EPYC 7302 16-Core Processor ()",
+       "estimated_events_per_lumi": 958.0440112464855,
+       "expected_events": 1067,
+       "peak_value_rss": 1478.88,
+       "filter_efficiency": 0.09372071227741331,
+       "time_per_event": 2.8173617098004744,
+       "time_per_event_onethread": 2.8173617098004744,
+       "size_per_event": 972.25216
+      }
+     ],
+     "2": [
+      {
+       "total_events": 101,
+       "cpu_efficiency": 0.6943136425583909,
+       "cpu_name": "AMD EPYC 7302 16-Core Processor ()",
+       "estimated_events_per_lumi": 1372.025444135189,
+       "expected_events": 1006,
+       "peak_value_rss": 1578,
+       "filter_efficiency": 0.10039761431411531,
+       "time_per_event": 2.1074327044051664,
+       "time_per_event_onethread": 4.214865408810333,
+       "size_per_event": 942.6893306930692
+      }
+     ],
+     "4": [
+      {
+       "total_events": 102,
+       "cpu_efficiency": 0.4369587431709586,
+       "cpu_name": "AMD EPYC 7302 16-Core Processor ()",
+       "estimated_events_per_lumi": 1684.373483361921,
+       "expected_events": 1166,
+       "peak_value_rss": 1719.78,
+       "filter_efficiency": 0.08747855917667238,
+       "time_per_event": 1.4957386406128939,
+       "time_per_event_onethread": 5.982954562451575,
+       "size_per_event": 1020.9380392156862
+      }
+     ],
+     "8": [
+      {
+       "total_events": 106,
+       "cpu_efficiency": 0.25523944883407207,
+       "cpu_name": "AMD EPYC 7302 16-Core Processor ()",
+       "estimated_events_per_lumi": 1970.7993820870997,
+       "expected_events": 1217,
+       "peak_value_rss": 2069.68,
+       "filter_efficiency": 0.08709942481511915,
+       "time_per_event": 1.272815212687422,
+       "time_per_event_onethread": 10.182521701499375,
+       "size_per_event": 947.5342490566037
+      }
+     ]
+    },
+    "content": "all"
+   },
+   "energy": 13.6,
+   "total_events": 2000000,
+   "completed_events": 0,
+   "pilot": false,
+   "transient_output_modules": [
+    []
+   ],
+   "approval": "submit",
+   "block_black_list": [],
+   "block_white_list": [],
+   "history": [
+    {
+     "action": "created",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-09-32",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "clone",
+     "step": "GEN-Run3Summer23wmLHEGS-00582",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-09-32",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "update",
+     "step": "fragment",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-09-44",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "update",
+     "step": "dataset_name",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-09-58",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "update",
+     "step": "dataset_name",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-11-10-12",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "validation",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-12-06-38",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "validation",
+     "step": "succeeded",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-11-12-08-40",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "define",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-14-07-35",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "defined",
+     "updater": {
+      "author_name": "Jiwan Chae",
+      "submission_date": "2025-11-14-07-35",
+      "author_email": "jiwan.chae@cern.ch",
+      "author_username": "jchae"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Lorenzo Viliani",
+      "submission_date": "2025-12-03-17-34",
+      "author_email": "lorenzo.viliani@cern.ch",
+      "author_username": "lviliani"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Lorenzo Viliani",
+      "submission_date": "2025-12-03-17-34",
+      "author_email": "lorenzo.viliani@cern.ch",
+      "author_username": "lviliani"
+     }
+    },
+    {
+     "action": "join chain",
+     "step": "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-15",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "submit",
+     "updater": {
+      "author_name": "Soumyadip Barman",
+      "submission_date": "2025-12-03-19-16",
+      "author_email": "soumyadip.barman@cern.ch",
+      "author_username": "sobarman"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "Task_RunIII2024Summer24wmLHEGS-00640",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2025-12-03-19-21",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "update",
+     "step": "priority, tags",
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-33",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "update",
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-34",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "update",
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-52",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "update",
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-52",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-54",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 90000,
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-57",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-58",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 90000,
+     "updater": {
+      "author_name": "Sitian Qian",
+      "submission_date": "2025-12-17-18-59",
+      "author_email": "sitian.qian@cern.ch",
+      "author_username": "sqian"
+     }
+    },
+    {
+     "action": "update",
+     "step": "tags",
+     "updater": {
+      "author_name": "Mattia Lizzo",
+      "submission_date": "2026-02-19-13-24",
+      "author_email": "mattia.lizzo@cern.ch",
+      "author_username": "mlizzo"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 70000,
+     "updater": {
+      "author_name": "Mattia Lizzo",
+      "submission_date": "2026-02-19-13-24",
+      "author_email": "mattia.lizzo@cern.ch",
+      "author_username": "mlizzo"
+     }
+    },
+    {
+     "action": "priority",
+     "step": 110000,
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "none",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "new",
+     "updater": {
+      "author_name": "Test Service Account from SQIAN",
+      "submission_date": "2026-05-08-13-45",
+      "author_email": "test.sqian@cern.ch",
+      "author_username": "testsq"
+     }
+    },
+    {
+     "action": "update",
+     "step": "total_events",
+     "updater": {
+      "author_name": "Si Hyun Jeon",
+      "submission_date": "2026-05-10-21-28",
+      "author_email": "si.hyun.jeon@cern.ch",
+      "author_username": "shjeon"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "validation",
+     "updater": {
+      "author_name": "Si Hyun Jeon",
+      "submission_date": "2026-05-10-21-32",
+      "author_email": "si.hyun.jeon@cern.ch",
+      "author_username": "shjeon"
+     }
+    },
+    {
+     "action": "validation",
+     "step": "succeeded",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-10-23-19",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "define",
+     "updater": {
+      "author_name": "Si Hyun Jeon",
+      "submission_date": "2026-05-12-06-58",
+      "author_email": "si.hyun.jeon@cern.ch",
+      "author_username": "shjeon"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "defined",
+     "updater": {
+      "author_name": "Si Hyun Jeon",
+      "submission_date": "2026-05-12-06-58",
+      "author_email": "si.hyun.jeon@cern.ch",
+      "author_username": "shjeon"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "approve",
+     "updater": {
+      "author_name": "Lorenzo Viliani",
+      "submission_date": "2026-05-15-10-08",
+      "author_email": "lorenzo.viliani@cern.ch",
+      "author_username": "lviliani"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "approved",
+     "updater": {
+      "author_name": "Lorenzo Viliani",
+      "submission_date": "2026-05-15-10-08",
+      "author_email": "lorenzo.viliani@cern.ch",
+      "author_username": "lviliani"
+     }
+    },
+    {
+     "action": "approve",
+     "step": "submit",
+     "updater": {
+      "author_name": "Jean-Roch Vlimant",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "jean-roch.vlimant@cern.ch",
+      "author_username": "vlimant"
+     }
+    },
+    {
+     "action": "inject",
+     "step": "pdmvserv_task_GEN-RunIII2024Summer24wmLHEGS-00585__v1_T_260519_082956_8284",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "submitted",
+     "updater": {
+      "author_name": "",
+      "submission_date": "2026-05-19-10-29",
+      "author_email": "",
+      "author_username": "automatic"
+     }
+    },
+    {
+     "action": "set status",
+     "step": "done",
+     "updater": {
+      "author_name": "PdmV Service",
+      "submission_date": "2026-05-24-00-52",
+      "author_email": "pdmv.service@cern.ch",
+      "author_username": "pdmvserv"
+     }
+    }
+   ],
+   "priority": 110000,
+   "dataset_name": "DYto2L-4Jets_Bin-HT-400to800-MLL-120_TuneCP5_13p6TeV_madgraphMLM-pythia8",
+   "version": 4,
+   "analysis_id": [],
+   "member_of_campaign": "RunIII2024Summer24wmLHEGS",
+   "keep_output": [
+    false
+   ],
+   "tags": [
+    "Deprioritized_DYHT",
+    "to_be_reviewed"
+   ],
+   "fragment": "import FWCore.ParameterSet.Config as cms\n\nexternalLHEProducer = cms.EDProducer('ExternalLHEProducer',\n    args = cms.vstring('/cvmfs/cms-griddata.cern.ch/phys_generator/gridpacks_tarball/CommonBkg/RunIII2024Summer24/MadGraph5_aMCatNLO/DY/DYto2L-4Jets_MLL-120_HT-400to800_madgraphMLM-pythia8_slc7_amd64_gcc10_CMSSW_12_4_8_tarball.tar.xz'),\n    nEvents = cms.untracked.uint32(5000),\n    numberOfParameters = cms.uint32(1),\n    outputFile = cms.string('cmsgrid_final.lhe'),\n    scriptName = cms.FileInPath('GeneratorInterface/LHEInterface/data/run_generic_tarball_cvmfs.sh'),\n    generateConcurrently = cms.untracked.bool(False)\n)\n\nfrom Configuration.Generator.Pythia8CommonSettings_cfi import *\nfrom Configuration.Generator.MCTunesRun3ECM13p6TeV.PythiaCP5Settings_cfi import *\nfrom Configuration.Generator.PSweightsPythia.PythiaPSweightsSettings_cfi import *\n\ngenerator = cms.EDFilter(\"Pythia8ConcurrentHadronizerFilter\",\n    PythiaParameters = cms.PSet(\n        pythia8CommonSettingsBlock,\n        pythia8CP5SettingsBlock,\n        pythia8PSweightsSettingsBlock,\n        processParameters = cms.vstring(\n            'JetMatching:setMad = off',\n            'JetMatching:scheme = 1',\n            'JetMatching:merge = on',\n            'JetMatching:jetAlgorithm = 2',\n            'JetMatching:etaJetMax = 5.',\n            'JetMatching:coneRadius = 1.',\n            'JetMatching:slowJetPower = 1',\n            'JetMatching:doShowerKt = off', \n            'JetMatching:qCut = 19.',\n            'JetMatching:nQmatch = 5',\n            'JetMatching:nJetMax = 4',\n            'TimeShower:mMaxGamma = 4.0',\n            'TauDecays:externalMode = 2.0'\n            ),\n        parameterSets = cms.vstring(\n            'pythia8CommonSettings',\n            'pythia8CP5Settings',\n            'processParameters',\n            'pythia8PSweightsSettings'\n        )\n    ),\n    comEnergy = cms.double(13600),\n    maxEventsToPrint = cms.untracked.int32(1),\n    pythiaHepMCVerbosity = cms.untracked.bool(False),\n    pythiaPylistVerbosity = cms.untracked.int32(1),\n)\n\n",
+   "member_of_chain": [
+    "GEN-chain_RunIII2024Summer24wmLHEGS_flowRunIII2024Summer24DRPremix_flowRunIII2024Summer24MiniAODv6_flowRunIII2024Summer24NanoAODv15-00459"
+   ],
+   "config_id": [
+    "f9d6701382a5ec47cab7935a3b5be89b"
+   ],
+   "generators": [
+    "MadGraph5_aMCatNLO"
+   ],
+   "interested_pwg": [
+    "GEN"
+   ],
+   "_id": "GEN-RunIII2024Summer24wmLHEGS-00585",
+   "output_dataset": [],
+   "status": "done"
+  }
+ ],
+ "total_requests": 4
+}

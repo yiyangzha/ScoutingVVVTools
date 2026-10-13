@@ -7,6 +7,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -82,7 +83,10 @@ ROOT_DIR = Path(__file__).resolve().parent
 #   keep_binaries     build content-hashed binaries for local runs too and never delete them
 #   scratch_env       environment variable naming the scratch directory for TMPDIR and caches
 #   driver            resources of the Slurm driver job of the sample modes
+#   condor            HTCondor submitter used by --condor for the sample modes (None: no
+#                     HTCondor): submit command, accounting group and worker OS
 FASRC_COMBINE_IMAGE = "/cvmfs/unpacked.cern.ch/gitlab-registry.cern.ch/cms-cloud/combine-standalone:latest"
+IHEP_HEP_SUB = "/afs/ihep.ac.cn/soft/common/sysgroup/hep_job/bin/hep_sub"
 SITES = {
     # Purdue: tools on PATH of the submitting shell, proxy copied to the depot.
     "purdue": dict(
@@ -96,6 +100,7 @@ SITES = {
         keep_binaries=False,
         scratch_env=None,
         driver=None,
+        condor=None,
     ),
     # FASRC Cannon: Rocky 8 hosts; CMSSW_16_1_0_pre4 (el9) through the CVMFS cmssw-el9
     # container, Python through the repository pixi environments, combine (CombinedLimit
@@ -115,6 +120,24 @@ SITES = {
         keep_binaries=True,
         scratch_env="VVV_SCRATCH",
         driver=dict(partition="test", cpus=2, mem="8G", time="06:00:00"),
+        condor=None,
+    ),
+    # IHEP (lxlogin and HTCondor workers, AlmaLinux 9): CMSSW_16_1_0_pre4 (el9) natively from
+    # CVMFS through sites/ihep/cmssw_exec.sh; sample jobs go to HTCondor through hep_sub.
+    # Used for the conversion of the inputs hosted at IHEP, read through the local XRootD
+    # endpoint (remote_input_rules in the campaign configs).
+    "ihep": dict(
+        slurm_account=None,
+        proxy="explicit",
+        cxx_wrapper=[str(ROOT_DIR / "sites" / "ihep" / "cmssw_exec.sh")],
+        combine_wrapper=None,
+        python_cmd=["python3"],
+        openmp_flags=("-fopenmp", ""),
+        submit_from_worker=False,
+        keep_binaries=True,
+        scratch_env=None,
+        driver=None,
+        condor=dict(submit=IHEP_HEP_SUB, group="cms", os="AlmaLinux9"),
     ),
 }
 
@@ -298,6 +321,19 @@ Sample selection for modes 0, 1, 6:
                    help="Comma-separated nodes to exclude from SLURM scheduling (default: none)")
     p.add_argument("--max-jobs", type=int, default=1, metavar="N",
                    help="Max concurrent local jobs (default: 1)")
+    p.add_argument("--condor", action="store_true",
+                   help="Submit the sample jobs of modes 0, 1, 6 to HTCondor with the site's submitter "
+                        "(site ihep); mode 0 submits the batch jobs only, the merge follows with --merge-only. "
+                        "--slurm-files-per-job and --slurm-retries apply as for Slurm")
+    p.add_argument("--merge-only", action="store_true",
+                   help="With --condor in mode 0: submit only the merge job of each sample "
+                        "(after all of its batch jobs have finished)")
+    p.add_argument("--condor-cpus", type=int, default=1, metavar="N",
+                   help="Cores per HTCondor job (default: 1)")
+    p.add_argument("--condor-mem", type=int, default=4000, metavar="MB",
+                   help="Memory per HTCondor job in MB (default: 4000)")
+    p.add_argument("--condor-walltime", default="mid", metavar="CLASS",
+                   help="hep_sub walltime class: test, short, mid, long (default: mid)")
 
     args, passthrough = p.parse_known_args()
 
@@ -800,22 +836,10 @@ def launch_job_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x5
 # Mode-0 SLURM multi-job launch
 # ---------------------------------------------------------------------------
 
-def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
-                       golden_json_path=None, root_libdir="", cxx_wrapper=None):
-    """Submit one SLURM job per ~files-per-job-sized batch, plus a dependency merge job.
-
-    The local --batch-count query refreshes the sample's input file-list snapshot, which every
-    batch job and the merge then read (no per-job DAS query). Each batch job runs:
-    convert_branch {sample} {idx} with CONVERT_DEFER_FINAL_MERGE=1 so it writes a temp file
-    and exits without merging. The merge job, submitted with --dependency=afterany on all
-    batch jobs, runs --merge-successful-batches, which fails if any batch is missing,
-    incomplete or stale (rerun the failed batches, then the merge).
-    """
-    config_env    = mode_cfg["config_env"]
-    label         = mode_cfg["label"]
-    files_per_job = args.slurm_files_per_job
-
-    # Query batch count locally so we know how many SLURM jobs to submit.
+def query_batch_count(sample, config_env, config_path, bin_path, work_dir, files_per_job,
+                      cxx_wrapper=None):
+    """Return the number of convert batches of sample. The query refreshes the sample's input
+    file-list snapshot, which every batch job and the merge then read."""
     r = subprocess.run(
         wrapped(cxx_wrapper, [bin_path, sample, "--batch-count"]),
         env={**os.environ, config_env: str(config_path),
@@ -833,6 +857,27 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
         )
     n_batches = int(raw)
     log(f"sample={sample} n_batches={n_batches} files_per_job={files_per_job}")
+    return n_batches
+
+
+def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
+                       golden_json_path=None, root_libdir="", cxx_wrapper=None):
+    """Submit one SLURM job per ~files-per-job-sized batch, plus a dependency merge job.
+
+    The local --batch-count query refreshes the sample's input file-list snapshot, which every
+    batch job and the merge then read (no per-job DAS query). Each batch job runs:
+    convert_branch {sample} {idx} with CONVERT_DEFER_FINAL_MERGE=1 so it writes a temp file
+    and exits without merging. The merge job, submitted with --dependency=afterany on all
+    batch jobs, runs --merge-successful-batches, which fails if any batch is missing,
+    incomplete or stale (rerun the failed batches, then the merge).
+    """
+    config_env    = mode_cfg["config_env"]
+    label         = mode_cfg["label"]
+    files_per_job = args.slurm_files_per_job
+
+    # Query batch count locally so we know how many SLURM jobs to submit.
+    n_batches = query_batch_count(sample, config_env, config_path, bin_path, work_dir,
+                                  files_per_job, cxx_wrapper)
 
     x509_prefix   = f"export X509_USER_PROXY={x509_dst}; " if x509_dst else ""
     ldpath_prefix = f"export LD_LIBRARY_PATH={root_libdir}:${{LD_LIBRARY_PATH:-}}; " if root_libdir else ""
@@ -897,6 +942,80 @@ def launch_mode0_slurm(sample, mode_cfg, config_path, bin_path, work_dir, args, 
 
 
 # ---------------------------------------------------------------------------
+# HTCondor launch (sites with a "condor" submitter, e.g. hep_sub at IHEP)
+# ---------------------------------------------------------------------------
+
+def condor_submit(site, args, job_name, command, work_dir, x509_dst):
+    """Write command as an executable job script under build/condor/jobs/ (a new file per
+    submission; job stdout/stderr under build/condor/logs/) and submit it with the site's
+    HTCondor submitter; return the job id."""
+    cfg = site["condor"]
+    job_dir = ROOT_DIR / "build" / "condor" / "jobs"
+    log_dir = ROOT_DIR / "build" / "condor" / "logs"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    script = job_dir / f"{job_name}_{stamp}.sh"
+    lines = ["#!/bin/bash", f"cd {shlex.quote(str(work_dir))}"]
+    if x509_dst:
+        lines.append(f"export X509_USER_PROXY={shlex.quote(str(x509_dst))}")
+    lines.append(f"export OMP_NUM_THREADS={args.condor_cpus}")
+    lines.append(build_retry_wrap(command, args.slurm_retries, args.slurm_retry_delay, label=job_name))
+    script.write_text("\n".join(lines) + "\n")
+    script.chmod(0o755)
+    cmd = [cfg["submit"], str(script),
+           "-g", cfg["group"], "-os", cfg["os"],
+           "-cpu", str(args.condor_cpus), "-m", str(args.condor_mem), "-wt", args.condor_walltime,
+           "-o", str(log_dir / f"{job_name}_{stamp}.out"),
+           "-e", str(log_dir / f"{job_name}_{stamp}.err")]
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=work_dir)
+    output = (r.stdout.decode() + r.stderr.decode()).strip()
+    match = re.search(r"cluster\s+(\d+)", output)
+    if r.returncode != 0 or not match:
+        sys.exit(f"HTCondor submission failed for {job_name} (exit={r.returncode}): {output}")
+    return match.group(1)
+
+
+def launch_mode0_condor(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
+                        site, cxx_wrapper=None):
+    """Submit one HTCondor job per batch (CONVERT_DEFER_FINAL_MERGE=1), or with --merge-only
+    the sample's merge job. HTCondor jobs here have no afterany dependency: submit the merge
+    once every batch job has finished; it fails if any batch is missing, incomplete or stale."""
+    config_env    = mode_cfg["config_env"]
+    label         = mode_cfg["label"]
+    files_per_job = args.slurm_files_per_job
+    base_env_str  = f"env {config_env}={config_path} CONVERT_FILES_PER_BATCH={files_per_job}"
+
+    if args.merge_only:
+        job_id = condor_submit(
+            site, args, f"{label}_{sample}_merge",
+            f"{base_env_str} {shell_join(wrapped(cxx_wrapper, [bin_path, sample, '--merge-successful-batches']))}",
+            work_dir, x509_dst)
+        log(f"submitted sample={sample} merge condor_job_id={job_id}")
+        return
+
+    n_batches = query_batch_count(sample, config_env, config_path, bin_path, work_dir,
+                                  files_per_job, cxx_wrapper)
+    for idx in range(n_batches):
+        job_id = condor_submit(
+            site, args, f"{label}_{sample}_{idx}",
+            f"{base_env_str} CONVERT_DEFER_FINAL_MERGE=1 {shell_join(wrapped(cxx_wrapper, [bin_path, sample, idx]))}",
+            work_dir, x509_dst)
+        log(f"submitted sample={sample} batch={idx + 1}/{n_batches} condor_job_id={job_id}")
+    log(f"sample={sample}: submit the merge with --merge-only after all {n_batches} batch jobs finished")
+
+
+def launch_job_condor(sample, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
+                      site, cxx_wrapper=None):
+    label = mode_cfg["label"]
+    job_id = condor_submit(
+        site, args, f"{label}_{sample}",
+        f"env {mode_cfg['config_env']}={config_path} {shell_join(wrapped(cxx_wrapper, [bin_path, sample]))}",
+        work_dir, x509_dst)
+    log(f"submitted sample={sample} condor_job_id={job_id}")
+
+
+# ---------------------------------------------------------------------------
 # Job reaping
 # ---------------------------------------------------------------------------
 
@@ -951,7 +1070,7 @@ def reap_slurm(running, failed_jobs):
 
 def dispatch_jobs(samples, mode, mode_cfg, config_path, bin_path, work_dir, args,
                   x509_dst=None, golden_json_path=None, sample_mc_map=None, root_libdir="",
-                  cxx_wrapper=None):
+                  cxx_wrapper=None, site=None):
     failed_jobs = 0
 
     def _sample_golden(sample):
@@ -961,6 +1080,17 @@ def dispatch_jobs(samples, mode, mode_cfg, config_path, bin_path, work_dir, args
         if sample_mc_map and not sample_mc_map.get(sample, True):
             return golden_json_path
         return None
+
+    if args.condor:
+        for sample in samples:
+            if mode == 0:
+                launch_mode0_condor(sample, mode_cfg, config_path, bin_path, work_dir, args,
+                                    x509_dst, site, cxx_wrapper=cxx_wrapper)
+            else:
+                launch_job_condor(sample, mode_cfg, config_path, bin_path, work_dir, args,
+                                  x509_dst, site, cxx_wrapper=cxx_wrapper)
+        log("all jobs submitted to HTCondor")
+        return 0
 
     if args.slurm:
         for sample in samples:
@@ -1017,6 +1147,15 @@ def main():
     log_path = work_dir / log_name
 
     site = SITES[args.site]
+    if args.condor:
+        if not site["condor"]:
+            sys.exit(f"--condor needs a site with an HTCondor submitter; site {args.site} has none")
+        if args.slurm:
+            sys.exit("--condor and --slurm are exclusive")
+        if mode not in SAMPLE_MODES:
+            sys.exit(f"--condor applies to the sample modes {sorted(SAMPLE_MODES)} only")
+    if args.merge_only and not (args.condor and mode == 0):
+        sys.exit("--merge-only applies to mode 0 with --condor only")
     if args.slurm_account is None:
         args.slurm_account = site["slurm_account"]
     apply_site_environment(site)
@@ -1043,7 +1182,7 @@ def main():
     os.dup2(log_fh.fileno(), 1)
     os.dup2(log_fh.fileno(), 2)
 
-    if not args.slurm:
+    if not args.slurm and not args.condor:
         atexit.register(copy_log_to_output_dirs, mode, config_path, work_dir, log_path)
 
     # Python-only modes — no compilation, no sample loop
@@ -1129,7 +1268,7 @@ def main():
     failed = dispatch_jobs(
         samples, mode, mode_cfg, config_path, bin_path, work_dir, args, x509_dst,
         golden_json_path=golden_json_path, sample_mc_map=sample_mc_map,
-        root_libdir=root_libdir, cxx_wrapper=cxx_wrapper,
+        root_libdir=root_libdir, cxx_wrapper=cxx_wrapper, site=site,
     )
     sys.exit(1 if failed else 0)
 

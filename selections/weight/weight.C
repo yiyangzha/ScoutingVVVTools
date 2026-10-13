@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include <unistd.h>
+
 #include <TAxis.h>
 #include <TCanvas.h>
 #include <TColor.h>
@@ -42,6 +44,22 @@ const char* kConfigPath = "./config.json";
 const char* kConfigEnvVar = "WEIGHT_CONFIG_PATH";
 const char* kRemotePrefix = "root://cms-xrd-global.cern.ch/";
 const char* kDefaultSampleConfigPath = "../../src/sample.json";
+// Same retry policy as convert_branch.C for remote input opens.
+const int kRemoteInputOpenRetries = 5;
+const unsigned int kRemoteInputRetrySleepSeconds = 5;
+
+// An input file that cannot be used (unopenable after the retries, or without the tree or
+// pileup branch); weight skips it like convert_branch skips such MC files.
+struct SkippableFileError : runtime_error {
+    using runtime_error::runtime_error;
+};
+
+// remote_input_rules: a DAS file whose LFN starts with lfnPrefix is read as urlPrefix + LFN
+// (e.g. a site-local XRootD endpoint); every other LFN goes through kRemotePrefix.
+struct RemoteInputRule {
+    string lfnPrefix;
+    string urlPrefix;
+};
 
 struct SampleRuleConfig {
     string name;
@@ -63,6 +81,7 @@ struct AppConfig {
     string outputPattern;
     string sampleConfigPath = kDefaultSampleConfigPath;
     int maxThreads = 12;
+    vector<RemoteInputRule> remoteInputRules;
     vector<SampleRuleConfig> sampleRules;
 };
 
@@ -212,6 +231,18 @@ AppConfig loadAppConfig() {
         }
     }
 
+    if (payload.contains("remote_input_rules")) {
+        for (const auto& node : payload.at("remote_input_rules").asArray()) {
+            RemoteInputRule rule;
+            rule.lfnPrefix = node.at("lfn_prefix").asString();
+            rule.urlPrefix = node.at("url_prefix").asString();
+            if (rule.lfnPrefix.empty() || rule.urlPrefix.empty()) {
+                throw runtime_error("remote_input_rules entries need a non-empty lfn_prefix and url_prefix");
+            }
+            config.remoteInputRules.push_back(std::move(rule));
+        }
+    }
+
     const JsonValue samplePayload = simple_json::parseFile(config.sampleConfigPath);
     if (samplePayload.contains("sample")) {
         for (const auto& node : samplePayload.at("sample").asArray()) {
@@ -291,7 +322,16 @@ vector<string> splitLines(const string& text) {
     return out;
 }
 
-vector<string> listRemoteRootFiles(const string& datasetPath) {
+string remoteInputUrl(const string& lfn, const vector<RemoteInputRule>& rules) {
+    for (const auto& rule : rules) {
+        if (lfn.compare(0, rule.lfnPrefix.size(), rule.lfnPrefix) == 0) {
+            return rule.urlPrefix + lfn;
+        }
+    }
+    return string(kRemotePrefix) + lfn;
+}
+
+vector<string> listRemoteRootFiles(const string& datasetPath, const vector<RemoteInputRule>& rules) {
     string query = "file dataset=" + datasetPath;
     if (isUserDataset(datasetPath)) {
         query += " instance=prod/phys03";
@@ -303,7 +343,7 @@ vector<string> listRemoteRootFiles(const string& datasetPath) {
     files.reserve(lines.size());
     for (const auto& line : lines) {
         if (endsWith(line, ".root")) {
-            files.push_back(string(kRemotePrefix) + line);
+            files.push_back(remoteInputUrl(line, rules));
         }
     }
     sort(files.begin(), files.end());
@@ -344,7 +384,7 @@ vector<string> listLocalRootFiles(const string& inputPath) {
     return files;
 }
 
-vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
+vector<string> discoverInputFiles(SampleMeta& sampleMeta, const AppConfig& appConfig) {
     sampleMeta.remoteSourceCount = 0;
     vector<string> files;
     for (const auto& inputPath : sampleMeta.inputPaths) {
@@ -353,7 +393,7 @@ vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
             ++sampleMeta.remoteSourceCount;
         }
 
-        vector<string> sourceFiles = isRemoteDataset ? listRemoteRootFiles(inputPath)
+        vector<string> sourceFiles = isRemoteDataset ? listRemoteRootFiles(inputPath, appConfig.remoteInputRules)
                                                      : listLocalRootFiles(inputPath);
         files.insert(files.end(), sourceFiles.begin(), sourceFiles.end());
     }
@@ -528,6 +568,22 @@ string makePdfPath(const string& csvPath) {
     fs::path path(csvPath);
     path.replace_extension(".pdf");
     return path.string();
+}
+
+string makeSkippedListPath(const string& csvPath) {
+    fs::path path(csvPath);
+    path.replace_extension();
+    return path.string() + "_skipped.txt";
+}
+
+void writeSkippedList(const string& outputPath, const vector<string>& skippedFiles) {
+    ofstream out(outputPath);
+    if (!out) {
+        throw runtime_error("Cannot open skipped-file list: " + outputPath);
+    }
+    for (const auto& file : skippedFiles) {
+        out << file << '\n';
+    }
 }
 
 double histogramMaxWithError(const TH1* hist) {
@@ -707,24 +763,40 @@ mutex& inputOpenMutex() {
     return instance;
 }
 
+unique_ptr<TFile> openInputFileWithRetry(const string& inputFileName) {
+    const bool remoteInput = inputFileName.rfind("root://", 0) == 0;
+    const int maxRetries = remoteInput ? kRemoteInputOpenRetries : 0;
+
+    for (int retry = 0; retry <= maxRetries; ++retry) {
+        unique_ptr<TFile> inputFile;
+        {
+            lock_guard<mutex> lock(inputOpenMutex());
+            inputFile.reset(TFile::Open(inputFileName.c_str(), "READ"));
+        }
+        if (inputFile && !inputFile->IsZombie()) {
+            return inputFile;
+        }
+        if (retry < maxRetries) {
+            cerr << "Warning: failed to open remote input file " << inputFileName
+                 << "; retry " << (retry + 1) << "/" << maxRetries
+                 << " after " << kRemoteInputRetrySleepSeconds << " seconds" << endl;
+            sleep(kRemoteInputRetrySleepSeconds);
+        }
+    }
+    throw SkippableFileError("Error opening input file " + inputFileName);
+}
+
 void processInputFile(const string& inputFileName,
                       const AppConfig& appConfig,
                       TH1* localHist) {
-    unique_ptr<TFile> inputFile;
-    {
-        lock_guard<mutex> lock(inputOpenMutex());
-        inputFile.reset(TFile::Open(inputFileName.c_str(), "READ"));
-    }
-    if (!inputFile || inputFile->IsZombie()) {
-        throw runtime_error("Error opening input file " + inputFileName);
-    }
+    unique_ptr<TFile> inputFile = openInputFileWithRetry(inputFileName);
 
     TTree* tree = static_cast<TTree*>(inputFile->Get(appConfig.treeName.c_str()));
     if (!tree) {
-        throw runtime_error("Tree " + appConfig.treeName + " not found in " + inputFileName);
+        throw SkippableFileError("Tree " + appConfig.treeName + " not found in " + inputFileName);
     }
     if (!tree->GetBranch(appConfig.pileupBranch.c_str())) {
-        throw runtime_error("Branch " + appConfig.pileupBranch + " not found in " + inputFileName);
+        throw SkippableFileError("Branch " + appConfig.pileupBranch + " not found in " + inputFileName);
     }
 
     tree->SetBranchStatus("*", 0);
@@ -779,7 +851,7 @@ int main(int argc, char** argv) {
 
     vector<string> inputFiles;
     try {
-        inputFiles = discoverInputFiles(sampleMeta);
+        inputFiles = discoverInputFiles(sampleMeta, appConfig);
     } catch (const exception& ex) {
         cerr << "Input discovery error: " << ex.what() << endl;
         return 1;
@@ -831,6 +903,7 @@ int main(int argc, char** argv) {
     atomic<size_t> processedFiles{0};
     atomic<bool> failed{false};
     vector<string> errors;
+    vector<string> skippedFiles;
 
 #pragma omp parallel num_threads(threadCount) if(threadCount > 1)
     {
@@ -847,6 +920,13 @@ int main(int argc, char** argv) {
                 const size_t done = processedFiles.fetch_add(1) + 1;
 #pragma omp critical(weight_progress)
                 printFileProgress(sampleMeta.sample, done, inputFiles.size());
+            } catch (const SkippableFileError& ex) {
+                // Same rule as convert_branch for MC: skip and record the file.
+#pragma omp critical(weight_skip)
+                {
+                    skippedFiles.push_back(inputFiles[index]);
+                    cerr << "\nWarning: skipping " << inputFiles[index] << ": " << ex.what() << endl;
+                }
             } catch (const exception& ex) {
                 failed.store(true);
 #pragma omp critical(weight_error)
@@ -862,8 +942,23 @@ int main(int argc, char** argv) {
         cerr << "Runtime error: " << errors.front() << endl;
         return 1;
     }
+    if (processedFiles.load() == 0) {
+        cerr << "Runtime error: every input file of sample " << sampleMeta.sample << " was skipped" << endl;
+        return 1;
+    }
 
     try {
+        // Written on every run (empty without skipped files) so no list of an earlier run remains.
+        sort(skippedFiles.begin(), skippedFiles.end());
+        const string skippedPath = makeSkippedListPath(sampleMeta.outputFileName);
+        writeSkippedList(skippedPath, skippedFiles);
+        if (!skippedFiles.empty()) {
+            cerr << "Warning: " << skippedFiles.size() << " of " << inputFiles.size()
+                 << " input files were skipped (listed in " << skippedPath << "):" << endl;
+            for (const auto& file : skippedFiles) {
+                cerr << "  " << file << endl;
+            }
+        }
         normalizeHistogram(dataNominal.get(), "data nominal");
         normalizeHistogram(dataLow.get(), "data low");
         normalizeHistogram(dataHigh.get(), "data high");

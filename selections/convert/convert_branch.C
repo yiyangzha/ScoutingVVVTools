@@ -689,6 +689,13 @@ struct CorrectionConfiguration {
     double jmr = 1.;
 };
 
+// remote_input_rules: a DAS file whose LFN starts with lfnPrefix is read as urlPrefix + LFN
+// (e.g. a site-local XRootD endpoint); every other LFN goes through kRemotePrefix.
+struct RemoteInputRule {
+    string lfnPrefix;
+    string urlPrefix;
+};
+
 struct AppConfig {
     string treeName = "Events";
     string configPath;
@@ -702,6 +709,7 @@ struct AppConfig {
     double maxOutputFileSizeGB = 5.;
     bool resumeSuccessfulBatches = true;
     bool updateRawEntries = true;
+    vector<RemoteInputRule> remoteInputRules;
     vector<SampleRuleConfig> sampleRules;
     string puWeightPathPattern;
     JetPtCorrectionConfig jetPtCorrection;
@@ -1437,6 +1445,17 @@ AppConfig loadAppConfig() {
     config.maxOutputFileSizeGB = static_cast<double>(payload.getNumberOr("max_output_file_size_gb", 5.));
     config.resumeSuccessfulBatches = payload.getBoolOr("resume_successful_batches", true);
     config.updateRawEntries = payload.getBoolOr("update_raw_entries", true);
+    if (payload.contains("remote_input_rules")) {
+        for (const auto& node : payload.at("remote_input_rules").asArray()) {
+            RemoteInputRule rule;
+            rule.lfnPrefix = node.at("lfn_prefix").asString();
+            rule.urlPrefix = node.at("url_prefix").asString();
+            if (rule.lfnPrefix.empty() || rule.urlPrefix.empty()) {
+                throw runtime_error("remote_input_rules entries need a non-empty lfn_prefix and url_prefix");
+            }
+            config.remoteInputRules.push_back(std::move(rule));
+        }
+    }
 
     const JsonValue samplePayload = simple_json::parseFile(config.sampleConfigPath);
     if (samplePayload.contains("sample")) {
@@ -4085,7 +4104,16 @@ bool validateBatchTempOutput(const fs::path& batchOutputPath,
     return true;
 }
 
-vector<string> listRemoteRootFiles(const string& datasetPath) {
+string remoteInputUrl(const string& lfn, const vector<RemoteInputRule>& rules) {
+    for (const auto& rule : rules) {
+        if (startsWith(lfn, rule.lfnPrefix)) {
+            return rule.urlPrefix + lfn;
+        }
+    }
+    return string(kRemotePrefix) + lfn;
+}
+
+vector<string> listRemoteRootFiles(const string& datasetPath, const vector<RemoteInputRule>& rules) {
     string query = "file dataset=" + datasetPath;
     if (isUserDataset(datasetPath)) {
         query += " instance=prod/phys03";
@@ -4097,7 +4125,7 @@ vector<string> listRemoteRootFiles(const string& datasetPath) {
     files.reserve(lines.size());
     for (const auto& line : lines) {
         if (endsWith(line, ".root")) {
-            files.push_back(string(kRemotePrefix) + line);
+            files.push_back(remoteInputUrl(line, rules));
         }
     }
     sort(files.begin(), files.end());
@@ -4138,7 +4166,7 @@ vector<string> listLocalRootFiles(const string& inputPath) {
     return files;
 }
 
-vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
+vector<string> discoverInputFiles(const AppConfig& appConfig, SampleMeta& sampleMeta) {
     sampleMeta.remoteSourceCount = 0;
     vector<string> files;
     for (const auto& inputPath : sampleMeta.inputPaths) {
@@ -4147,7 +4175,7 @@ vector<string> discoverInputFiles(SampleMeta& sampleMeta) {
             ++sampleMeta.remoteSourceCount;
         }
 
-        vector<string> sourceFiles = isRemoteDataset ? listRemoteRootFiles(inputPath)
+        vector<string> sourceFiles = isRemoteDataset ? listRemoteRootFiles(inputPath, appConfig.remoteInputRules)
                                                      : listLocalRootFiles(inputPath);
         files.insert(files.end(), sourceFiles.begin(), sourceFiles.end());
     }
@@ -4196,7 +4224,7 @@ vector<string> resolveInputFiles(const AppConfig& appConfig, SampleMeta& sampleM
         return files;
     }
 
-    vector<string> files = discoverInputFiles(sampleMeta);
+    vector<string> files = discoverInputFiles(appConfig, sampleMeta);
     fs::create_directories(snapshotPath.parent_path());
     ostringstream content;
     for (const auto& file : files) {
@@ -6654,7 +6682,7 @@ int updateGenWeightMean(const AppConfig& appConfig, SampleMeta& sampleMeta) {
     }
     vector<string> inputFiles;
     try {
-        inputFiles = discoverInputFiles(sampleMeta);
+        inputFiles = discoverInputFiles(appConfig, sampleMeta);
     } catch (const exception& ex) {
         cerr << "Input discovery error: " << ex.what() << endl;
         return 1;
