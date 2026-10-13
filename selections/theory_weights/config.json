@@ -19,6 +19,7 @@
   },
   "min_region_events": 10,
   "pdf_uncertainty_method": "hessian_symmetric",
+  "generator_sums_json": "./output/generator_sums.json",
   "output_dir": "./output",
   "lumi": 255.8,
   "chunk_size": "200 MB"

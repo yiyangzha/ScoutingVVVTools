@@ -19,8 +19,9 @@ that ``qcd_est.py`` applies, so the regions match the ABCD method exactly.
 PDF uncertainty: the method must match the PDF set type, set via the config key
   ``pdf_uncertainty_method``:
     "hessian_symmetric" (DEFAULT) -- for symmetric-Hessian sets such as
-      NNPDF31_nnlo_hessian_pdfas (LHA 306000), which is what these samples use
-      (LHE combine type "symmhessian+as").  sigma = sqrt(sum_i (Y_i/Y_0 - 1)^2)
+      NNPDF31_nnlo_hessian_pdfas (LHA 306000) or
+      NNPDF31_nnlo_as_0118_nf_4_mc_hessian (LHA 325500, used by the v5 VVV/VV
+      samples).  sigma = sqrt(sum_i (Y_i/Y_0 - 1)^2)
       over the 100 Hessian members, applied as +/- around the central member.
     "mc_replica" -- PDF4LHC replica prescription (arXiv:1510.03865 §6.2):
       sort the 100 replica yields, take the 16th and 84th as the 68% CL interval.
@@ -29,9 +30,18 @@ PDF uncertainty: the method must match the PDF set type, set via the config key
   alpha_s ("+as"): when the LHEPdfWeightAlphaS branch is present (mode 0 now
   stores the two alpha_s members 306101/306102), the alpha_s variation
   (Y_up - Y_down)/2 is folded into the PDF uncertainty in quadrature. Files
-  produced before that convert change get the Hessian PDF part only.
+  produced before that convert change get the Hessian PDF part only. Sets
+  without alpha_s members (e.g. LHA 325500, 101 weights) leave the branch at
+  the 1.0 placeholder; such samples are reported with alphas_available=false.
 Scale uncertainty: envelope of 7 (mu_R, mu_F) combinations excluding the two
   anti-correlated corners (LHEScaleWeight indices 2 and 6).
+Normalisation to the generated events (2026-10-09): every member's yield ratio Y_i / Y_0 is divided
+  by the member's value over all generated events, sum(genWeight * w_i) / sum(genWeight) from the
+  NanoAOD Runs trees (generator_sums.py, config key generator_sums_json, required for every theory
+  sample), before the envelope / quadrature, so the variations change only the selection
+  efficiency: the samples are normalised to their sample.json cross-sections, whose inclusive
+  uncertainty enters combine separately (combine.C xsec_unc_json). Before, the ratios also held
+  the change of the inclusive cross-section.
 PS uncertainty: PSWeight is [0] isr.murfac=2.0; [1] fsr.murfac=2.0;
   [2] isr.murfac=0.5; [3] fsr.murfac=0.5 (branch documentation). ps_isr_up /
   ps_isr_down are the isr.murfac = 0.5 / 2.0 variations (more / less ISR), and
@@ -40,9 +50,10 @@ PS uncertainty: PSWeight is [0] isr.murfac=2.0; [1] fsr.murfac=2.0;
 Regions: the BDT thresholds (the ABCD window included) are applied with
   qcd_est.py's semantics (sentinel values fail), so each SR is the ABCD A
   region; a configured but missing input is an error.
-Weights: every ratio is sum(w * w_var) / sum(w) with the signed event weight
-  w = genWeight * weight_pu, so a ratio includes the variation's change of the
-  cross section as well as of the acceptance.
+Weights: every selected-event ratio is sum(w * w_var) / sum(w) with the signed event weight
+  w = genWeight * weight_pu (selections/mc_weight_common/mc_weights.py; its normalisation
+  cancels in the ratio), divided by the generated-event ratio above, so it is the variation's
+  change of the acceptance only.
 
 Outputs (written to output_dir):
   theory_syst_yields.json  -- per-sample/tree dict; inclusive ratios at the top
@@ -55,6 +66,7 @@ Outputs (written to output_dir):
 
 import csv
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -71,6 +83,7 @@ _BDT_TOOLS_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "BDT"))
 if _BDT_TOOLS_DIR not in sys.path:
     sys.path.insert(0, _BDT_TOOLS_DIR)
 import model_io  # noqa: E402
+import kfold  # noqa: E402
 
 
 def log(msg):
@@ -115,6 +128,15 @@ if PDF_METHOD not in ("hessian_symmetric", "mc_replica"):
         f"pdf_uncertainty_method must be 'hessian_symmetric' or 'mc_replica', "
         f"got {PDF_METHOD!r}"
     )
+
+# Per-member theory-weight sums over all generated events (generator_sums.py).
+if "generator_sums_json" not in cfg:
+    raise KeyError("config generator_sums_json is required: run generator_sums.py (the variations are "
+                   "normalised to the generated events)")
+_gen_sums_path = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["generator_sums_json"]))
+if not os.path.exists(_gen_sums_path):
+    raise FileNotFoundError(f"{_gen_sums_path} missing: run generator_sums.py and generator_sums.py --merge")
+GENERATOR_SUMS = _load_json(_gen_sums_path)
 
 _sample_cfg_path = os.path.normpath(os.path.join(_SCRIPT_DIR, cfg["sample_config"]))
 sample_cfg   = _load_json(_sample_cfg_path)
@@ -270,7 +292,12 @@ def _load_thresholds(bdt_dir, tree_name):
 def _build_tree_context(tree):
     """Return a dict: always has 'thresholds'; has model/region info if enabled."""
     bdt_dir = _bdt_dir_for(tree)
-    ctx = {"thresholds": _load_thresholds(bdt_dir, tree), "regions_enabled": False}
+    # k-fold models (train.py kfold = K): configs from fold0, every MC event scored with the model
+    # of the k-fold block holding it (selections/BDT/kfold.py).
+    kf = kfold.KFoldModels(bdt_dir, log=log) if bdt_dir is not None and kfold.is_kfold_root(bdt_dir) else None
+    if kf is not None:
+        bdt_dir = kf.fold_dirs[0]
+    ctx = {"thresholds": _load_thresholds(bdt_dir, tree), "regions_enabled": False, "kfold": kf}
 
     sr_csv = _sr_csv_for(tree)
     if bdt_dir is None or sr_csv is None:
@@ -296,7 +323,7 @@ def _build_tree_context(tree):
 
     model_pattern = bcfg.get("model_pattern", "{output_root}/{tree_name}_model")
     model_base = model_pattern.format(output_root=bdt_dir, tree_name=tree)
-    model = model_io.load_model(model_base, bcfg, len(class_names), log_message=log)
+    model = None if kf is not None else model_io.load_model(model_base, bcfg, len(class_names), log_message=log)
 
     sr_df = pd.read_csv(sr_csv)
     if sr_df.empty:
@@ -312,6 +339,8 @@ def _build_tree_context(tree):
         clip_ranges=clip_ranges, log_transform=log_transform,
         decorrelate=decorrelate, sr_df=sr_df, axes=axes, bin_ids=bin_ids,
         sr_csv=sr_csv,
+        # SR provenance for combine: first 13 hex digits of the SHA-256 of the SR CSV bytes.
+        sr_csv_hash=hashlib.sha256(open(sr_csv, "rb").read()).hexdigest()[:13],
     )
     log(f"  [{tree}] regions enabled: {len(bin_ids)} SRs from {os.path.basename(sr_csv)}, "
         f"axes={axes}")
@@ -370,7 +399,7 @@ def _threshold_mask(data_np, thresholds):
     return mask
 
 
-def _infer_proba(chunk, mask, ctx):
+def _infer_proba(chunk, mask, ctx, folds=None):
     cols = {}
     for name in ctx["feature_cols"]:
         if name not in chunk:
@@ -385,6 +414,8 @@ def _infer_proba(chunk, mask, ctx):
         drop = [c for c in ctx["decorrelate"] if c in X.columns]
         if drop:
             X = X.drop(columns=drop)
+    if ctx.get("kfold") is not None:
+        return ctx["kfold"].predict(X, folds)
     return model_io.predict_model_proba(ctx["model"], X, ctx["num_classes"])
 
 
@@ -392,12 +423,25 @@ def _infer_proba(chunk, mask, ctx):
 # Ratio computation
 # ---------------------------------------------------------------------------
 
-def _ratios_from_sums(nom_sum, pdf_sums, scale_sums, ps_sums, n_events, alphas_sums=None):
-    """Return the ratio dict for one accumulation slot, or None if empty."""
+def _generator_sums(sample_name):
+    """The sample's per-member sums over all generated events, in the stored per-event layout."""
+    g = GENERATOR_SUMS.get(sample_name)
+    if g is None:
+        raise KeyError(f"{sample_name} has no entry in {_gen_sums_path}: run generator_sums.py {sample_name} "
+                       f"and generator_sums.py --merge")
+    return {"pdf": np.asarray(g["lhe_pdf_sumw"], dtype=np.float64),
+            "alphas": np.asarray(g["lhe_alphas_sumw"], dtype=np.float64),
+            "scale": np.asarray(g["lhe_scale_sumw"], dtype=np.float64),
+            "ps": np.asarray(g["ps_sumw"], dtype=np.float64)}
+
+
+def _ratios_from_sums(nom_sum, pdf_sums, scale_sums, ps_sums, n_events, gen, alphas_sums=None):
+    """Return the ratio dict for one accumulation slot, or None if empty. Every member's ratio is
+    divided by its value over all generated events (gen, _generator_sums)."""
     if nom_sum <= 0.0 or n_events < 1:
         return None
-    member_ratios = pdf_sums[1:101] / nom_sum    # 100 PDF members (i = 1..100)
-    central = float(pdf_sums[0] / nom_sum)        # central member, ~1.0
+    member_ratios = pdf_sums[1:101] / nom_sum / gen["pdf"][1:101]   # 100 PDF members (i = 1..100)
+    central = float(pdf_sums[0] / nom_sum / gen["pdf"][0])          # central member, ~1.0
     if PDF_METHOD == "hessian_symmetric":
         # Symmetric-Hessian set (NNPDF31_nnlo_hessian_pdfas): the uncertainty is
         # the quadrature sum of the per-eigenvector deviations from the central.
@@ -414,21 +458,21 @@ def _ratios_from_sums(nom_sum, pdf_sums, scale_sums, ps_sums, n_events, alphas_s
     # folded into the PDF uncertainty in quadrature when the branch is present.
     sigma_as = 0.0
     if alphas_sums is not None:
-        as_ratios = alphas_sums / nom_sum         # [alpha_s_down, alpha_s_up]
+        as_ratios = alphas_sums / nom_sum / gen["alphas"]   # [alpha_s_down, alpha_s_up]
         sigma_as = 0.5 * abs(float(as_ratios[1]) - float(as_ratios[0]))
     sigma_tot = float(np.sqrt(sigma_pdf ** 2 + sigma_as ** 2))
     pdf_up = pdf_center + sigma_tot
     pdf_down = pdf_center - sigma_tot
     pdf_central = pdf_center
 
-    scale_ratios = scale_sums / nom_sum
+    scale_ratios = scale_sums / nom_sum / gen["scale"]
     valid_s = scale_ratios[SCALE_VALID]
     scale_up   = float(valid_s.max())
     scale_down = float(valid_s.min())
 
     # PSWeight: [0] isr.murfac=2.0; [1] fsr.murfac=2.0; [2] isr.murfac=0.5;
     # [3] fsr.murfac=0.5. up = murfac 0.5 (more radiation), down = murfac 2.0.
-    ps_ratios = ps_sums / nom_sum
+    ps_ratios = ps_sums / nom_sum / gen["ps"]
     ps_isr_up   = float(ps_ratios[2])
     ps_isr_down = float(ps_ratios[0])
     ps_fsr_up   = float(ps_ratios[3])
@@ -437,8 +481,10 @@ def _ratios_from_sums(nom_sum, pdf_sums, scale_sums, ps_sums, n_events, alphas_s
     return {
         "n_events":    int(n_events),
         "nom_sum":     float(nom_sum),
+        "generator_normalised": True,
         "pdf_method":  PDF_METHOD,
         "pdf_alphas_unc": float(sigma_as),
+        "alphas_available": alphas_sums is not None,
         "pdf_up":      pdf_up,      "pdf_down":     pdf_down,  "pdf_central": pdf_central,
         "scale_up":    scale_up,    "scale_down":   scale_down,
         "ps_isr_up":   ps_isr_up,   "ps_isr_down":  ps_isr_down,
@@ -462,6 +508,7 @@ def _compute_ratios(sample_name, ctx):
     thresholds = ctx["thresholds"]
     enabled = ctx["regions_enabled"]
     n_slots = 1 + (len(ctx["bin_ids"]) if enabled else 0)
+    gen = _generator_sums(sample_name)
 
     # LHEPdfWeightAlphaS is optional (only present after re-running mode 0 with
     # the alpha_s branch); folded into the PDF uncertainty when available.
@@ -478,6 +525,10 @@ def _compute_ratios(sample_name, ctx):
     ps_sums     = np.zeros((n_slots, N_PS),        dtype=np.float64)
     n_events    = np.zeros(n_slots, dtype=np.int64)
     has_alphas = [False]
+    kf = ctx.get("kfold") if enabled else None
+    if kf is not None:
+        kf.check_files(sample_name, files)
+        offsets = kf.file_offsets(sample_name)
 
     def _accumulate(slot, w, pdf_w, scale_w, ps_w, as_w):
         nom_sum[slot]    += float(w.sum())
@@ -498,10 +549,11 @@ def _compute_ratios(sample_name, ctx):
             if missing:
                 raise KeyError(f"{fpath}:{ctx['_tree']} lacks the branches {missing}; "
                                f"re-run mode 0 (convert)")
-            # LHEPdfWeightAlphaS is optional (files converted before the alpha_s
-            # branch existed); folded into the PDF uncertainty when available.
-            actual = load_list + (["LHEPdfWeightAlphaS"] if "LHEPdfWeightAlphaS" in avail else [])
-            for chunk in tree.iterate(expressions=actual, step_size=CHUNK_SIZE, library="np"):
+            # LHEPdfWeightAlphaS and nLHEPdfWeight are optional (files converted before
+            # these branches existed); alpha_s is folded into the PDF uncertainty when available.
+            actual = load_list + [b for b in ("LHEPdfWeightAlphaS", "nLHEPdfWeight") if b in avail]
+            for chunk, report in tree.iterate(expressions=actual, step_size=CHUNK_SIZE, library="np",
+                                              report=True):
                 mask = _threshold_mask(chunk, thresholds)
                 if not mask.any():
                     continue
@@ -514,14 +566,24 @@ def _compute_ratios(sample_name, ctx):
                 ps_w    = np.asarray(chunk["PSWeight"],       dtype=np.float64)[mask]
                 if "LHEPdfWeightAlphaS" in chunk:
                     as_w = np.asarray(chunk["LHEPdfWeightAlphaS"], dtype=np.float64)[mask]
-                    has_alphas[0] = True
+                    # convert_branch.C fills 1.0 when the PDF set has no alpha_s
+                    # members (e.g. LHA 325500 with 101 weights). It now also stores
+                    # nLHEPdfWeight: alpha_s members exist iff >= 103 weights; older
+                    # files fall back to treating non-placeholder values as present.
+                    if "nLHEPdfWeight" in chunk:
+                        if np.any(np.asarray(chunk["nLHEPdfWeight"])[mask] >= 103):
+                            has_alphas[0] = True
+                    elif np.any(as_w != 1.0):
+                        has_alphas[0] = True
                 else:
                     as_w = None
 
                 _accumulate(0, w_pu, pdf_w, scale_w, ps_w, as_w)  # inclusive
 
                 if enabled:
-                    proba = _infer_proba(chunk, mask, ctx)
+                    folds = (kf.fold_of_index(sample_name, offsets[fpath] + report.tree_entry_start
+                                              + np.flatnonzero(mask)) if kf is not None else None)
+                    proba = _infer_proba(chunk, mask, ctx, folds)
                     for j in range(len(ctx["bin_ids"])):
                         rmask = _region_mask(
                             proba, ctx["sr_df"].iloc[j], ctx["axes"], ctx["class_names"]
@@ -531,11 +593,15 @@ def _compute_ratios(sample_name, ctx):
                                         scale_w[rmask], ps_w[rmask],
                                         as_w[rmask] if as_w is not None else None)
 
+    if not has_alphas[0]:
+        log(f"    WARNING [{sample_name}] no alpha_s variations stored (LHEPdfWeightAlphaS absent "
+            f"or placeholder 1.0): PDF uncertainty excludes alpha_s (alphas_available=false)")
+
     def _slot_alphas(slot):
         return alphas_sums[slot] if has_alphas[0] else None
 
     inclusive = _ratios_from_sums(nom_sum[0], pdf_sums[0], scale_sums[0], ps_sums[0],
-                                  n_events[0], _slot_alphas(0))
+                                  n_events[0], gen, _slot_alphas(0))
     regions = None
     if enabled:
         regions = {}
@@ -543,7 +609,7 @@ def _compute_ratios(sample_name, ctx):
             slot = j + 1
             regions[bid] = _ratios_from_sums(
                 nom_sum[slot], pdf_sums[slot], scale_sums[slot], ps_sums[slot],
-                n_events[slot], _slot_alphas(slot)
+                n_events[slot], gen, _slot_alphas(slot)
             )
     return {"inclusive": inclusive, "regions": regions}
 
@@ -569,6 +635,7 @@ def main():
 
     log("theory_syst.py — theory weight variations (inclusive + per signal region)")
     log(f"  pdf_method: {PDF_METHOD}")
+    log(f"  variations normalised to the generated events: {_gen_sums_path}")
     log(f"  trees:   {SUBMIT_TREES}")
     log(f"  samples: {THEORY_SAMPLES}")
     log(f"  output:  {OUTPUT_DIR}\n")
@@ -619,6 +686,7 @@ def main():
                             f"  pdf=[{_pct(rr['pdf_down'])}, {_pct(rr['pdf_up'])}]"
                             f"  scale=[{_pct(rr['scale_down'])}, {_pct(rr['scale_up'])}]")
                 entry["regions"] = region_out
+                entry["sr_csv_hash"] = ctx["sr_csv_hash"]
 
             all_results[(sample_name, tree_name)] = entry
 

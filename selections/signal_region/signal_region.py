@@ -67,6 +67,7 @@ from model_io import (
     load_model as _shared_load_model,
     predict_model_proba as _shared_predict_model_proba,
 )
+import kfold
 
 
 # -------------------- Logging --------------------
@@ -145,10 +146,15 @@ if not os.path.isabs(OUTPUT_DIR):
 
 
 # -------------------- Trained-model config copies --------------------
-cfg       = _load_json(os.path.join(BDT_ROOT, "config.json"))
-br_cfg    = _load_json(os.path.join(BDT_ROOT, "branch.json"))
-sel_cfg   = _load_json(os.path.join(BDT_ROOT, "selection.json"))
-test_meta = _load_json(os.path.join(BDT_ROOT, "test_ranges.json"))
+# A k-fold training (train.py kfold = K) keeps its rotations in bdt_root/fold0 ... fold<K-1>: the
+# SRs are then optimised on every MC event with its out-of-fold score from the score cache
+# (selections/BDT/score_kfold.py) instead of on the eval split of one model.
+KFOLD = kfold.is_kfold_root(BDT_ROOT)
+_CFG_DIR = os.path.join(BDT_ROOT, "fold0") if KFOLD else BDT_ROOT
+cfg       = _load_json(os.path.join(_CFG_DIR, "config.json"))
+br_cfg    = _load_json(os.path.join(_CFG_DIR, "branch.json"))
+sel_cfg   = _load_json(os.path.join(_CFG_DIR, "selection.json"))
+test_meta = _load_json(os.path.join(_CFG_DIR, "test_ranges.json"))
 
 # sample_config paths in config.json are relative to _BDT_DIR, where train.py runs.
 _sample_cfg_path = cfg["sample_config"]
@@ -158,7 +164,11 @@ sample_cfg = _load_json(_sample_cfg_path)
 
 TREE_NAME     = test_meta["tree_name"]
 MODEL_PATTERN = cfg.get("model_pattern", "{output_root}/{tree_name}_model")
-TEST_REFERENCE_SIGNAL_REGION = os.path.join(BDT_ROOT, "test_reference_signal_region.npz")
+# The SRs are optimised on the eval split when the model was trained with one (train.py
+# eval_fraction > 0); the test split is then reserved for the final yields (qcd_est, combine).
+# Models trained before the eval split existed fall back to the test split.
+OPT_SPLIT = "kfold" if KFOLD else ("eval" if float(test_meta.get("eval_fraction", 0.0)) > 0.0 else "test")
+OPT_REFERENCE_SIGNAL_REGION = os.path.join(BDT_ROOT, f"{OPT_SPLIT}_reference_signal_region.npz")
 
 
 # -------------------- Sample registry --------------------
@@ -235,15 +245,17 @@ for _idx, (_cls, _members) in enumerate(CLASS_GROUPS.items()):
 # sample was reconverted since (e.g. a bad source file got replaced, or a follow-up
 # conversion split one big file into several max_output_file_size_gb-capped chunks),
 # those frozen paths can vanish entirely. Rather than hard-failing, recompute that one
-# sample's test split fresh from whatever files exist now, using the exact same
-# train/test-fraction recipe train.py used at training time (see _inspect_sample_tree /
+# sample's eval or test split fresh from whatever files exist now, using the exact same
+# train/eval/test-fraction recipe train.py used at training time (see _inspect_sample_tree /
 # _build_segments in selections/BDT/train.py) -- just pointed at current files.
 _INPUT_ROOT = cfg["input_root"]
 if not os.path.isabs(_INPUT_ROOT):
     _INPUT_ROOT = os.path.normpath(os.path.join(_BDT_DIR, _INPUT_ROOT))
 _INPUT_PATTERN = cfg["input_pattern"]
 _TRAIN_FRACTION = float(cfg.get("train_fraction", 0.7))
+_EVAL_FRACTION = float(cfg.get("eval_fraction", 0.0))
 _TEST_ENTRIES_PER_SAMPLE = int(cfg.get("test_entries_per_sample", cfg.get("entries_per_sample", 500000)))
+_EVAL_ENTRIES_PER_SAMPLE = int(cfg.get("eval_entries_per_sample", _TEST_ENTRIES_PER_SAMPLE))
 
 
 def _sample_group(sample_name):
@@ -272,7 +284,25 @@ def _segment_stale(seg):
         return True
 
 
-def _refresh_test_segments(sample_name):
+def _random_block_ranges(split_start, split_stop, blocks):
+    """The global entry ranges of train.py's _random_block_segments for the per-class split
+    budget: the same seeded choice of whole blocks, counted from split_start."""
+    n_range = split_stop - split_start
+    n_entries, block = int(blocks["n_entries"]), int(blocks["block_entries"])
+    if n_entries >= n_range:
+        return [(split_start, split_stop)]
+    n_blocks = (n_range + block - 1) // block
+    k = min(n_blocks, (n_entries + block - 1) // block)
+    chosen = np.sort(np.random.default_rng(blocks["seed"]).choice(n_blocks, size=k, replace=False))
+    return [(split_start + int(b) * block, min(split_start + (int(b) + 1) * block, split_stop)) for b in chosen]
+
+
+def _refresh_split_segments(sample_name, split):
+    if "kfold" in test_meta:
+        raise RuntimeError(
+            f"stale {split} split of sample '{sample_name}' in a k-fold rotation: its blocks cannot be "
+            "rebuilt from the fractions; retrain the k-fold models on the current files"
+        )
     files = _current_sample_files(sample_name)
     if not files:
         raise FileNotFoundError(f"No current files found for sample '{sample_name}' under {_INPUT_ROOT}")
@@ -289,44 +319,80 @@ def _refresh_test_segments(sample_name):
     if total_entries <= 0:
         raise RuntimeError(f"Zero entries found for sample '{sample_name}' in current files")
 
+    # Same ranges as train.py: train [0, a), eval [a, b), test [b, N) with
+    # a = N * train_fraction and b = N * (train_fraction + eval_fraction).
     train_stop = int(total_entries * _TRAIN_FRACTION)
+    eval_stop = int(total_entries * (_TRAIN_FRACTION + _EVAL_FRACTION))
+    if split == "eval":
+        split_start, split_stop, max_entries = train_stop, eval_stop, _EVAL_ENTRIES_PER_SAMPLE
+    else:
+        split_start, split_stop, max_entries = eval_stop, total_entries, _TEST_ENTRIES_PER_SAMPLE
 
+    blocks = test_meta["samples"].get(sample_name, {}).get(f"{split}_random_blocks")
     segments = []
-    cursor = 0
     used_entries = 0
-    for info in file_infos:
-        next_cursor = cursor + info["entries"]
-        overlap_start = max(train_stop, cursor)
-        overlap_stop = min(total_entries, next_cursor)
-        if overlap_stop > overlap_start:
-            local_start = overlap_start - cursor
-            local_stop = overlap_stop - cursor
-            remain = _TEST_ENTRIES_PER_SAMPLE - used_entries
-            if remain > 0:
-                local_stop = min(local_stop, local_start + remain)
-                if local_stop > local_start:
-                    segments.append({
-                        "file": info["path"],
-                        "entry_start": int(local_start),
-                        "entry_stop": int(local_stop),
-                    })
+    if blocks is not None:
+        # Split read through train.py's per-class budget: the same seeded block choice.
+        for range_start, range_stop in _random_block_ranges(split_start, split_stop, blocks):
+            cursor = 0
+            for info in file_infos:
+                next_cursor = cursor + info["entries"]
+                overlap_start = max(range_start, cursor)
+                overlap_stop = min(range_stop, next_cursor)
+                if overlap_stop > overlap_start:
+                    local_start, local_stop = overlap_start - cursor, overlap_stop - cursor
+                    last = segments[-1] if segments else None
+                    if last is not None and last["file"] == info["path"] and last["entry_stop"] == local_start:
+                        last["entry_stop"] = int(local_stop)
+                    else:
+                        segments.append({
+                            "file": info["path"],
+                            "entry_start": int(local_start),
+                            "entry_stop": int(local_stop),
+                        })
                     used_entries += local_stop - local_start
-        cursor = next_cursor
-        if used_entries >= _TEST_ENTRIES_PER_SAMPLE:
-            break
+                cursor = next_cursor
+    else:
+        cursor = 0
+        for info in file_infos:
+            next_cursor = cursor + info["entries"]
+            overlap_start = max(split_start, cursor)
+            overlap_stop = min(split_stop, next_cursor)
+            if overlap_stop > overlap_start:
+                local_start = overlap_start - cursor
+                local_stop = overlap_stop - cursor
+                remain = max_entries - used_entries
+                if remain > 0:
+                    local_stop = min(local_stop, local_start + remain)
+                    if local_stop > local_start:
+                        segments.append({
+                            "file": info["path"],
+                            "entry_start": int(local_start),
+                            "entry_stop": int(local_stop),
+                        })
+                        used_entries += local_stop - local_start
+            cursor = next_cursor
+            if used_entries >= max_entries:
+                break
 
     old_total = test_meta["samples"].get(sample_name, {}).get("total_entries")
     log_warning(
-        f"test split for sample '{sample_name}' rebuilt from current files "
+        f"{split} split for sample '{sample_name}' rebuilt from current files "
         f"(a frozen test_ranges.json path no longer exists): total_entries={total_entries} "
-        f"(was {old_total}), {len(segments)} segment(s), {used_entries} test entries"
+        f"(was {old_total}), {len(segments)} segment(s), {used_entries} {split} entries"
     )
     return total_entries, segments
 
 
-# -------------------- Test data loading --------------------
+# -------------------- Split data loading --------------------
 def load_test_data(branches):
-    """Load test events from test_ranges.json with physics-normalised weights.
+    """Test-split events (see load_split_data); used by the purity study scripts."""
+    return load_split_data(branches, "test")
+
+
+def load_split_data(branches, split):
+    """Load the events of one split ("eval" or "test") from test_ranges.json with
+    physics-normalised weights. The SR optimisers load OPT_SPLIT.
 
     For each sample (selections/mc_weight_common/mc_weights.py):
       raw_w            = product of event_reweight_branches (genWeight * weight_pu, per event)
@@ -338,7 +404,9 @@ def load_test_data(branches):
     read on raw values (before any clip/log/threshold). Weights are fixed here;
     threshold filtering later does NOT rescale them.
     """
-    log_message(f"Loading test data from: {os.path.join(BDT_ROOT, 'test_ranges.json')}")
+    if split not in ("eval", "test"):
+        raise ValueError(f"Unknown split: {split}")
+    log_message(f"Loading {split} data from: {os.path.join(BDT_ROOT, 'test_ranges.json')}")
     dfs = []
 
     reweight_branches = list(cfg.get(TREE_NAME, {}).get("event_reweight_branches", []))
@@ -357,15 +425,17 @@ def load_test_data(branches):
         xsec          = float(info["xsection"])
         generated_sum = mc_weights.generated_weight_sum(info["rule"], reweight_branches)
         total_entries = int(sample_meta["total_entries"])
-        test_segments = sample_meta["test_segments"]
-        if any(_segment_stale(seg) for seg in test_segments):
-            total_entries, test_segments = _refresh_test_segments(sample_name)
+        if f"{split}_segments" not in sample_meta:
+            raise RuntimeError(f"test_ranges.json has no {split} split for sample '{sample_name}'")
+        split_segments = sample_meta[f"{split}_segments"]
+        if any(_segment_stale(seg) for seg in split_segments):
+            total_entries, split_segments = _refresh_split_segments(sample_name, split)
 
         parts = []
-        for seg in test_segments:
+        for seg in split_segments:
             fpath = seg["file"]
             if not os.path.exists(fpath):
-                raise FileNotFoundError(f"Test split file not found: {fpath}")
+                raise FileNotFoundError(f"{split} split file not found: {fpath}")
             try:
                 with uproot.open(fpath) as uf:
                     if TREE_NAME not in uf:
@@ -386,7 +456,7 @@ def load_test_data(branches):
                     )
                     parts.append(df_part)
             except Exception as exc:
-                raise RuntimeError(f"Failed to read test split file {fpath}: {exc}") from exc
+                raise RuntimeError(f"Failed to read {split} split file {fpath}: {exc}") from exc
 
         if not parts:
             raise RuntimeError(f"No data loaded for sample '{sample_name}'")
@@ -419,12 +489,25 @@ def load_test_data(branches):
         )
 
     if not dfs:
-        raise RuntimeError("No test data loaded")
+        raise RuntimeError(f"No {split} data loaded")
 
     df_all = pd.concat(dfs, ignore_index=True)
     del dfs
     gc.collect()
     return df_all
+
+
+def load_kfold_inputs(thresholds):
+    """k-fold models: every MC event of the class_groups samples passing `thresholds`, with its
+    out-of-fold class probabilities and physics weight (x lumi) from the score cache. The scorer
+    validated the probabilities against the fold references. Returns (proba, y, w, sample_labels)."""
+    models = kfold.KFoldModels(BDT_ROOT, log=log_message)
+    samples = [s for members in CLASS_GROUPS.values() for s in members]
+    log_message(f"Loading the k-fold score cache: {models.k} folds, {len(samples)} samples")
+    scores = kfold.load_scores(models, samples, thresholds=thresholds, log=log_message)
+    w = scores["weight"] * LUMI
+    log_message(f"After thresholds: {len(w)} events (all MC entries, k-fold scores)")
+    return scores["proba"], scores["class_idx"].astype(int), w, scores["sample_name"]
 
 
 # -------------------- Feature standardization --------------------
@@ -874,6 +957,48 @@ def plot_signal_regions_2d(result, proba, y, w):
     _draw(True, "scores_radial_equalized", equalized=True)
 
 
+# -------------------- Significance --------------------
+def asimov_z(S, B, B_var):
+    """Asimov discovery significance with background uncertainty sigma_B^2 = B_var.
+
+    Z = sqrt(2[(S+B) ln((S+B)(B+v)/(B^2+(S+B)v)) - (B^2/v) ln(1 + v S/(B(B+v)))])
+    (Cowan, "Discovery sensitivity for a counting experiment with background
+    uncertainty"), reducing to sqrt(2[(S+B) ln(1+S/B) - S]) for v -> 0. The optimisers
+    use v = sum(w^2) of the background MC, so regions whose B rests on few, heavy MC
+    events are no longer rated as if B were known exactly. Vectorised; 0 where
+    S <= 0 or B <= 0.
+    """
+    S, B, V = np.broadcast_arrays(np.asarray(S, dtype=float), np.asarray(B, dtype=float),
+                                  np.maximum(np.asarray(B_var, dtype=float), 0.0))
+    Z = np.zeros(S.shape, dtype=float)
+    ok = (S > 0.0) & (B > 0.0)
+    if np.any(ok):
+        s, b, v = S[ok], B[ok], V[ok]
+        exact = v <= 1e-12 * b * b
+        v_safe = np.where(exact, 1.0, v)
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            f_exact = (s + b) * np.log1p(s / b) - s
+            f_unc = ((s + b) * np.log((s + b) * (b + v_safe) / (b * b + (s + b) * v_safe))
+                     - (b * b / v_safe) * np.log1p(v_safe * s / (b * (b + v_safe))))
+        f = np.where(exact, f_exact, f_unc)
+        Z[ok] = np.sqrt(2.0 * np.maximum(np.nan_to_num(f, nan=0.0), 0.0))
+    return Z if Z.ndim else float(Z)
+
+
+def asimov_z_with_error(S, B, sS, sB):
+    """(Z, sigma_Z): Z = asimov_z(S, B, sB^2); sigma_Z propagates the MC statistics of S
+    and B through central finite differences (sigma_B held fixed)."""
+    Z = float(asimov_z(S, B, sB * sB))
+    if Z <= 0.0:
+        return 0.0, 0.0
+    hS = 1e-6 * max(abs(S), 1e-12)
+    hB = 1e-6 * max(abs(B), 1e-12)
+    v = sB * sB
+    dZ_dS = (float(asimov_z(S + hS, B, v)) - float(asimov_z(S - hS, B, v))) / (2.0 * hS)
+    dZ_dB = (float(asimov_z(S, B + hB, v)) - float(asimov_z(S, max(B - hB, 1e-300), v))) / (2.0 * hB)
+    return Z, float(np.sqrt((dZ_dS * sS) ** 2 + (dZ_dB * sB) ** 2))
+
+
 # -------------------- Signal-region scan --------------------
 def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None):
     """Find a global set of non-overlapping high-D score rectangles.
@@ -897,6 +1022,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
     is_bkg = np.isin(y, BACKGROUND_CLASS_INDICES)
     w_sig = np.where(is_sig, w, 0.0)
     w_bkg = np.where(is_bkg, w, 0.0)
+    w2_bkg = np.where(is_bkg, w * w, 0.0)  # background MC variance for the sigma_B-aware Z
 
     S_total = float(w_sig.sum())
     B_total = float(w_bkg.sum())
@@ -933,23 +1059,10 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             return list(executor.map(fn, items))
 
     def _calc_Z(S, B, sS, sB):
-        if S <= 0.0 or B <= 0.0:
-            return 0.0, 0.0
-        f = (S + B) * np.log(1.0 + S / B) - S
-        if f <= 0.0:
-            return 0.0, 0.0
-        Z = float(np.sqrt(2.0 * f))
-        ln1sb = np.log(1.0 + S / B)
-        dZ_dS = ln1sb / Z
-        dZ_dB = (ln1sb - S / B) / Z
-        sZ = float(np.sqrt((dZ_dS * sS) ** 2 + (dZ_dB * sB) ** 2))
-        return Z, sZ
+        return asimov_z_with_error(S, B, sS, sB)
 
-    def _calc_Z_val(S, B):
-        if S <= 0.0 or B <= 0.0:
-            return 0.0
-        f = (S + B) * np.log(1.0 + S / B) - S
-        return float(np.sqrt(2.0 * max(0.0, f)))
+    def _calc_Z_val(S, B, B2):
+        return float(asimov_z(S, B, B2))
 
     EPS = 1e-12
 
@@ -1012,7 +1125,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     def _rect_SB(lo, hi):
         m = _rect_mask(lo, hi)
-        return float(w_sig[m].sum()), float(w_bkg[m].sum())
+        return float(w_sig[m].sum()), float(w_bkg[m].sum()), float(w2_bkg[m].sum())
 
     def _rect_stats(lo, hi):
         m = _rect_mask(lo, hi)
@@ -1021,6 +1134,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         return (
             float(w[ms].sum()),
             float(w[mb].sum()),
+            float(w2_bkg[mb].sum()),
             int(ms.sum()),
             int(mb.sum()),
         )
@@ -1143,7 +1257,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
 
     pool = {}  # key -> {"lo", "hi", "S", "B", "Z"}
 
-    def _evaluate_region(lo, hi, S_v=None, B_v=None):
+    def _evaluate_region(lo, hi, S_v=None, B_v=None, B2_v=None):
         lo = [float(v) for v in lo]
         hi = [float(v) for v in hi]
         if not _valid_region(lo, hi):
@@ -1151,36 +1265,37 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         if _overlaps_forbidden(lo, hi):
             return None
         entries_check = (MIN_SIGNAL_ENTRIES > 0 or MIN_BKG_ENTRIES > 0)
+        have_fast = S_v is not None and B_v is not None and B2_v is not None
         # Early reject using provided yields (cheap, no extra masking).
-        if S_v is not None and B_v is not None:
-            S_v, B_v = float(S_v), float(B_v)
+        if have_fast:
+            S_v, B_v, B2_v = float(S_v), float(B_v), float(B2_v)
             if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
                 return None
         if entries_check:
             # _rect_stats and _rect_SB both sum over the exact _rect_mask, so the
             # weights returned here are identical to _rect_SB's; compute once.
-            S_v, B_v, S_entries, B_entries = _rect_stats(lo, hi)
+            S_v, B_v, B2_v, S_entries, B_entries = _rect_stats(lo, hi)
             if S_entries < MIN_SIGNAL_ENTRIES or B_entries < MIN_BKG_ENTRIES:
                 return None
             if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
                 return None
         else:
-            if S_v is None or B_v is None:
-                S_v, B_v = _rect_SB(lo, hi)
+            if not have_fast:
+                S_v, B_v, B2_v = _rect_SB(lo, hi)
                 if B_v < MIN_BKG_WEIGHT or S_v <= MIN_SIGNAL_WEIGHT:
                     return None
-        Z = _calc_Z_val(S_v, B_v)
+        Z = _calc_Z_val(S_v, B_v, B2_v)
         if Z <= 0.0:
             return None
-        return {"lo": lo, "hi": hi, "S": S_v, "B": B_v, "Z": Z}
+        return {"lo": lo, "hi": hi, "S": S_v, "B": B_v, "B2": B2_v, "Z": Z}
 
-    def _add_to_pool(lo, hi, S_v=None, B_v=None):
+    def _add_to_pool(lo, hi, S_v=None, B_v=None, B2_v=None):
         lo = [float(v) for v in lo]
         hi = [float(v) for v in hi]
         key = _region_key(lo, hi)
         if key in pool:
             return pool[key]
-        item = _evaluate_region(lo, hi, S_v, B_v)
+        item = _evaluate_region(lo, hi, S_v, B_v, B2_v)
         if item is None:
             return None
         pool[key] = item
@@ -1205,22 +1320,23 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
         v_d = score_axes[:, d]
         hS, _ = np.histogram(v_d[m], bins=edges, weights=w_sig[m])
         hB, _ = np.histogram(v_d[m], bins=edges, weights=w_bkg[m])
+        hB2, _ = np.histogram(v_d[m], bins=edges, weights=w2_bkg[m])
         pS = np.r_[0.0, np.cumsum(hS)]
         pB = np.r_[0.0, np.cumsum(hB)]
+        pB2 = np.r_[0.0, np.cumsum(hB2)]
         K = pS.size
         a_idx = np.arange(K).reshape(-1, 1)
         b_idx = np.arange(K).reshape(1, -1)
         mask = b_idx > a_idx
         S_mat = pS[b_idx] - pS[a_idx]
         B_mat = pB[b_idx] - pB[a_idx]
+        B2_mat = pB2[b_idx] - pB2[a_idx]
         valid = mask & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > 0.0)
         if not valid.any():
             return []
         Bsafe = np.where(valid, B_mat, 1.0)
         Ssafe = np.where(valid, S_mat, 0.0)
-        f = (Ssafe + Bsafe) * np.log1p(Ssafe / Bsafe) - Ssafe
-        f = np.where(valid & (f > 0.0), f, 0.0)
-        Z2 = np.where(valid, 2.0 * f, -np.inf)
+        Z2 = np.where(valid, asimov_z(Ssafe, Bsafe, np.where(valid, B2_mat, 0.0)) ** 2, -np.inf)
         valid_count = int(np.count_nonzero(np.isfinite(Z2) & (Z2 > 0.0)))
         if valid_count == 0:
             return []
@@ -1250,6 +1366,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 float(edges[b_best]),
                 float(S_mat[a_best, b_best]),
                 float(B_mat[a_best, b_best]),
+                float(B2_mat[a_best, b_best]),
                 float(np.sqrt(Z2[a_best, b_best])),
             ))
             if len(intervals) >= take:
@@ -1358,7 +1475,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 if edge > EPS:
                     options.append((0.0, edge))
         if SEED_INTERVALS_PER_AXIS > 0:
-            for low_d, high_d, _S_v, _B_v, _Z in _top_intervals_on_axis(
+            for low_d, high_d, _S_v, _B_v, _B2_v, _Z in _top_intervals_on_axis(
                 d, full_lo, full_hi, edges, SEED_INTERVALS_PER_AXIS
             ):
                 lo = [0.0] * D
@@ -1474,18 +1591,18 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                 d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
             )
             updates = []
-            for low_d, high_d, S_v, B_v, _Z in intervals:
+            for low_d, high_d, S_v, B_v, B2_v, _Z in intervals:
                 lo = list(item["lo"])
                 hi = list(item["hi"])
                 lo[d] = low_d
                 hi[d] = high_d
-                updates.append((lo, hi, S_v, B_v))
+                updates.append((lo, hi, S_v, B_v, B2_v))
             return ib, updates
 
         processed_ib = -1
         for ib, updates in _parallel_map_ordered(_beam_task, tasks):
-            for lo, hi, S_v, B_v in updates:
-                new_item = _add_to_pool(lo, hi, S_v, B_v)
+            for lo, hi, S_v, B_v, B2_v in updates:
+                new_item = _add_to_pool(lo, hi, S_v, B_v, B2_v)
                 if new_item is not None:
                     produced.append(new_item)
             if ib != processed_ib:
@@ -1569,18 +1686,18 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                     d, item["lo"], item["hi"], edges_per_axis[d], TOP_INTERVALS_PER_AXIS
                 )
                 updates = []
-                for low_d, high_d, S_v, B_v, _Z in intervals:
+                for low_d, high_d, S_v, B_v, B2_v, _Z in intervals:
                     lo = list(item["lo"])
                     hi = list(item["hi"])
                     lo[d] = low_d
                     hi[d] = high_d
-                    updates.append((lo, hi, S_v, B_v, locked_axis))
+                    updates.append((lo, hi, S_v, B_v, B2_v, locked_axis))
                 return ib, updates
 
             processed_ib = -1
             for ib, updates in _parallel_map_ordered(_compat_task, tasks):
-                for lo, hi, S_v, B_v, locked_axis in updates:
-                    new_item = _add_to_pool(lo, hi, S_v, B_v)
+                for lo, hi, S_v, B_v, B2_v, locked_axis in updates:
+                    new_item = _add_to_pool(lo, hi, S_v, B_v, B2_v)
                     if new_item is not None:
                         produced_states.append((new_item, locked_axis))
                 if ib != processed_ib:
@@ -1677,13 +1794,13 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                     )
                     if not intervals:
                         continue
-                    for low_d, high_d, S_v, B_v, _Z in intervals:
+                    for low_d, high_d, S_v, B_v, B2_v, _Z in intervals:
                         lo_alt = list(lo)
                         hi_alt = list(hi)
                         lo_alt[d] = low_d
                         hi_alt[d] = high_d
-                        updates.append((lo_alt, hi_alt, S_v, B_v))
-                    low_d, high_d, S_v, B_v, Z_axis = intervals[0]
+                        updates.append((lo_alt, hi_alt, S_v, B_v, B2_v))
+                    low_d, high_d, S_v, B_v, _B2_v, Z_axis = intervals[0]
                     boundary_changed = (
                         abs(low_d - lo[d]) > 1e-12 or abs(high_d - hi[d]) > 1e-12
                     )
@@ -1694,7 +1811,7 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
                         changed = True
                 refined = _evaluate_region(lo, hi)
                 if refined is not None:
-                    updates.append((list(lo), list(hi), refined["S"], refined["B"]))
+                    updates.append((list(lo), list(hi), refined["S"], refined["B"], refined["B2"]))
                     prev_Z = refined["Z"]
                 if not changed:
                     break
@@ -1704,12 +1821,12 @@ def find_signal_regions(proba, y, w, forbidden_regions=None, target_regions=None
             # matching _add_to_pool semantics).
             evaluated = []
             seen = set()
-            for lo_u, hi_u, S_u, B_u in updates:
+            for lo_u, hi_u, S_u, B_u, B2_u in updates:
                 key = _region_key(lo_u, hi_u)
                 if key in seen:
                     continue
                 seen.add(key)
-                it = _evaluate_region(lo_u, hi_u, S_u, B_u)
+                it = _evaluate_region(lo_u, hi_u, S_u, B_u, B2_u)
                 if it is not None:
                     evaluated.append((key, it))
             return ic, evaluated
@@ -2463,21 +2580,9 @@ def print_results(result):
 
 
 # -------------------- Main --------------------
-def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    log_message(
-        f"Running signal_region.py: tree={TREE_NAME}, lumi={LUMI} fb^-1, "
-        f"n_signal_regions={N_SIGNAL_REGIONS}, bdt_root={BDT_ROOT}, output_dir={OUTPUT_DIR}"
-    )
-
-    sel         = sel_cfg[TREE_NAME]
-    branches    = [b["name"] for b in br_cfg[TREE_NAME]]
-    clip_ranges = {k: tuple(v) for k, v in sel.get("clip_ranges", {}).items()}
-    log_tf      = sel.get("log_transform", [])
-    thresholds  = {k: (tuple(v) if isinstance(v, list) else v)
-                   for k, v in sel.get("thresholds", {}).items()}
-    decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
-
+def _load_and_predict_opt_split(branches, thresholds, decorrelate, clip_ranges, log_tf):
+    """Single model: OPT_SPLIT events, thresholds, model inference and reference validation.
+    Returns (proba, y, w, sample_labels)."""
     # Threshold and decorrelate branches that are NOT declared in branch.json
     # still need to be read from the ROOT files so filter_X can cut on them and
     # the decorrelation step can reference them. They are removed from X before
@@ -2490,8 +2595,9 @@ def main():
     load_cols = branches + extra_cols
     drop_after_filter = [c for c in extra_cols if c not in decorrelate]
 
-    # Load the test data once; the physics weights stay fixed afterwards.
-    df_all = load_test_data(load_cols)
+    # Load the optimisation split once; the physics weights stay fixed afterwards.
+    log_message(f"SR optimisation split: {OPT_SPLIT}")
+    df_all = load_split_data(load_cols, OPT_SPLIT)
     X             = df_all[load_cols].copy()
     y             = df_all["class_idx"].values.astype(int)
     w             = df_all["weight"].values.astype(float)
@@ -2530,15 +2636,40 @@ def main():
     log_message("Running model prediction")
     proba = _predict_model_proba(clf, X_model)
     log_message(f"Predicted probabilities shape: {proba.shape}")
-    log_message("Validating test-set prediction reference")
+    log_message(f"Validating {OPT_SPLIT}-set prediction reference")
     _compare_prediction_reference(
-        TEST_REFERENCE_SIGNAL_REGION,
+        OPT_REFERENCE_SIGNAL_REGION,
         X_model.columns if hasattr(X_model, "columns") else [f"f{i}" for i in range(X_model.shape[1])],
         sample_labels,
         y,
         w,
         proba,
     )
+
+    return proba, y, w, sample_labels
+
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    log_message(
+        f"Running signal_region.py: tree={TREE_NAME}, lumi={LUMI} fb^-1, "
+        f"n_signal_regions={N_SIGNAL_REGIONS}, bdt_root={BDT_ROOT}, output_dir={OUTPUT_DIR}"
+    )
+
+    sel         = sel_cfg[TREE_NAME]
+    branches    = [b["name"] for b in br_cfg[TREE_NAME]]
+    clip_ranges = {k: tuple(v) for k, v in sel.get("clip_ranges", {}).items()}
+    log_tf      = sel.get("log_transform", [])
+    thresholds  = {k: (tuple(v) if isinstance(v, list) else v)
+                   for k, v in sel.get("thresholds", {}).items()}
+    decorrelate = cfg.get(TREE_NAME, {}).get("decorrelate", [])
+
+    if KFOLD:
+        proba, y, w, sample_labels = load_kfold_inputs(thresholds)
+    else:
+        proba, y, w, sample_labels = _load_and_predict_opt_split(
+            branches, thresholds, decorrelate, clip_ranges, log_tf
+        )
 
     # Plot the weighted score distributions.
     log_message("Plotting score distributions")

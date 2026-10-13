@@ -5493,7 +5493,8 @@ private:
         const ArrayInputConfig* tagField = isAK8 ? in.ak8TagXbb : in.ak4Tag;
         string category = "inclusive";
         if (isMC && flavourField != nullptr) {
-            category = (std::abs(flavourField->valueAt(index) - 5.f) < 0.5f) ? "b" : "light";
+            // b and anti-b (partonFlavour +-5) are both "b".
+            category = (std::abs(std::abs(flavourField->valueAt(index)) - 5.f) < 0.5f) ? "b" : "light";
         } else if (!isMC && tagField != nullptr) {
             float score = tagField->valueAt(index);
             if (isAK8 && in.ak8TagQcd != nullptr) {

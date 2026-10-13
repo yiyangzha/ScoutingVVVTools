@@ -37,6 +37,7 @@
   "jms_syst_json": "../selections/jms_syst/output/jms_syst_yields.json",
   "jmr_syst_json": "../selections/jmr_syst/output/jmr_syst_yields.json",
   "trigger_unc": 0.03,
+  "xsec_unc_json": "./xsec_unc.json",
   "mc_stat_threshold": 10,
   "enabled_nuisances": [],
   "use_root_covariance": false,

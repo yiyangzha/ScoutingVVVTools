@@ -37,6 +37,7 @@ Outputs (written to output_dir):
 
 import csv
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -53,6 +54,7 @@ _BDT_TOOLS_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "BDT"))
 if _BDT_TOOLS_DIR not in sys.path:
     sys.path.insert(0, _BDT_TOOLS_DIR)
 import model_io  # noqa: E402
+import kfold  # noqa: E402
 
 sys.path.insert(0, os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "mc_weight_common")))
 import mc_weights  # noqa: E402
@@ -232,7 +234,12 @@ def _load_thresholds(bdt_dir, tree_name):
 def _build_tree_context(tree):
     """Return context dict; always has 'thresholds'; has model/region info if enabled."""
     bdt_dir = _bdt_dir_for(tree)
-    ctx = {"thresholds": _load_thresholds(bdt_dir, tree), "regions_enabled": False}
+    # k-fold models (train.py kfold = K): configs from fold0, every MC event scored with the model
+    # of the k-fold block holding it (selections/BDT/kfold.py).
+    kf = kfold.KFoldModels(bdt_dir, log=log) if bdt_dir is not None and kfold.is_kfold_root(bdt_dir) else None
+    if kf is not None:
+        bdt_dir = kf.fold_dirs[0]
+    ctx = {"thresholds": _load_thresholds(bdt_dir, tree), "regions_enabled": False, "kfold": kf}
 
     sr_csv = _sr_csv_for(tree)
     if bdt_dir is None or sr_csv is None:
@@ -258,7 +265,7 @@ def _build_tree_context(tree):
 
     model_pattern = bcfg.get("model_pattern", "{output_root}/{tree_name}_model")
     model_base = model_pattern.format(output_root=bdt_dir, tree_name=tree)
-    model = model_io.load_model(model_base, bcfg, len(class_names), log_message=log)
+    model = None if kf is not None else model_io.load_model(model_base, bcfg, len(class_names), log_message=log)
 
     sr_df = pd.read_csv(sr_csv)
     if sr_df.empty:
@@ -274,6 +281,8 @@ def _build_tree_context(tree):
         clip_ranges=clip_ranges, log_transform=log_transform,
         decorrelate=decorrelate, sr_df=sr_df, axes=axes, bin_ids=bin_ids,
         sr_csv=sr_csv,
+        # SR provenance for combine: first 13 hex digits of the SHA-256 of the SR CSV bytes.
+        sr_csv_hash=hashlib.sha256(open(sr_csv, "rb").read()).hexdigest()[:13],
     )
     log(f"  [{tree}] regions enabled: {len(bin_ids)} SRs from {os.path.basename(sr_csv)}, "
         f"axes={axes}")
@@ -332,7 +341,7 @@ def _threshold_mask(data_np, thresholds):
     return mask
 
 
-def _infer_proba(chunk, mask, ctx):
+def _infer_proba(chunk, mask, ctx, folds=None):
     cols = {}
     for name in ctx["feature_cols"]:
         if name not in chunk:
@@ -347,6 +356,8 @@ def _infer_proba(chunk, mask, ctx):
         drop = [c for c in ctx["decorrelate"] if c in X.columns]
         if drop:
             X = X.drop(columns=drop)
+    if ctx.get("kfold") is not None:
+        return ctx["kfold"].predict(X, folds)
     return model_io.predict_model_proba(ctx["model"], X, ctx["num_classes"])
 
 
@@ -380,6 +391,10 @@ def _compute_ratios(sample_name, ctx):
     sum_w_up = np.zeros(n_slots, dtype=np.float64)
     sum_w_dn = np.zeros(n_slots, dtype=np.float64)
     n_events = np.zeros(n_slots, dtype=np.int64)
+    kf = ctx.get("kfold") if enabled else None
+    if kf is not None:
+        kf.check_files(sample_name, files)
+        offsets = kf.file_offsets(sample_name)
 
     for fpath in files:
         with uproot.open(fpath) as uf:
@@ -391,8 +406,8 @@ def _compute_ratios(sample_name, ctx):
                 raise KeyError(f"{fpath}:{ctx['_tree']} lacks the branches {missing} "
                                f"(PU weights come from mode 1, weight.C)")
 
-            for chunk in tree.iterate(expressions=load_list, step_size=CHUNK_SIZE,
-                                      library="np"):
+            for chunk, report in tree.iterate(expressions=load_list, step_size=CHUNK_SIZE,
+                                              library="np", report=True):
                 mask = _threshold_mask(chunk, thresholds)
                 if not mask.any():
                     continue
@@ -408,7 +423,9 @@ def _compute_ratios(sample_name, ctx):
                 n_events[0] += int(mask.sum())
 
                 if enabled:
-                    proba = _infer_proba(chunk, mask, ctx)
+                    folds = (kf.fold_of_index(sample_name, offsets[fpath] + report.tree_entry_start
+                                              + np.flatnonzero(mask)) if kf is not None else None)
+                    proba = _infer_proba(chunk, mask, ctx, folds)
                     for j in range(len(ctx["bin_ids"])):
                         rmask = _region_mask(
                             proba, ctx["sr_df"].iloc[j], ctx["axes"],
@@ -501,6 +518,7 @@ def main():
                         log(f"    SR{bid}: n={rr['n_events']}"
                             f"  pu_up={_pct(rr['pu_up'])}  pu_down={_pct(rr['pu_down'])}")
                 entry["regions"] = region_out
+                entry["sr_csv_hash"] = ctx["sr_csv_hash"]
 
             all_results[(sample_name, tree_name)] = entry
 

@@ -7,7 +7,22 @@
   "min_bkg_weight": 5.0,
   "min_signal_weight": 0.0,
   "min_signal_entries": 0,
-  "min_bkg_entries": 50,
+  "min_bkg_entries": 0,
+  "zero_count_floor": true,
+  "exclude_samples": [
+    "qcd_ht40to70",
+    "qcd_ht70to100",
+    "qcd_ht100to200",
+    "qcd_ht200to400"
+  ],
+  "abcd_uncertainty": {
+    "branch": "ScoutingFatPFJetRecluster_msoftdrop_1",
+    "control_window": [
+      20.0,
+      50.0
+    ],
+    "nonclosure": 0.2
+  },
   "coarse_bin_width": 0.01,
   "fine_bin_width": 0.001,
   "fine_refine_window": 0.05,
@@ -34,5 +49,6 @@
     "jer": "../jer_syst/output/inclusive/jer_syst_yields.json",
     "jms": "../jms_syst/output/inclusive/jms_syst_yields.json",
     "jmr": "../jmr_syst/output/inclusive/jmr_syst_yields.json"
-  }
+  },
+  "xsec_unc_json": "../../combine/xsec_unc.json"
 }

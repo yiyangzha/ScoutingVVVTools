@@ -1,0 +1,34 @@
+{
+  "status": "PROPOSED 2026-10-09, to be reviewed: inclusive theory cross-section uncertainties (scale + PDF + alpha_s, symmetrised to the larger side) that replace the inclusive part of the theory variations (theory_syst.py normalises them to the generated events)",
+  "uncertainties": {
+    "www": 0.1,
+    "wwz": 0.1,
+    "wzz": 0.1,
+    "zzz": 0.1,
+    "ZH-*": 0.02,
+    "GluGluZH-*": 0.25,
+    "WplusH-*": 0.02,
+    "WminusH-*": 0.02,
+    "ttbar_*": 0.045,
+    "tbarwplus_*": 0.055,
+    "twminus_*": 0.055,
+    "WW*": 0.1,
+    "WZ*": 0.1,
+    "ZZ*": 0.1,
+    "wjets_*": 0.1,
+    "zjets_*": 0.1,
+    "wlnu_*": 0.1,
+    "dy_*": 0.1,
+    "qcd_*": 0.0
+  },
+  "sources": {
+    "VVV": "NLO generator cross sections from the MC production (MadGraph5_aMC@NLO; user, 2026-10-12); scale + PDF ~5-7% plus the missing NLO EW corrections: 10% as a placeholder, no 13.6 TeV reference found yet (TO CHECK)",
+    "qqZH, WH": "LHC Higgs WG, arXiv:2402.09955 (13.6 TeV, Tables 3-4): WH +0.4/-0.7% scale, 1.8% PDF+alpha_s; pp->ZH +3.7/-3.2% scale (driven by gg->ZH), 1.6% PDF+alpha_s; qq->ZH alone ~1% scale -> 2%",
+    "ggZH": "O(25%) scale uncertainty of the one-loop gg->ZH process in YR4 (CERN-2017-002), as quoted in arXiv:2508.09905",
+    "ttbar": "CMS, arXiv:2303.10680: 13.6 TeV NNLO+NNLL prediction 924 +32/-40 pb (+3.5/-4.3%) -> 4.5%",
+    "tW": "approximate NNLO at 13 TeV, 71.7 +- 3.9 pb (5.4%, ATLAS summary arXiv:1708.06610; Kidonakis arXiv:1510.06361); no 13.6 TeV value found -> 5.5%",
+    "VV": "since 2026-10-13 normalised to NNLO QCD + NLO EW from MATRIX 2.1.0 (13.6 TeV, user; quoted as value, scale (asymmetric), PDF (symmetric)): WW from pp->e- mu+ nu_mu nubar_e = 1565.2 +3.5% -3.0% +- 0.8% fb divided by BR(W->e nu) BR(W->mu nu) = 0.1071 x 0.1063 (PDG 2024) -> sigma(WW) = 137.48 pb, times the PDG W branching fractions of each sample; WZ and ZZ from runs with m(OSSF) > 4 GeV, which include gamma* -> ll and photon radiation off the leptons, so sigma x BR is not valid for hadronic or invisible Z decays: the samples' NLO generator cross sections are scaled by the NNLO QCD + NLO EW / NLO QCD ratio of the same run, WZ (pp->e- mu- e+ nubar_mu) 239.1 +0.6% -0.8% +- 1.1% / 229.1 +2.6% -3.4% +- 0.2% fb = 1.0436, ZZ (pp->e+ e- nu_mu nubar_mu) 133.3 +2.7% -2.3% +- 0.6% / 115.4 +1.8% -2.2% +- 0.2% fb = 1.1551 (assumes the FxFx-merged samples are normalised like fixed-order NLO). Previous generator values (fb): WWTo4Q 54820, WWToLNu2Q 52980, WZto2L2Q 6724, WZto2Nu2Q 7188, WZto4Q 24880, WZtoLNu2Q 12110, ZZto2L2Q 3860, ZZto2Nu2Q 4522, ZZto4L 1499, ZZto4Q 7832. Inclusive scale (+) PDF: WW 3.6%, WZ 1.4%, ZZ 2.8%; 10% (user, 2026-10-13, 'for now') covers the boosted phase space of the analysis (V pT > 175 GeV), where the NLO EW correction is about -10 to -20% and the NNLO/NLO ratio depends on pT (arXiv:1912.00068); differential k-factors in V pT would allow ~5%",
+    "V+jets": "HT-binned LO MadGraph cross sections; 10% as a conventional normalisation uncertainty (TO CHECK; a data-driven normalisation or NLO k-factors would replace it)",
+    "QCD": "data-driven (ABCD) in the analysis; 0 here, so the MC-true QCD reference gets no cross-section row"
+  }
+}

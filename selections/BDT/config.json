@@ -13,17 +13,25 @@
   "model_pattern": "{output_root}/{tree_name}_model",
   "model_type": "bdt",
   "entries_per_sample": 750000,
+  "train_events_per_class": {
+    "Top": 3000000
+  },
+  "eval_events_per_class": 0,
+  "test_events_per_class": 0,
   "test_entries_per_sample": 500000,
-  "train_fraction": 0.7,
+  "eval_entries_per_sample": 500000,
+  "train_fraction": 0.6,
+  "eval_fraction": 0.2,
+  "kfold": 5,
   "random_state": 42,
   "decor_lambda": 2,
   "decor_loss_mode": "smooth_cvm",
-  "decor_n_bins": 5,
+  "decor_n_bins": 10,
   "decor_n_thresholds": 15,
   "metric_eval_every": 5,
   "decor_score_tau": 0.2,
   "decor_bin_tau_scale": 0.25,
-  "decor_msoftdrop_training_max": 200,
+  "decor_msoftdrop_training_max": 250,
   "class_groups": {
     "VVV": [
       "www",
@@ -74,6 +82,8 @@
       "WZto4Q",
       "WZtoLNu2Q",
       "ZZto2L2Q",
+      "ZZto2Nu2Q",
+      "ZZto4L",
       "ZZto4Q"
     ],
     "VJets": [
@@ -110,6 +120,8 @@
       "dy_h800to1500_m50to120"
     ],
     "QCD": [
+      "qcd_ht40to70",
+      "qcd_ht70to100",
       "qcd_ht100to200",
       "qcd_ht200to400",
       "qcd_ht400to600",
@@ -123,16 +135,16 @@
   },
   "boosted3": {
     "n_estimators": 1500,
-    "n_estimators_decorr": 1000,
-    "max_depth": 7,
+    "n_estimators_decorr": 1500,
+    "max_depth": 4,
     "gamma": 2,
     "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
+    "learning_rate_decorr": 0.05,
+    "min_learning_rate": 0.005,
     "lr_reduce_patience": 4,
     "reg_lambda": 6,
     "reg_alpha": 1,
-    "min_child_weight": 5,
+    "min_child_weight": 50,
     "subsample": 0.75,
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
@@ -151,20 +163,21 @@
     "event_reweight_branches": [
       "genWeight",
       "weight_pu"
-    ]
+    ],
+    "training_weight_cap": 20
   },
   "boosted2_resolved": {
     "n_estimators": 1200,
-    "n_estimators_decorr": 800,
-    "max_depth": 6,
+    "n_estimators_decorr": 1500,
+    "max_depth": 4,
     "gamma": 2,
     "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
+    "learning_rate_decorr": 0.05,
+    "min_learning_rate": 0.005,
     "lr_reduce_patience": 4,
     "reg_lambda": 5,
     "reg_alpha": 1,
-    "min_child_weight": 5,
+    "min_child_weight": 50,
     "subsample": 0.8,
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
@@ -183,20 +196,21 @@
     "event_reweight_branches": [
       "genWeight",
       "weight_pu"
-    ]
+    ],
+    "training_weight_cap": 20
   },
   "boosted2_unresolved": {
     "n_estimators": 1200,
-    "n_estimators_decorr": 800,
-    "max_depth": 6,
+    "n_estimators_decorr": 1500,
+    "max_depth": 4,
     "gamma": 2,
     "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
+    "learning_rate_decorr": 0.05,
+    "min_learning_rate": 0.005,
     "lr_reduce_patience": 4,
     "reg_lambda": 5,
     "reg_alpha": 1,
-    "min_child_weight": 5,
+    "min_child_weight": 50,
     "subsample": 0.8,
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
@@ -215,20 +229,21 @@
     "event_reweight_branches": [
       "genWeight",
       "weight_pu"
-    ]
+    ],
+    "training_weight_cap": 20
   },
   "boosted2_leptonic_1lep": {
     "n_estimators": 1200,
-    "n_estimators_decorr": 800,
-    "max_depth": 6,
+    "n_estimators_decorr": 1500,
+    "max_depth": 4,
     "gamma": 2,
     "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
+    "learning_rate_decorr": 0.05,
+    "min_learning_rate": 0.005,
     "lr_reduce_patience": 4,
     "reg_lambda": 5,
     "reg_alpha": 1,
-    "min_child_weight": 5,
+    "min_child_weight": 50,
     "subsample": 0.8,
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
@@ -247,20 +262,21 @@
     "event_reweight_branches": [
       "genWeight",
       "weight_pu"
-    ]
+    ],
+    "training_weight_cap": 20
   },
   "boosted2_leptonic_2lep": {
     "n_estimators": 1200,
-    "n_estimators_decorr": 800,
-    "max_depth": 6,
+    "n_estimators_decorr": 1500,
+    "max_depth": 4,
     "gamma": 2,
     "learning_rate": 0.05,
-    "learning_rate_decorr": 0.02,
-    "min_learning_rate": 0.001,
+    "learning_rate_decorr": 0.05,
+    "min_learning_rate": 0.005,
     "lr_reduce_patience": 4,
     "reg_lambda": 5,
     "reg_alpha": 1,
-    "min_child_weight": 5,
+    "min_child_weight": 50,
     "subsample": 0.8,
     "colsample_bytree": 0.9,
     "colsample_bynode": 0.9,
@@ -279,9 +295,12 @@
     "event_reweight_branches": [
       "genWeight",
       "weight_pu"
-    ]
+    ],
+    "training_weight_cap": 20
   },
   "decor_tail_aware": true,
-  "decor_tail_min_prob": 0.002,
-  "decor_tail_n": 8
+  "decor_tail_min_prob": 0.0002,
+  "decor_tail_n": 10,
+  "decor_eff_normalize": true,
+  "decor_eff_norm_floor": 0.0001
 }

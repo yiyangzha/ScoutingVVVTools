@@ -1,33 +1,52 @@
 """Histogram-based coarse-to-fine signal-region optimizer (run.py mode 3).
 
-It finds N non-overlapping two-sided score rectangles maximising the combined
-significance sqrt(sum Z_i^2), where each region's Z is the Asimov significance
-with a background uncertainty (Cowan et al., arXiv:1007.1727, Eq. 97)
+It finds N non-overlapping two-sided score rectangles. Each region is rated with
+the Asimov significance with a background uncertainty (G. Cowan, "Discovery
+sensitivity for a counting experiment with background uncertainty"; sr.asimov_z)
 
     Z_A = sqrt(2 [(S+B) ln((S+B)(B+V) / (B^2+(S+B)V)) - (B^2/V) ln(1 + V S / (B (B+V)))])
 
-with V = sum_k (sum_c delta_kc B_c)^2 + sum_bkg w^2: delta_kc is the signed
-relative shift of background class c under nuisance k (lumi, trigger, and the
-inclusive theory, pileup, JES, JER, JMS, and JMR ratios of the configured
-*_syst_yields.json files, yield-weighted over the class's samples), each
-nuisance fully correlated across the classes as in the combine cards, and
-sum w^2 the MC statistical variance. Steps:
+whose background B and variance V follow the combine cards:
+
+  * B is the background MC; with abcd_uncertainty (ABCD mode, k-fold models) its
+    QCD part is the prediction from the region's control-region events,
+    C_box x TF, as qcd_est.py abcd_mode per_sr and combine's control-region fit.
+  * V = sum_k (sum_c delta_kc B_c)^2 + sum w^2 + floor (+ ABCD). delta_kc is the
+    signed relative shift of background class c under nuisance row k of the cards:
+    lumi, trigger, theory_pdf, theory_ps_isr, theory_ps_fsr, pileup, JES, JER,
+    JMS, JMR (each correlated across the classes; the inclusive ratios of the
+    configured *_syst_yields.json files, yield-weighted over the class's samples)
+    and one theory_scale_<class> and one xsec_<class> row per class (combine.C's
+    per-process rows; xsec_unc_json). sum w^2 is the MC statistics of the
+    background MC; the optional zero-count floor (zero_count_floor) adds alpha_c^2
+    for every background class c without MC events (or with a non-positive sum) in
+    the region, as combine's `gmN 0 alpha` rows. In ABCD mode the QCD has no shifts,
+    MC statistics or floor; its variance TF^2 x (control count + non-QCD MC w^2 in
+    the control box) + (nonclosure x predicted QCD)^2 is added instead.
+
+Steps:
 
   1. Coarse pass: coordinate-descent beam search on a uniform grid (a finer grid
      on the QCD axis), repeated with disjoint re-seeding.
-  2. Event-mask deduplication: every candidate is shrunk to the smallest box
-     selecting the same events, and candidates selecting identical events are
-     merged.
+  2. Deduplication: every candidate is shrunk to the smallest box holding the same
+     scan events (and, in ABCD mode, control events), and candidates holding
+     identical events are merged.
   3. Selection: branch-and-bound (OpenMP helper openmp_region_select.cpp, or
      Python) picking N mutually non-overlapping rectangles that maximise
-     sum(Z_i^2); a stopped search reports its upper-bound certificate.
-  4. Fine pass: refine each selected boundary on the fine grid, locally, with the
-     full acceptance constraints.
-  5. Boundaries inside empty score gaps: each region is shrunk to its events
+     sum(Z_A,i^2); a stopped search reports its upper-bound certificate.
+  4. Joint stage: one region at a time is replaced by the compatible candidate of
+     highest Z_A that most increases the joint significance Z_joint of the set,
+     a profile-likelihood Asimov fit of all regions with the correlated nuisance
+     rows above (and the ABCD non-closure correlated across the regions), so the
+     correlations of the systematics and their constraint by other regions enter
+     the choice (joint_z).
+  5. Fine pass: refine each selected boundary on the fine grid, locally, with the
+     full acceptance constraints, kept only when it does not lower Z_joint.
+  6. Boundaries inside empty score gaps: each region is shrunk to its events
      again, then signal-class axis upper bounds are raised and background-class
-     axis lower bounds lowered into MC-empty space, so signal-axis bounds sit as
-     high and background-axis bounds as low as the same events allow, without
-     overlapping another region.
+     axis lower bounds lowered into space without scan or control events, so
+     signal-axis bounds sit as high and background-axis bounds as low as the same
+     events allow, without overlapping another region.
 
 Data loading, model inference, per-bin statistics layout, text reporting and all
 plotting are reused from ``signal_region.py`` (imported as ``sr``).
@@ -43,6 +62,7 @@ import json
 import gc
 import time
 import ctypes
+import fnmatch
 import hashlib
 import subprocess
 
@@ -62,6 +82,7 @@ os.environ["SCAN_CONFIG_PATH"] = HIST_CFG_PATH
 
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
+from scipy.optimize import minimize
 
 import signal_region as sr  # triggers module-level config load from HIST_CFG_PATH
 
@@ -89,6 +110,8 @@ VALIDATE_REF   = bool(_hist_cfg.get("validate_prediction_reference", True))
 BKG_SYST_JSONS = dict(_hist_cfg["background_syst_jsons"])
 LUMI_UNC       = float(_hist_cfg["lumi_unc"])
 TRIGGER_UNC    = float(_hist_cfg["trigger_unc"])
+# Per-sample cross-section uncertainties of combine.C's xsec_<process> rows (fnmatch patterns).
+XSEC_UNC_JSON  = str(_hist_cfg["xsec_unc_json"])
 SYST_RATIO_KEYS = {
     "theory": (("pdf_up", "pdf_down"), ("scale_up", "scale_down"),
                ("ps_isr_up", "ps_isr_down"), ("ps_fsr_up", "ps_fsr_down")),
@@ -158,6 +181,32 @@ MIN_BKG_WEIGHT     = sr.MIN_BKG_WEIGHT
 MIN_SIGNAL_WEIGHT  = sr.MIN_SIGNAL_WEIGHT
 MIN_SIGNAL_ENTRIES = sr.MIN_SIGNAL_ENTRIES
 MIN_BKG_ENTRIES    = sr.MIN_BKG_ENTRIES
+# Zero-count floor: in a region where a background class has no MC events (or a non-positive
+# weighted sum), its typical event weight alpha is added in quadrature to sigma_B, as combine's
+# `gmN 0 alpha` rows do for an empty process, so regions that are free of a class's MC events
+# only by chance (e.g. heavy QCD events) are not rated as background-free.
+ZERO_COUNT_FLOOR   = bool(sr.scan_cfg.get("zero_count_floor", False))
+# Samples left out of the scan (exclude_samples, default none), as in qcd_est.py: e.g. the
+# HT < 400 GeV QCD samples, whose few very heavy events set the ABCD transfer factor.
+EXCLUDE_SAMPLES    = set(sr.scan_cfg.get("exclude_samples", []))
+# ABCD-aware background uncertainty (abcd_uncertainty, default off; k-fold models only): QCD is
+# predicted per SR from its control region, A = C x TF (qcd_est.py abcd_mode per_sr, combine's
+# control-region fit), so in every box the QCD part of sigma_B^2 is TF^2 x (C + sum w^2 of the
+# non-QCD background MC in C), C being the expected control-region count (every process), plus
+# (nonclosure x QCD)^2, instead of the QCD MC statistics; QCD gets no zero-count floor.
+#   {"branch": <ABCD branch, a threshold of selection.json>, "control_window": [low, high]
+#    (exclusive, in the branch's fail region), "nonclosure": <fraction>}
+ABCD_CFG = sr.scan_cfg.get("abcd_uncertainty")
+if ABCD_CFG is not None:
+    ABCD_BRANCH = str(ABCD_CFG["branch"])
+    ABCD_CONTROL = tuple(float(v) for v in ABCD_CFG["control_window"])
+    ABCD_NONCLOSURE = float(ABCD_CFG["nonclosure"])
+    if len(ABCD_CONTROL) != 2 or not ABCD_CONTROL[0] < ABCD_CONTROL[1] or ABCD_NONCLOSURE < 0.0:
+        raise ValueError(f"abcd_uncertainty needs control_window [low, high] with low < high and "
+                         f"nonclosure >= 0, got {ABCD_CFG}")
+    if not sr.KFOLD:
+        raise RuntimeError("abcd_uncertainty needs a k-fold bdt_root (the score cache holds the "
+                           "control-region events)")
 EPS = 1e-12
 
 log_message = sr.log_message
@@ -195,7 +244,14 @@ def prepare_inputs():
     load_cols = branches + extra_cols
     drop_after_filter = [c for c in extra_cols if c not in decorrelate]
 
-    df_all = sr.load_test_data(load_cols)
+    log_message(f"SR optimisation split: {sr.OPT_SPLIT}")
+    if sr.KFOLD and ABCD_CFG is not None:
+        return load_kfold_with_control(thresholds)
+    if sr.KFOLD:
+        proba, y, w, sample_labels = sr.load_kfold_inputs(thresholds)
+        proba, y, w, sample_labels = _exclude_samples(proba, y, w, sample_labels)
+        return proba, y, w, sample_labels, [], None
+    df_all = sr.load_split_data(load_cols, sr.OPT_SPLIT)
     X             = df_all[load_cols].copy()
     y             = df_all["class_idx"].values.astype(int)
     w             = df_all["weight"].values.astype(float)
@@ -233,15 +289,51 @@ def prepare_inputs():
     log_message(f"Predicted probabilities shape: {proba.shape}")
 
     if VALIDATE_REF:
-        log_message("Validating test-set prediction reference")
+        log_message(f"Validating {sr.OPT_SPLIT}-set prediction reference")
         sr._compare_prediction_reference(
-            sr.TEST_REFERENCE_SIGNAL_REGION,
+            sr.OPT_REFERENCE_SIGNAL_REGION,
             X_model.columns if hasattr(X_model, "columns")
             else [f"f{i}" for i in range(X_model.shape[1])],
             sample_labels, y, w, proba,
         )
 
-    return proba, y, w, sample_labels, list(X_model.columns)
+    proba, y, w, sample_labels = _exclude_samples(proba, y, w, sample_labels)
+    return proba, y, w, sample_labels, list(X_model.columns), None
+
+
+def _exclude_samples(proba, y, w, sample_labels):
+    """Drop the events of EXCLUDE_SAMPLES (no-op without them)."""
+    if not EXCLUDE_SAMPLES:
+        return proba, y, w, sample_labels
+    keep = ~np.isin(np.asarray(sample_labels, dtype=str), sorted(EXCLUDE_SAMPLES))
+    log_message(f"Excluding samples {sorted(EXCLUDE_SAMPLES)}: {int(np.count_nonzero(~keep))} events "
+                f"(weight {float(np.asarray(w)[~keep].sum()):.6g})")
+    return proba[keep], np.asarray(y)[keep], np.asarray(w)[keep], np.asarray(sample_labels)[keep]
+
+
+def load_kfold_with_control(thresholds):
+    """k-fold score cache with the ABCD control region: the events passing every threshold (the
+    scan events, as sr.load_kfold_inputs) and the events passing every threshold but the ABCD
+    branch's that lie in its control window inside its fail region (qcd_est.py per_sr)."""
+    if ABCD_BRANCH not in thresholds:
+        raise KeyError(f"abcd_uncertainty branch {ABCD_BRANCH} has no threshold in selection.json")
+    models = sr.kfold.KFoldModels(sr.BDT_ROOT, log=log_message)
+    samples = [s for members in sr.CLASS_GROUPS.values() for s in members]
+    others = {k: v for k, v in thresholds.items() if k != ABCD_BRANCH}
+    log_message(f"Loading the k-fold score cache: {models.k} folds, {len(samples)} samples "
+                f"(every threshold but {ABCD_BRANCH})")
+    scores = sr.kfold.load_scores(models, samples, branches=[ABCD_BRANCH], thresholds=others, log=log_message)
+    v = np.asarray(scores["columns"][ABCD_BRANCH], dtype=float)
+    passed = sr.kfold.threshold_mask({ABCD_BRANCH: v}, {ABCD_BRANCH: thresholds[ABCD_BRANCH]})
+    control = ~passed & (v > ABCD_CONTROL[0]) & (v < ABCD_CONTROL[1])
+    w = scores["weight"] * sr.LUMI
+    y = scores["class_idx"].astype(int)
+    labels = scores["sample_name"]
+    proba, yA, wA, lA = _exclude_samples(scores["proba"][passed], y[passed], w[passed], labels[passed])
+    pC, yC, wC, _ = _exclude_samples(scores["proba"][control], y[control], w[control], labels[control])
+    log_message(f"After thresholds: {len(wA)} events (all MC entries, k-fold scores); control window "
+                f"{ABCD_CONTROL[0]:g} < {ABCD_BRANCH} < {ABCD_CONTROL[1]:g}: {len(wC)} events")
+    return proba, yA, wA, lA, [], {"proba": pC, "y": yC, "w": wC}
 
 
 # -------------------- Background systematic shifts --------------------
@@ -249,43 +341,66 @@ def _resolve_cfg_path(path):
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(_SCRIPT_DIR, path))
 
 
-def background_syst_shifts(y, w, sample_labels):
-    """Signed relative background shifts delta[k, c] of every nuisance k for every
-    background class c of this tree (rows: lumi, trigger, then each up/down pair of
-    SYST_RATIO_KEYS; columns follow sr.BACKGROUND_CLASS_INDICES).
+def _sample_xsec_unc(xsec_unc, sample):
+    """Cross-section uncertainty of a sample: the value of the xsec_unc_json pattern(s) matching
+    it (fnmatch, as combine.C's sampleXsecUnc); every matching pattern must give the same value."""
+    value = None
+    for pattern, unc in xsec_unc.items():
+        if not fnmatch.fnmatchcase(sample, pattern):
+            continue
+        if value is not None and float(unc) != value:
+            raise ValueError(f"{XSEC_UNC_JSON}: patterns with different values match sample '{sample}'")
+        value = float(unc)
+    if value is None:
+        raise KeyError(f"{XSEC_UNC_JSON} has no cross-section uncertainty for sample '{sample}'")
+    return value
 
-    The class ratio of a nuisance is the yield-weighted mean of its samples'
-    inclusive ratios (the combine kappa convention; a sample without theory weights
-    counts with ratio 1 under the theory nuisances; a sample without an entry is
-    skipped when its test-split yield is not positive, otherwise an error). With
-    u = R_up - 1 and d = R_down - 1, delta = u if |u| >= |d| else -d: the larger
-    deviation, signed along the up variation. Every nuisance is fully correlated
-    across the classes, as in the combine cards. Yields are the test-split weights
-    after the thresholds.
+
+def background_syst_shifts(y, w, sample_labels, qcd_data_driven):
+    """Signed relative shifts delta[k, c] of the background classes c (columns follow
+    sr.BACKGROUND_CLASS_INDICES) under the nuisances k of the combine cards, and the row names.
+
+    Rows: lumi, trigger, theory_pdf, theory_scale_<class> (one per class, as combine's
+    per-process QCD-scale rows), theory_ps_isr, theory_ps_fsr, pileup, jes, jer, jms, jmr
+    (each correlated across the classes), and xsec_<class> (one per class, combine.C's
+    xsec_<process> rows). The class ratio of a ratio nuisance is the yield-weighted mean of its
+    samples' inclusive ratios (the combine kappa convention; a sample without theory weights
+    counts with ratio 1 under the theory nuisances; a sample without an entry is skipped when
+    its yield is not positive, otherwise an error). With u = R_up - 1 and d = R_down - 1,
+    delta = u if |u| >= |d| else -d: the larger deviation, signed along the up variation. The
+    xsec shift of a class is the mean of its samples' xsec_unc_json values weighted by their
+    positive yields (combine.C writeXsecLnN). With qcd_data_driven (ABCD mode) the QCD classes
+    get no shift, as the data-driven QCD of the cards has none of these rows. Rows without any
+    shift are dropped. Yields are the scan weights after the thresholds.
     """
     missing = [name for name in SYST_RATIO_KEYS if name not in BKG_SYST_JSONS]
     if missing:
         raise KeyError(f"background_syst_jsons lacks {missing}")
     ratios = {name: sr._load_json(_resolve_cfg_path(BKG_SYST_JSONS[name])) for name in SYST_RATIO_KEYS}
+    xsec_unc = sr._load_json(_resolve_cfg_path(XSEC_UNC_JSON))["uncertainties"]
     labels = np.asarray(sample_labels)
-    nuisances = [("lumi", None, None), ("trigger", None, None)]
-    nuisances += [(name, up_key, down_key)
-                  for name, pairs in SYST_RATIO_KEYS.items() for up_key, down_key in pairs]
-    shifts = np.zeros((len(nuisances), len(sr.BACKGROUND_CLASS_INDICES)), dtype=float)
-    for c, cls_idx in enumerate(sr.BACKGROUND_CLASS_INDICES):
+    classes = list(sr.BACKGROUND_CLASS_INDICES)
+    n_cls = len(classes)
+    ratio_nuisances = [(("theory_" + up_key[:-3]) if name == "theory" else name, name, up_key, down_key)
+                       for name, pairs in SYST_RATIO_KEYS.items() for up_key, down_key in pairs]
+    deltas = {nuis: np.zeros(n_cls) for nuis, _name, _up, _down in ratio_nuisances}
+    xsec = np.zeros(n_cls)
+    flat = np.ones(n_cls)
+    for c, cls_idx in enumerate(classes):
         cls_name = sr.CLASS_NAMES[cls_idx]
+        if qcd_data_driven and "qcd" in cls_name.lower():
+            flat[c] = 0.0
+            continue
         yields = {}
         for sample in sr.CLASS_GROUPS[cls_name]:
             m = labels == sample
             if np.any(m):
                 yields[sample] = float(w[m].sum())
         total = float(sum(yields.values()))
-        shifts[0, c] = LUMI_UNC
-        shifts[1, c] = TRIGGER_UNC
         if total <= 0.0:
             log_warning(f"Background class {cls_name} has no positive yield; lumi/trigger shifts only")
             continue
-        for k, (name, up_key, down_key) in enumerate(nuisances[2:], start=2):
+        for nuis, name, up_key, down_key in ratio_nuisances:
             r_up = r_down = 0.0
             for sample, y_s in yields.items():
                 entry = ratios[name].get(sample, {}).get(sr.TREE_NAME)
@@ -304,20 +419,51 @@ def background_syst_shifts(y, w, sample_labels):
                 r_down += y_s * float(entry[down_key])
             u = r_up / total - 1.0
             d = r_down / total - 1.0
-            shifts[k, c] = u if abs(u) >= abs(d) else -d
+            deltas[nuis][c] = u if abs(u) >= abs(d) else -d
+        positive = {sample: y_s for sample, y_s in yields.items() if y_s > 0.0}
+        if positive:
+            xsec[c] = (sum(y_s * _sample_xsec_unc(xsec_unc, sample) for sample, y_s in positive.items())
+                       / sum(positive.values()))
         log_message(
-            f"  Background shifts {cls_name}: "
-            + ", ".join(f"{(n if u_ is None else u_[:-3])}={shifts[k, c]:+.4f}"
-                        for k, (n, u_, _d) in enumerate(nuisances))
+            f"  Background shifts {cls_name}: lumi={LUMI_UNC:+.4f}, trigger={TRIGGER_UNC:+.4f}, "
+            + ", ".join(f"{nuis}={deltas[nuis][c]:+.4f}" for nuis, _n, _u, _d in ratio_nuisances)
+            + f", xsec={xsec[c]:+.4f}"
         )
-    return shifts
+    rows, names = [], []
+
+    def _add(name, vec):
+        if np.any(vec != 0.0):
+            rows.append(np.asarray(vec, dtype=float))
+            names.append(name)
+
+    def _one_class(c, value):
+        vec = np.zeros(n_cls)
+        vec[c] = value
+        return vec
+
+    _add("lumi", LUMI_UNC * flat)
+    _add("trigger", TRIGGER_UNC * flat)
+    for nuis, _name, _up, _down in ratio_nuisances:
+        if nuis == "theory_scale":
+            for c, cls_idx in enumerate(classes):
+                _add(f"theory_scale_{sr.CLASS_NAMES[cls_idx]}", _one_class(c, deltas[nuis][c]))
+        else:
+            _add(nuis, deltas[nuis])
+    for c, cls_idx in enumerate(classes):
+        _add(f"xsec_{sr.CLASS_NAMES[cls_idx]}", _one_class(c, xsec[c]))
+    for name, vec in zip(names, rows):
+        if np.any(vec <= -1.0):
+            raise ValueError(f"Background shift {name} removes a whole class yield: {vec}")
+    log_message(f"  Background nuisance rows ({len(names)}): {', '.join(names)}")
+    shifts = np.vstack(rows) if rows else np.zeros((0, n_cls))
+    return shifts, names
 
 
 # -------------------- Scan context --------------------
 class Ctx:
     """Per-run event arrays and precomputed reference tables for the scan."""
 
-    def __init__(self, proba, y, w, bkg_shifts):
+    def __init__(self, proba, y, w, bkg_shifts, control=None):
         n_cls = int(proba.shape[1])
         if n_cls != sr.NUM_CLASSES:
             raise RuntimeError(f"Model returned {n_cls} classes, expected {sr.NUM_CLASSES}")
@@ -336,17 +482,66 @@ class Ctx:
         self.is_sig = np.isin(self.y, sr.SIGNAL_CLASS_INDICES)
         self.is_bkg = np.isin(self.y, sr.BACKGROUND_CLASS_INDICES)
         self.w_sig = np.where(self.is_sig, self.w, 0.0)
-        self.w_bkg = np.where(self.is_bkg, self.w, 0.0)
+        self.w_bkg = np.where(self.is_bkg, self.w, 0.0)  # every background MC event (reports)
+        # ABCD mode (control = the control-region events, see ABCD_CFG): as in qcd_est.py per_sr
+        # and combine's control-region fit, the QCD of a box is predicted from the control events
+        # of the same box, C_box x TF, and the QCD classes (names containing "qcd") leave the
+        # MC part of the background, its MC statistics, the zero-count floor and the systematic
+        # shifts; the variance of the prediction (control statistics, non-closure) is added.
+        self.abcd = control is not None
+        self.qcd_classes = [c for c in sr.BACKGROUND_CLASS_INDICES if "qcd" in sr.CLASS_NAMES[c].lower()]
+        self.is_qcd = np.isin(self.y, self.qcd_classes)
+        # Background MC of the objective: in ABCD mode without the QCD.
+        self.w_bkg_fit = np.where(self.is_bkg & ~self.is_qcd, self.w, 0.0) if self.abcd else self.w_bkg
+        self.w2_bkg = self.w_bkg_fit * self.w_bkg_fit  # MC statistics of the objective's MC part
+        if self.abcd:
+            if not self.qcd_classes:
+                raise RuntimeError("abcd_uncertainty needs a QCD class in class_groups")
+            cy = np.asarray(control["y"], dtype=int)
+            cw = np.asarray(control["w"], dtype=float)
+            self.c_axes = np.column_stack([control["proba"][:, idxs].sum(axis=1) for idxs in index_groups])
+            c_qcd = np.isin(cy, self.qcd_classes)
+            c_mc_bkg = np.isin(cy, sr.BACKGROUND_CLASS_INDICES) & ~c_qcd
+            # Per control event: its expected count (Poisson variance of the control region, every
+            # process) plus w^2 for the non-QCD background MC (their MC statistics in the fit).
+            self.c_var = cw + np.where(c_mc_bkg, cw * cw, 0.0)
+            # Transfer factor window / control window of the QCD MC (qcd_est's B/D in complement
+            # mode; the SR union holds a negligible part of the QCD).
+            c_qcd_total = float(cw[c_qcd].sum())
+            if c_qcd_total <= 0.0:
+                raise RuntimeError(
+                    f"abcd_uncertainty: no positive QCD yield in the control window {ABCD_CONTROL} of "
+                    f"{ABCD_BRANCH}; the transfer factor is undefined"
+                )
+            self.abcd_tf = float(self.w[self.is_qcd].sum()) / c_qcd_total
+            self.abcd_tf2 = self.abcd_tf ** 2
+            self.abcd_nc2 = ABCD_NONCLOSURE ** 2
+            # Predicted QCD in the signal window of every control event: its QCD weight x TF.
+            self.c_qcd_pred = np.where(c_qcd, cw, 0.0) * self.abcd_tf
+        else:
+            self.c_axes = np.zeros((0, self.D))
+        # Geometry points: the scan events and, in ABCD mode, the control events, whose boxes set
+        # the QCD prediction; the deduplication, the boundary placement and the overlap check
+        # keep both sets.
+        self.geo_axes = np.vstack([self.score_axes, self.c_axes]) if self.abcd else self.score_axes
+        self.geo_index = _AxisIndex(self.geo_axes)
+        # Zero-count floor: per background class, its event mask and alpha^2, alpha = the typical
+        # event weight (median |w|) of the class over all scan events, like qcd_est's
+        # mean_event_weight for combine (the mean is dominated by a few very heavy events).
+        self.floor_classes = [c for c in sr.BACKGROUND_CLASS_INDICES if not (self.abcd and c in self.qcd_classes)]
+        self.bkg_class_masks = [self.y == c for c in self.floor_classes]
+        self.floor_alpha2 = [
+            (float(np.median(np.abs(self.w[mc]))) ** 2) if mc.any() else 0.0 for mc in self.bkg_class_masks
+        ]
         self.S_total = float(self.w_sig.sum())
         self.B_total = float(self.w_bkg.sum())
-        # Per background class weights (rows follow sr.BACKGROUND_CLASS_INDICES), the
-        # signed relative shifts of every nuisance (nuisance x class), and the background
-        # MC-statistics weights w^2.
+        # Per background class weights of the objective's MC part (rows follow
+        # sr.BACKGROUND_CLASS_INDICES; the QCD rows are empty in ABCD mode) and the signed
+        # relative shifts of every nuisance row (nuisance x class).
         self.w_bkg_cls = np.vstack(
-            [np.where(self.y == c, self.w, 0.0) for c in sr.BACKGROUND_CLASS_INDICES]
+            [np.where(self.y == c, self.w_bkg_fit, 0.0) for c in sr.BACKGROUND_CLASS_INDICES]
         )
         self.bkg_shifts = np.asarray(bkg_shifts, dtype=float)
-        self.w2_bkg = self.w_bkg ** 2
 
         # 1-D tail reference tables for per-bin tail efficiencies
         # (signal_region.py lines ~993-1011, T_REF=200, p_exp=0.005).
@@ -388,26 +583,14 @@ class Ctx:
 
 # -------------------- Significance --------------------
 def za2(S, B, V):
-    """Elementwise Z_A^2 with background variance V (Cowan et al., arXiv:1007.1727);
-    the statistics-only 2[(S+B)ln(1+S/B) - S] where V is negligible; 0 where S <= 0
-    or B <= 0."""
-    S, B, V = np.broadcast_arrays(np.asarray(S, dtype=float), np.asarray(B, dtype=float),
-                                  np.maximum(np.asarray(V, dtype=float), 0.0))
-    valid = (S > 0.0) & (B > 0.0)
-    Ss = np.where(valid, S, 0.0)
-    Bs = np.where(valid, B, 1.0)
-    syst = valid & (V > 1e-12 * Bs * Bs)
-    Vs = np.where(syst, V, 1.0)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        stat_term = (Ss + Bs) * np.log1p(Ss / Bs) - Ss
-        syst_term = ((Ss + Bs) * np.log((Ss + Bs) * (Bs + Vs) / (Bs * Bs + (Ss + Bs) * Vs))
-                     - (Bs * Bs / Vs) * np.log1p(Vs * Ss / (Bs * (Bs + Vs))))
-    f = np.where(syst, syst_term, stat_term)
-    return np.where(valid & np.isfinite(f) & (f > 0.0), 2.0 * f, 0.0)
+    """Elementwise Z_A^2 with background variance V (sr.asimov_z, Cowan's Asimov
+    significance with a background uncertainty); the statistics-only
+    2[(S+B)ln(1+S/B) - S] where V is negligible; 0 where S <= 0 or B <= 0."""
+    return np.asarray(sr.asimov_z(S, B, V), dtype=float) ** 2
 
 
 def calc_Z_val(S, B, V=0.0):
-    return float(np.sqrt(za2(S, B, V)))
+    return float(sr.asimov_z(S, B, V))
 
 
 def calc_Z(S, B, V, sS, sB):
@@ -424,10 +607,43 @@ def calc_Z(S, B, V, sS, sB):
     return Z, sZ
 
 
-def background_variance(ctx, mask):
-    """V = sum_k (sum_c delta_kc B_c)^2 + sum_bkg w^2 of the events in mask."""
+def floor_variance(ctx, m):
+    """Zero-count floor added to the background variance for the region of event mask m
+    (0 when disabled)."""
+    if not ZERO_COUNT_FLOOR:
+        return 0.0
+    var = 0.0
+    for mc, alpha2 in zip(ctx.bkg_class_masks, ctx.floor_alpha2):
+        mr = m & mc
+        if not mr.any() or float(ctx.w[mr].sum()) <= 0.0:
+            var += alpha2
+    return var
+
+
+def abcd_qcd(ctx, lo, hi):
+    """(QCD predicted in the box [lo, hi), control-region variance of the box): the predicted
+    QCD is TF x the QCD of the box's control events (qcd_est.py per_sr A_i = C_i x B/D); the
+    variance is the expected control count of every process plus the non-QCD MC w^2."""
+    cm = box_mask(ctx.c_axes, lo, hi)
+    return float(ctx.c_qcd_pred[cm].sum()), float(ctx.c_var[cm].sum())
+
+
+def abcd_variance(ctx, lo, hi):
+    """ABCD variance of the QCD prediction in the box [lo, hi):
+    TF^2 x (control count + non-QCD MC w^2 in the control box) + (nonclosure x predicted QCD)^2."""
+    qcd, c_var = abcd_qcd(ctx, lo, hi)
+    return ctx.abcd_tf2 * max(c_var, 0.0) + ctx.abcd_nc2 * qcd * qcd
+
+
+def background_variance(ctx, lo, hi, mask):
+    """V of the box [lo, hi) with scan-event mask `mask`: sum_k (sum_c delta_kc B_c)^2, the
+    MC statistics sum w^2 of the objective's background MC (without the QCD in ABCD mode),
+    the zero-count floor, and in ABCD mode the variance of the QCD prediction."""
     B_cls = ctx.w_bkg_cls[:, mask].sum(axis=1)
-    return float(np.sum((ctx.bkg_shifts @ B_cls) ** 2) + ctx.w2_bkg[mask].sum())
+    V = float(np.sum((ctx.bkg_shifts @ B_cls) ** 2) + ctx.w2_bkg[mask].sum()) + floor_variance(ctx, mask)
+    if ctx.abcd:
+        V += abcd_variance(ctx, lo, hi)
+    return V
 
 
 def _qcd_axis(ctx):
@@ -444,9 +660,47 @@ def _hi_to_open(h):
 
 
 def rect_mask(ctx, lo, hi):
-    m = np.ones(ctx.n_events, dtype=bool)
-    for d in range(ctx.D):
-        v = ctx.score_axes[:, d]
+    return box_mask(ctx.score_axes, lo, hi)
+
+
+class _AxisIndex:
+    """Per-axis sorted order of a point set (the rows of axes): the points of a box are found from
+    its narrowest axis instead of testing every point (deduplication of large candidate pools on
+    the k-fold MC)."""
+
+    def __init__(self, axes):
+        self.axes = axes
+        self.n = axes.shape[0]
+        self.order = [np.argsort(axes[:, d], kind="stable") for d in range(axes.shape[1])]
+        self.sorted = [axes[order, d] for d, order in enumerate(self.order)]
+
+    def members(self, lo, hi):
+        """Sorted indices of the points inside the half-open box [lo, hi) (box_mask semantics)."""
+        best = None
+        for d in range(self.axes.shape[1]):
+            a = int(np.searchsorted(self.sorted[d], lo[d], side="left"))
+            b = self.n if _hi_to_open(hi[d]) else int(np.searchsorted(self.sorted[d], hi[d], side="left"))
+            if best is None or b - a < best[2] - best[1]:
+                best = (d, a, b)
+        d0, a, b = best
+        if b <= a:
+            return np.zeros(0, dtype=np.int64)
+        idx = self.order[d0][a:b]
+        pts = self.axes[idx]
+        keep = np.ones(idx.size, dtype=bool)
+        for d in range(self.axes.shape[1]):
+            if d == d0:
+                continue
+            v = pts[:, d]
+            keep &= (v >= lo[d]) if _hi_to_open(hi[d]) else ((v >= lo[d]) & (v < hi[d]))
+        return np.sort(idx[keep]).astype(np.int64)
+
+
+def box_mask(axes, lo, hi):
+    """Events (rows of the score-axis array axes) inside the box [lo, hi)."""
+    m = np.ones(axes.shape[0], dtype=bool)
+    for d in range(axes.shape[1]):
+        v = axes[:, d]
         if _hi_to_open(hi[d]):
             m &= v >= lo[d]
         else:
@@ -455,20 +709,23 @@ def rect_mask(ctx, lo, hi):
 
 
 def rect_stats(ctx, lo, hi):
-    """Return (S, sS, B, sB, S_entries, B_entries, V) for rectangle [lo, hi)."""
+    """Return (S, sS, B, sB, S_entries, B_entries, V) for rectangle [lo, hi): B is the background
+    of the objective (in ABCD mode the non-QCD MC plus the QCD predicted from the control box),
+    sB the statistical error of its MC part, B_entries the background MC events."""
     m = rect_mask(ctx, lo, hi)
     ms = m & ctx.is_sig
-    mb = m & ctx.is_bkg
     wS = ctx.w[ms]
-    wB = ctx.w[mb]
+    B = float(ctx.w_bkg_fit[m].sum())
+    if ctx.abcd:
+        B += abcd_qcd(ctx, lo, hi)[0]
     return (
         float(wS.sum()),
         float(np.sqrt((wS ** 2).sum())),
-        float(wB.sum()),
-        float(np.sqrt((wB ** 2).sum())),
+        B,
+        float(np.sqrt(ctx.w2_bkg[m].sum())),
         int(ms.sum()),
-        int(mb.sum()),
-        background_variance(ctx, m),
+        int((m & ctx.is_bkg).sum()),
+        background_variance(ctx, lo, hi, m),
     )
 
 
@@ -503,9 +760,9 @@ def evaluate_region(ctx, lo, hi, S_v=None, B_v=None, V_v=None, S_e=None, B_e=Non
 
     Fast path: ``top_intervals_on_axis`` already returns the exact weighted S, B
     and background variance V of each child rectangle (the other-axes mask is
-    applied and the interval is half-open identically to ``rect_mask``), so when
-    they are supplied and no entry-count thresholds are active we skip the
-    O(N*D) ``rect_stats`` recompute.
+    applied and the interval is half-open identically to ``rect_mask``), and with
+    entry-count thresholds also its signal / background MC event counts, so when
+    they are supplied we skip the O(N*D) ``rect_stats`` recompute.
     """
     lo = [float(v) for v in lo]
     hi = [float(v) for v in hi]
@@ -515,10 +772,12 @@ def evaluate_region(ctx, lo, hi, S_v=None, B_v=None, V_v=None, S_e=None, B_e=Non
         for flo, fhi in ctx.forbidden:
             if overlap(lo, hi, flo, fhi, ctx.D):
                 return None
-    if S_v is None or B_v is None or V_v is None or S_e is None or B_e is None:
+    need_counts = MIN_SIGNAL_ENTRIES > 0 or MIN_BKG_ENTRIES > 0
+    if S_v is None or B_v is None or V_v is None or (need_counts and (S_e is None or B_e is None)):
         S, _sS, B, _sB, S_e, B_e, V = rect_stats(ctx, lo, hi)
     else:
-        S, B, V, S_e, B_e = float(S_v), float(B_v), float(V_v), int(S_e), int(B_e)
+        S, B, V = float(S_v), float(B_v), float(V_v)
+        S_e, B_e = (int(S_e), int(B_e)) if need_counts else (-1, -1)
     if B < MIN_BKG_WEIGHT or S <= MIN_SIGNAL_WEIGHT:
         return None
     if (MIN_SIGNAL_ENTRIES > 0 and S_e < MIN_SIGNAL_ENTRIES) or \
@@ -537,7 +796,10 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
     Reimplementation of signal_region.py:_top_intervals_on_axis with the
     background-variance significance Z_A. Cost is O(n_events) for the other-axes
     mask plus K x K vectorised grids (K = len(edges)) of S, B, the background
-    class yields and sum w^2.
+    class yields, sum w^2, the zero-count floor and the ABCD variance. Each
+    interval is returned as (low, high, S, B, V, Z, S_entries, B_entries); the MC
+    event counts are histogrammed only when an entry-count threshold is active
+    (else -1).
     """
     m = np.ones(ctx.n_events, dtype=bool)
     for dd in range(ctx.D):
@@ -563,19 +825,38 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
         return np.r_[0.0, np.cumsum(h)]
 
     pS = _prefix(ctx.w_sig)
-    pB = _prefix(ctx.w_bkg)
-    pNS = _prefix(ctx.is_sig.astype(float))
-    pNB = _prefix(ctx.is_bkg.astype(float))
+    pB = _prefix(ctx.w_bkg_fit)
     K = pS.size
     a_idx = np.arange(K).reshape(-1, 1)
     b_idx = np.arange(K).reshape(1, -1)
     tri = b_idx > a_idx
     S_mat = pS[b_idx] - pS[a_idx]
     B_mat = pB[b_idx] - pB[a_idx]
-    NS_mat = np.rint(pNS[b_idx] - pNS[a_idx])
-    NB_mat = np.rint(pNB[b_idx] - pNB[a_idx])
-    valid = (tri & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > MIN_SIGNAL_WEIGHT)
-             & (NS_mat >= MIN_SIGNAL_ENTRIES) & (NB_mat >= MIN_BKG_ENTRIES))
+    if ctx.abcd:
+        # QCD predicted from the control events of the same box (other axes fixed), C_box x TF,
+        # and the box's control-region variance.
+        mc_ = np.ones(ctx.c_axes.shape[0], dtype=bool)
+        for dd in range(ctx.D):
+            if dd == d:
+                continue
+            cv = ctx.c_axes[:, dd]
+            mc_ &= (cv >= lo[dd]) if _hi_to_open(hi[dd]) else ((cv >= lo[dd]) & (cv < hi[dd]))
+        cv_d = ctx.c_axes[mc_, d]
+        hQ, _ = np.histogram(cv_d, bins=edges, weights=ctx.c_qcd_pred[mc_])
+        hC, _ = np.histogram(cv_d, bins=edges, weights=ctx.c_var[mc_])
+        pQ = np.r_[0.0, np.cumsum(hQ)]
+        pC = np.r_[0.0, np.cumsum(hC)]
+        Q_mat = pQ[b_idx] - pQ[a_idx]
+        C_mat = pC[b_idx] - pC[a_idx]
+        B_mat = B_mat + Q_mat
+    valid = tri & (B_mat >= MIN_BKG_WEIGHT) & (S_mat > MIN_SIGNAL_WEIGHT)
+    count_entries = MIN_SIGNAL_ENTRIES > 0 or MIN_BKG_ENTRIES > 0
+    if count_entries:
+        pNS = _prefix(ctx.is_sig.astype(float))
+        pNB = _prefix(ctx.is_bkg.astype(float))
+        NS_mat = np.rint(pNS[b_idx] - pNS[a_idx])
+        NB_mat = np.rint(pNB[b_idx] - pNB[a_idx])
+        valid &= (NS_mat >= MIN_SIGNAL_ENTRIES) & (NB_mat >= MIN_BKG_ENTRIES)
     if not valid.any():
         return []
     pW2 = _prefix(ctx.w2_bkg)
@@ -589,6 +870,17 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
         for c, B_c in enumerate(B_cls_mats):
             shift_k += ctx.bkg_shifts[k, c] * B_c
         V_mat += shift_k ** 2
+    if ZERO_COUNT_FLOOR:
+        for mc, alpha2 in zip(ctx.bkg_class_masks, ctx.floor_alpha2):
+            mm = m & mc
+            hN, _ = np.histogram(v_d[mm], bins=edges)
+            hW, _ = np.histogram(v_d[mm], bins=edges, weights=ctx.w[mm])
+            pN = np.r_[0, np.cumsum(hN)]
+            pW = np.r_[0.0, np.cumsum(hW)]
+            empty = ((pN[b_idx] - pN[a_idx]) == 0) | ((pW[b_idx] - pW[a_idx]) <= 0.0)
+            V_mat = V_mat + np.where(empty, alpha2, 0.0)
+    if ctx.abcd:
+        V_mat = V_mat + ctx.abcd_tf2 * np.maximum(C_mat, 0.0) + ctx.abcd_nc2 * Q_mat * Q_mat
     Z2 = np.where(valid, za2(S_mat, B_mat, V_mat), -np.inf)
     valid_count = int(np.count_nonzero(np.isfinite(Z2) & (Z2 > 0.0)))
     if valid_count == 0:
@@ -621,8 +913,8 @@ def top_intervals_on_axis(ctx, d, lo, hi, edges, top_n):
             float(B_mat[a_best, b_best]),
             float(V_mat[a_best, b_best]),
             float(np.sqrt(Z2[a_best, b_best])),
-            int(NS_mat[a_best, b_best]),
-            int(NB_mat[a_best, b_best]),
+            int(NS_mat[a_best, b_best]) if count_entries else -1,
+            int(NB_mat[a_best, b_best]) if count_entries else -1,
         ))
         if len(intervals) >= take:
             break
@@ -838,19 +1130,20 @@ def _next_interval_hi(value, original_hi):
     return min(float(original_hi), float(np.nextafter(float(value), np.inf)))
 
 
-def event_preserving_shrink(ctx, lo, hi, mask):
-    """Smallest box selecting the same events as mask (port of signal_region.py's
-    _event_preserving_shrink): every lower bound rises to its events' minimum and
-    every upper bound drops to just above their maximum. The original box is
-    returned when the shrunk one would select other events."""
-    if not np.any(mask):
+def event_preserving_shrink(ctx, lo, hi, idx):
+    """Smallest box holding the same geometry points (scan events and, in ABCD mode, control
+    events; sorted indices idx into ctx.geo_axes) as [lo, hi) (port of signal_region.py's
+    _event_preserving_shrink): every lower bound rises to its points' minimum and every upper
+    bound drops to just above their maximum. The original box is returned when the shrunk one
+    would hold other points."""
+    if idx.size == 0:
         return list(map(float, lo)), list(map(float, hi))
     lo_new, hi_new = [], []
     min_width = 2.0 * EPS
     for d in range(ctx.D):
         orig_lo = float(lo[d])
         orig_hi = float(hi[d])
-        vals = ctx.score_axes[mask, d]
+        vals = ctx.geo_axes[idx, d]
         sel_min = float(np.min(vals))
         sel_max = float(np.max(vals))
         new_hi = _next_interval_hi(sel_max, orig_hi)
@@ -861,7 +1154,7 @@ def event_preserving_shrink(ctx, lo, hi, mask):
                 new_lo, new_hi = orig_lo, orig_hi
         lo_new.append(float(new_lo))
         hi_new.append(float(new_hi))
-    if not np.array_equal(rect_mask(ctx, lo_new, hi_new), mask):
+    if not np.array_equal(ctx.geo_index.members(lo_new, hi_new), idx):
         return list(map(float, lo)), list(map(float, hi))
     return lo_new, hi_new
 
@@ -871,14 +1164,15 @@ def _hypervolume(lo, hi):
 
 
 def dedupe_by_event_mask(ctx, items):
-    """Shrink every candidate to its event-preserving box and keep one candidate per
-    selected event set (identical events give identical S, B, V and Z; the smallest
-    box is kept). Each item gets "mask_key", a digest of its event mask. Returns the
-    unique items sorted by decreasing Z."""
+    """Shrink every candidate to its point-preserving box and keep one candidate per set of
+    geometry points (the scan events and, in ABCD mode, the control events, which set the
+    QCD prediction; identical points give identical S, B, V and Z; the smallest box is
+    kept). Each item gets "mask_key", a digest of its point indices. Returns the unique
+    items sorted by decreasing Z."""
     def _one(item):
-        mask = rect_mask(ctx, item["lo"], item["hi"])
-        key = hashlib.blake2b(np.packbits(mask).tobytes(), digest_size=16).digest()
-        lo, hi = event_preserving_shrink(ctx, item["lo"], item["hi"], mask)
+        idx = ctx.geo_index.members(item["lo"], item["hi"])
+        key = hashlib.blake2b(idx.tobytes(), digest_size=16).digest()
+        lo, hi = event_preserving_shrink(ctx, item["lo"], item["hi"], idx)
         out = dict(item)
         out["lo"], out["hi"], out["mask_key"] = lo, hi, key
         return out
@@ -900,16 +1194,17 @@ def dedupe_by_event_mask(ctx, items):
 def place_boundaries(ctx, los, his):
     """Final boundaries of the selected regions inside empty score gaps: each region
     is shrunk to its events, then signal-axis upper bounds rise and background-axis
-    lower bounds drop into space that is empty in MC under the region's other-axis
-    cuts, as far as the box stays non-overlapping with every other region (port of
-    signal_region.py's empty-bin expansion). Signal-axis bounds thus sit as high and
-    background-axis bounds as low as the same events allow."""
+    lower bounds drop into space that is empty in MC (scan events and, in ABCD mode,
+    control events) under the region's other-axis cuts, as far as the box stays
+    non-overlapping with every other region (port of signal_region.py's empty-bin
+    expansion). Signal-axis bounds thus sit as high and background-axis bounds as low
+    as the same events allow."""
     n_sr = len(los)
     los = [list(map(float, l)) for l in los]
     his = [list(map(float, h)) for h in his]
-    masks = [rect_mask(ctx, los[i], his[i]) for i in range(n_sr)]
+    members = [ctx.geo_index.members(los[i], his[i]) for i in range(n_sr)]
     for i in range(n_sr):
-        los[i], his[i] = event_preserving_shrink(ctx, los[i], his[i], masks[i])
+        los[i], his[i] = event_preserving_shrink(ctx, los[i], his[i], members[i])
 
     def _other_axis_separates(lo_a, hi_a, lo_b, hi_b, skip):
         # Same strict half-open test as overlap().
@@ -922,13 +1217,13 @@ def place_boundaries(ctx, los, his):
     for i in range(n_sr):
         lo_i, hi_i = los[i], his[i]
         for d in range(ctx.D):
-            other = np.ones(ctx.n_events, dtype=bool)
+            other = np.ones(ctx.geo_axes.shape[0], dtype=bool)
             for dd in range(ctx.D):
                 if dd == d:
                     continue
-                v_dd = ctx.score_axes[:, dd]
+                v_dd = ctx.geo_axes[:, dd]
                 other &= (v_dd >= lo_i[dd]) if _hi_to_open(hi_i[dd]) else ((v_dd >= lo_i[dd]) & (v_dd < hi_i[dd]))
-            v_d = ctx.score_axes[:, d]
+            v_d = ctx.geo_axes[:, d]
             if ctx.signal_axis[d]:
                 if hi_i[d] >= 1.0 - EPS:
                     continue
@@ -957,7 +1252,7 @@ def place_boundaries(ctx, los, his):
                 if limit < lo_i[d] - EPS:
                     lo_i[d] = max(limit, 0.0)
                     lowered += 1
-        if not np.array_equal(rect_mask(ctx, lo_i, hi_i), masks[i]):
+        if not np.array_equal(ctx.geo_index.members(lo_i, hi_i), members[i]):
             raise RuntimeError(f"Boundary placement changed the events of SR{i + 1}")
     log_message(
         f"  Boundary placement: signal-axis high bounds raised={raised}, "
@@ -967,11 +1262,13 @@ def place_boundaries(ctx, los, his):
 
 
 def check_no_overlap(ctx, los, his):
-    """Geometric and event-level non-overlap of the selected regions."""
-    masks = [rect_mask(ctx, los[i], his[i]) for i in range(len(los))]
+    """Geometric and event-level (scan and, in ABCD mode, control events) non-overlap of the
+    selected regions."""
+    members = [ctx.geo_index.members(los[i], his[i]) for i in range(len(los))]
     for ia in range(len(los)):
         for ib in range(ia + 1, len(los)):
-            if overlap(los[ia], his[ia], los[ib], his[ib], ctx.D) or np.any(masks[ia] & masks[ib]):
+            if overlap(los[ia], his[ia], los[ib], his[ib], ctx.D) or \
+                    np.intersect1d(members[ia], members[ib], assume_unique=True).size:
                 raise RuntimeError(f"Selected signal regions overlap ({ia + 1},{ib + 1})")
 
 
@@ -1089,14 +1386,17 @@ def select_branch_bound(ctx, candidates, target_n, incumbent=None):
                 best_by_size[size] = (score, sub)
 
     def _greedy_from_first(first):
+        # Stop at target_n picks (checked before each addition: with target_n = 1 the old
+        # check after the append never fired, and the greedy set of every compatible region
+        # became the incumbent).
         picks = [first]
         for i in range(n):
+            if len(picks) >= target_n:
+                break
             if i == first:
                 continue
             if _compatible(i, picks):
                 picks.append(i)
-                if len(picks) == target_n:
-                    break
         return picks
 
     M = min(n, max(8 * target_n, 64))
@@ -1323,6 +1623,125 @@ def select_regions_openmp(ctx, candidates, target_n):
     return picks, [items[i]["lo"] for i in picks], [items[i]["hi"] for i in picks], summary
 
 
+# -------------------- Joint significance of a set of regions --------------------
+# The joint stage tries the JOINT_SWAP_POOL candidates of highest Z_A as replacements, for at
+# most JOINT_SWAP_PASSES passes.
+JOINT_SWAP_POOL = 256
+JOINT_SWAP_PASSES = 10
+
+
+def region_components(ctx, lo, hi):
+    """Inputs of the joint significance for the box [lo, hi): (S, background MC per class
+    (columns follow sr.BACKGROUND_CLASS_INDICES; the QCD columns are empty in ABCD mode), QCD
+    predicted from the control box (ABCD mode, else 0), uncorrelated background variance: MC
+    statistics of the background MC, zero-count floor and, in ABCD mode, the control-region
+    statistics TF^2 x (control count + non-QCD MC w^2))."""
+    m = rect_mask(ctx, lo, hi)
+    S = float(ctx.w_sig[m].sum())
+    b = ctx.w_bkg_cls[:, m].sum(axis=1)
+    v = float(ctx.w2_bkg[m].sum()) + floor_variance(ctx, m)
+    q = 0.0
+    if ctx.abcd:
+        q, c_var = abcd_qcd(ctx, lo, hi)
+        v += ctx.abcd_tf2 * max(c_var, 0.0)
+    return S, b, q, v
+
+
+def joint_z(ctx, comps):
+    """Asimov discovery significance of a set of regions fitted together with the nuisances of
+    the combine cards (one channel). Region i: Asimov count n_i = S_i + B_i; background
+    nu_i = gamma_i [sum_c b_ci prod_k (1 + delta_kc)^theta_k + q_i (1 + f_nc)^theta_nc], with
+    theta_k ~ N(0, 1) for every row of ctx.bkg_shifts and, in ABCD mode, theta_nc for the
+    non-closure f_nc of the QCD prediction, each correlated across the regions as in the cards
+    (lnN rows; combine's qcd_abcd_nonclosure_<channel>), and gamma_i ~ N(1, v_i / B_i^2) for
+    the uncorrelated variance. q0 = 2 sum_i [n_i ln(n_i / nu_i) - n_i + nu_i] + sum theta^2
+    + sum (gamma_i - 1)^2 B_i^2 / v_i is minimised over theta (scipy L-BFGS-B) with every
+    gamma_i profiled in closed form; Z = sqrt(q0). For a single region without correlated rows
+    it is the Gaussian-constraint counterpart of Z_A."""
+    S = np.array([c[0] for c in comps], dtype=float)
+    b = np.vstack([c[1] for c in comps])
+    q = np.array([c[2] for c in comps], dtype=float)
+    v = np.array([c[3] for c in comps], dtype=float)
+    B = b.sum(axis=1) + q
+    if np.any(B <= 0.0):
+        raise RuntimeError("joint_z needs a positive background in every region")
+    n = S + B
+    log_kappa = np.log1p(ctx.bkg_shifts)  # (rows, classes)
+    n_rows = log_kappa.shape[0]
+    with_nc = bool(ctx.abcd and ctx.abcd_nc2 > 0.0 and np.any(q > 0.0))
+    log_nc = float(np.log1p(ABCD_NONCLOSURE)) if with_nc else 0.0
+    has_v = v > 0.0
+    inv_eps2 = np.where(has_v, B * B / np.where(has_v, v, 1.0), 0.0)  # 1 / eps_i^2
+
+    def q0(theta):
+        u = b @ np.exp(theta[:n_rows] @ log_kappa)
+        u = u + (q * np.exp(theta[n_rows] * log_nc) if with_nc else q)
+        if np.any(u <= 0.0):
+            return 1e300
+        # gamma minimises 2 (gamma u - n ln gamma) + (gamma - 1)^2 / eps^2, i.e. solves
+        # gamma^2 / eps^2 + (u - 1 / eps^2) gamma - n = 0: the positive root, in a stable form.
+        lin = u - inv_eps2
+        root = np.sqrt(lin * lin + 4.0 * n * inv_eps2)
+        gamma = np.where(
+            has_v,
+            np.where(lin <= 0.0, (root - lin) / np.where(has_v, 2.0 * inv_eps2, 1.0),
+                     2.0 * n / np.where(lin + root > 0.0, lin + root, 1.0)),
+            1.0,
+        )
+        nu = gamma * u
+        terms = 2.0 * (n * np.log(n / nu) - n + nu) + inv_eps2 * (gamma - 1.0) ** 2
+        return float(terms.sum() + theta @ theta)
+
+    n_par = n_rows + (1 if with_nc else 0)
+    start = np.zeros(n_par)
+    value = q0(start)
+    if n_par:
+        res = minimize(q0, start, method="L-BFGS-B")
+        value = min(value, float(res.fun))
+    return float(np.sqrt(max(value, 0.0)))
+
+
+def joint_refine_selection(ctx, items, picks):
+    """Second stage of the selection: one region at a time is replaced by the compatible
+    candidate (among the JOINT_SWAP_POOL candidates of highest Z_A) that most increases the
+    joint significance, until no replacement increases it (at most JOINT_SWAP_PASSES passes).
+    items: the candidates in the selectors' order; picks: indices of the selected set.
+    Returns (picks, joint Z of the given set, joint Z of the returned set)."""
+    order = sorted(range(len(items)), key=lambda i: -items[i]["Z"])[:JOINT_SWAP_POOL]
+    pool = list(dict.fromkeys(list(picks) + order))
+    comps = {}
+
+    def _comp(i):
+        if i not in comps:
+            comps[i] = region_components(ctx, items[i]["lo"], items[i]["hi"])
+        return comps[i]
+
+    current = list(picks)
+    z_start = z_cur = joint_z(ctx, [_comp(i) for i in current])
+    for npass in range(JOINT_SWAP_PASSES):
+        improved = False
+        for pos in range(len(current)):
+            others = current[:pos] + current[pos + 1:]
+            best_j, best_z = None, z_cur
+            for j in pool:
+                if j in current:
+                    continue
+                if any(overlap(items[j]["lo"], items[j]["hi"], items[o]["lo"], items[o]["hi"], ctx.D)
+                       for o in others):
+                    continue
+                z = joint_z(ctx, [_comp(o) for o in others] + [_comp(j)])
+                if z > best_z + 1e-9:
+                    best_j, best_z = j, z
+            if best_j is not None:
+                current[pos] = best_j
+                z_cur = best_z
+                improved = True
+        ctx.progress(f"Joint stage pass {npass + 1}: Z_joint={z_cur:.4f}", force=True)
+        if not improved:
+            break
+    return current, z_start, z_cur
+
+
 # -------------------- Per-bin reports --------------------
 def build_top_bins(ctx, sel_los, sel_his):
     """Build the top_bins list with the exact schema sr.* reporting expects.
@@ -1336,20 +1755,24 @@ def build_top_bins(ctx, sel_los, sel_his):
         thr_high_vec = list(map(float, thr_high_vec))
 
         m_bin = rect_mask(ctx, thr_low_vec, thr_high_vec)
-        wS = ctx.w[m_bin & ctx.is_sig]
-        wB = ctx.w[m_bin & ctx.is_bkg]
-        S_bin = float(wS.sum())
-        B_bin = float(wB.sum())
-        sS_bin = float(np.sqrt((wS ** 2).sum()))
-        sB_bin = float(np.sqrt((wB ** 2).sum()))
-        S_e = int((m_bin & ctx.is_sig).sum())
-        B_e = int((m_bin & ctx.is_bkg).sum())
-        V_bin = background_variance(ctx, m_bin)
+        # B is the objective's background (in ABCD mode with the predicted QCD), B_err the
+        # statistical error of its MC part.
+        S_bin, sS_bin, B_bin, sB_bin, S_e, B_e, V_bin = rect_stats(ctx, thr_low_vec, thr_high_vec)
         Z_bin, sZ_bin = calc_Z(S_bin, B_bin, V_bin, sS_bin, sB_bin)
         Z_stat_bin = calc_Z_val(S_bin, B_bin)
+        if ctx.abcd:
+            qcd_pred = abcd_qcd(ctx, thr_low_vec, thr_high_vec)[0]
+            abcd_var = abcd_variance(ctx, thr_low_vec, thr_high_vec)
+            log_message(
+                f"  Bin {k + 1} ABCD: QCD predicted={qcd_pred:.4g} (MC: {float(ctx.w[m_bin & ctx.is_qcd].sum()):.4g}), "
+                f"sigma_ABCD={abcd_var ** 0.5:.4g}, sigma_MC(non-QCD)={sB_bin:.4g}, "
+                f"sigma_B={V_bin ** 0.5:.4g}"
+            )
 
-        W_bin = S_bin + B_bin
-        w2_bin = sS_bin ** 2 + sB_bin ** 2
+        # One-vs-rest table of the MC classes (reports).
+        w_mc = ctx.w[m_bin & (ctx.is_sig | ctx.is_bkg)]
+        W_bin = float(w_mc.sum())
+        w2_bin = float((w_mc ** 2).sum())
         cat_data = []
         for cls_i, cls_name in enumerate(sr.CLASS_NAMES):
             mC = (ctx.y == cls_i) & m_bin
@@ -1377,7 +1800,7 @@ def build_top_bins(ctx, sel_los, sel_his):
             })
 
         bin_sig_eff = (S_bin / ctx.S_total) if ctx.S_total > 0 else float("nan")
-        bin_bkg_eff = (B_bin / ctx.B_total) if ctx.B_total > 0 else float("nan")
+        bin_bkg_eff = (float(ctx.w_bkg[m_bin].sum()) / ctx.B_total) if ctx.B_total > 0 else float("nan")
 
         tail_sig_eff, tail_bkg_eff = [], []
         for d in range(ctx.D):
@@ -1422,14 +1845,23 @@ def build_top_bins(ctx, sel_los, sel_his):
 
 # -------------------- Main --------------------
 def main():
-    proba, y, w, sample_labels, feature_names = prepare_inputs()
+    proba, y, w, sample_labels, feature_names, control = prepare_inputs()
 
     log_message("Plotting score distributions")
     sr.plot_score_distributions(proba, y, w)
 
     log_message("Computing background systematic shifts")
-    bkg_shifts = background_syst_shifts(y, w, sample_labels)
-    ctx = Ctx(proba, y, w, bkg_shifts)
+    bkg_shifts, _shift_names = background_syst_shifts(y, w, sample_labels, qcd_data_driven=control is not None)
+    ctx = Ctx(proba, y, w, bkg_shifts, control)
+    if ctx.abcd:
+        log_message(
+            f"ABCD-aware sigma_B ON: control window {ABCD_CONTROL[0]:g} < {ABCD_BRANCH} < {ABCD_CONTROL[1]:g}, "
+            f"TF (QCD window / control) = {ctx.abcd_tf:.4g}, nonclosure = {ABCD_NONCLOSURE:g}"
+        )
+    if ZERO_COUNT_FLOOR:
+        log_message("Zero-count floor ON: alpha (median |event weight|) per background class: " + ", ".join(
+            f"{sr.CLASS_NAMES[c]}={a2 ** 0.5:.4g}"
+            for c, a2 in zip(ctx.floor_classes, ctx.floor_alpha2)))
     log_message(f"  S_total={ctx.S_total:.4g}, B_total={ctx.B_total:.4g}")
     log_message(f"  Scan dimensions D={ctx.D}, axes={ctx.axis_names}")
     log_message(
@@ -1469,12 +1901,29 @@ def main():
         log_warning(message)
     check_no_overlap(ctx, sel_los, sel_his)
 
-    # Sharpen the chosen regions on the fine grid (non-overlap and acceptance preserved),
-    # then place the boundaries inside empty score gaps.
-    sel_los, sel_his = fine_refine_selected(ctx, sel_los, sel_his)
+    # Second stage: the joint significance of the set with the correlated nuisances of the
+    # cards (the selectors' candidate order maps their picks to the candidates).
+    ordered = sorted(candidates, key=lambda it: -(it["Z"] ** 2))
+    picks, z_joint_selected, z_joint = joint_refine_selection(ctx, ordered, picks)
+    sel_los = [list(ordered[i]["lo"]) for i in picks]
+    sel_his = [list(ordered[i]["hi"]) for i in picks]
+    log_message(f"  Joint stage: Z_joint {z_joint_selected:.4f} (sum Z_A^2 selection) -> {z_joint:.4f}")
+    check_no_overlap(ctx, sel_los, sel_his)
+
+    # Sharpen the chosen regions on the fine grid (non-overlap and acceptance preserved), kept
+    # only when it does not lower the joint significance; then place the boundaries inside
+    # empty score gaps.
+    ref_los, ref_his = fine_refine_selected(ctx, sel_los, sel_his)
+    z_joint_refined = joint_z(ctx, [region_components(ctx, l, h) for l, h in zip(ref_los, ref_his)])
+    if z_joint_refined >= z_joint - 1e-9:
+        sel_los, sel_his, z_joint = ref_los, ref_his, z_joint_refined
+    else:
+        log_message(f"  Fine refinement lowers Z_joint ({z_joint:.4f} -> {z_joint_refined:.4f}); "
+                    f"the unrefined boundaries are kept")
     sel_los, sel_his = place_boundaries(ctx, sel_los, sel_his)
     check_no_overlap(ctx, sel_los, sel_his)
     log_message("  Non-overlap check passed (geometry and events)")
+    summary["joint_significance"] = z_joint
 
     top_bins = build_top_bins(ctx, sel_los, sel_his)
 
@@ -1486,7 +1935,7 @@ def main():
     )
     z_best = float(np.sqrt(refined_sum_z2))
     log_message(
-        f"  Selected {len(top_bins)} signal regions, "
+        f"  Selected {len(top_bins)} signal regions, Z_joint={z_joint:.4f}, "
         f"sum(Z_A^2)={refined_sum_z2:.6g}, Z_comb={z_best:.4f}, "
         f"stat-only Z_comb={np.sqrt(sum(b['significance_stat'] ** 2 for b in top_bins)):.4f}, "
         f"nodes={summary['nodes']}, selector={summary['selector']}, completed={summary['completed']}"

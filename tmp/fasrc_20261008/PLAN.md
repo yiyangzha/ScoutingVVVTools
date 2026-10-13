@@ -60,3 +60,12 @@ Code changes:
 4. New untracked campaign configs on IHEP: selections/convert/config_ihep.json and selections/convert_ttbar_cr/config_ihep.json (output_root /ihepfs/cms_thu/yiyangzhao/Research/claude/ntuples/fasrc_20261008/dataset{,_cr}, remote_input_rules), weight config_ihep.json if PU runs there (not needed: PU CSVs come from Cannon).
 5. README/AGENTS: site ihep, remote_input_rules, weight.C skip behavior.
 Verification: pilot one data batch and one yiyangz MC batch on IHEP (time, size, meta), merge, rsync, compare with the Cannon CR data pilot output (same events for the same 5 files).
+
+## Merge, optimizer extension and Purdue handoff (approved 2026-10-13, requirements 48-66)
+
+0. Commit the uncommitted IHEP/records work (done: 2bf5ceb).
+1. Merge refs/remotes/jan/optimizations (e972efa) with the card decisions (weights mc_weights.py everywhere; theory acceptance-only + xsec lnN; Jan's class_groups, HT < 400 GeV QCD excluded from physics yields; production configs of the review; min_bkg_entries 0; our branch-and-bound limits).
+2. signal_region_hist.py: combine-consistent background model (predicted QCD in ABCD mode, per-class theory_scale and xsec rows, no MC nuisances on the data-driven QCD), control-region-aware deduplication and boundary placement with a sorted point index, joint correlated stage (joint_z, joint_refine_selection), fine refinement guarded by Z_joint.
+3. Documentation: AGENTS.md (condensed, section 6 updated) and README.md.
+4. Handoff prompt tmp/prompt_purdue_20261013.md (Part A for Yiyang at Purdue, Part B for the new agent; ABCDEF, VV MC statistics, data access, validation items).
+5. Independent static review, ast syntax check (approved), merge commit, push to origin fasrc-campaign-20261008, git status / check-ignore report.

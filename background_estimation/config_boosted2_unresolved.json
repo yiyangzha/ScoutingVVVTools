@@ -1,0 +1,38 @@
+{
+  "lumi": 255.8,
+  "bdt_root": "../selections/BDT/boosted2_unresolved",
+  "signal_region_csv": "../selections/signal_region/output/boosted2_unresolved_hist/signal_region.csv",
+  "output_dir": "./output/boosted2_unresolved",
+  "root_file_name": "qcd_abcd_yields.root",
+  "abcd_branches": {
+    "boosted2_unresolved": [
+      "ScoutingFatPFJetRecluster_msoftdrop_1"
+    ]
+  },
+  "a_region_shape_branches": {
+    "boosted2_unresolved": [
+      "ScoutingPFJetRecluster2_scoutUParT_probb_max",
+      "ScoutingFatPFJetRecluster_VvsQCD_1",
+      "ScoutingFatPFJetRecluster_VvsQCD_2",
+      "ScoutingFatPFJetRecluster_WvsQCD_1",
+      "ScoutingFatPFJetRecluster_WvsQCD_2"
+    ]
+  },
+  "abcd_sideband_mode": "complement",
+  "abcd_mode": "per_sr",
+  "abcd_control_window": {
+    "boosted2_unresolved": [
+      20.0,
+      50.0
+    ]
+  },
+  "abcd_per_sr_nonclosure": {
+    "boosted2_unresolved": 0.2
+  },
+  "exclude_samples": [
+    "qcd_ht40to70",
+    "qcd_ht70to100",
+    "qcd_ht100to200",
+    "qcd_ht200to400"
+  ]
+}

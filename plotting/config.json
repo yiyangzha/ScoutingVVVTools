@@ -1,5 +1,11 @@
 {
-  "submit_trees": ["boosted3", "boosted2_resolved", "boosted2_unresolved", "boosted2_leptonic_1lep", "boosted2_leptonic_2lep"],
+  "submit_trees": [
+    "boosted3",
+    "boosted2_resolved",
+    "boosted2_unresolved",
+    "boosted2_leptonic_1lep",
+    "boosted2_leptonic_2lep"
+  ],
   "sample_config": "../src/sample.json",
   "convert_branch_config": "../selections/convert/branch.json",
   "bdt_root": "../selections/BDT/{tree_name}",
@@ -7,16 +13,47 @@
   "output_root_nosel": "./no-selection_btagged/{tree_name}",
   "output_shapes": "./class-shapes/{tree_name}",
   "output_shapes_nosel": "./class-shapes_nosel/{tree_name}",
-  "data_samples": ["2024G_UParT_v6"],
+  "data_samples": [
+    "2024G_UParT_v6"
+  ],
+  "_note_exclude_samples": "exclude_samples: MC samples left out of every plotted yield (the HT < 400 GeV QCD samples, pileup double counting; as in qcd_est.py and the SR scan).",
+  "exclude_samples": [
+    "qcd_ht40to70",
+    "qcd_ht70to100",
+    "qcd_ht100to200",
+    "qcd_ht200to400"
+  ],
   "default_bins": 50,
   "event_reweight_branches": {
-    "boosted3": ["genWeight", "weight_pu"],
-    "boosted2_resolved": ["genWeight", "weight_pu"],
-    "boosted2_unresolved": ["genWeight", "weight_pu"],
-    "boosted2_leptonic_1lep": ["genWeight", "weight_pu"],
-    "boosted2_leptonic_2lep": ["genWeight", "weight_pu"]
+    "boosted3": [
+      "genWeight",
+      "weight_pu"
+    ],
+    "boosted2_resolved": [
+      "genWeight",
+      "weight_pu"
+    ],
+    "boosted2_unresolved": [
+      "genWeight",
+      "weight_pu"
+    ],
+    "boosted2_leptonic_1lep": [
+      "genWeight",
+      "weight_pu"
+    ],
+    "boosted2_leptonic_2lep": [
+      "genWeight",
+      "weight_pu"
+    ]
   },
   "theory_syst_json": "../selections/theory_weights/output/theory_syst_yields.json",
+  "xsec_unc_json": "../combine/xsec_unc.json",
+  "_note_blinding": "Blinding (default; --unblind disables it): the fill stage removes every data event inside a signal region of signal_region_csv (score box and all selection.json thresholds). Trees without signal regions (control regions) must be listed in unblinded_trees.",
+  "signal_region_csv": "../selections/signal_region/output/{tree_name}_hist/signal_region.csv",
+  "unblinded_trees": [],
+  "_note_hist_refine": "The fill stage stores each branch with hist_refine x its plot bins (plus under/overflow), so the plot stage can rebin and restyle; ranges without an x_range override come from a scan of the first range_scan_entries entries per sample.",
+  "hist_refine": 10,
+  "range_scan_entries": 200000,
   "_note_n_workers": "n_workers: parallel pool size for pre-pass, streaming, and rendering. null = cpu_count.",
   "n_workers": 12,
   "_note_plot_branches": "Set plot_branches per tree to restrict which branches are plotted. null or absent key plots all branches.",

@@ -1,0 +1,203 @@
+{
+  "output_root": "./sr_sensitivity",
+  "_note_summary": "SR-yield summary over every listed category; yields are read from each qcd_est config's output ROOT file.",
+  "summary_categories": [
+    {
+      "name": "boosted3",
+      "qcd_est_config": "../background_estimation/config_boosted3.json"
+    },
+    {
+      "name": "boosted2_resolved",
+      "qcd_est_config": "../background_estimation/config_boosted2_resolved.json"
+    },
+    {
+      "name": "boosted2_unresolved",
+      "qcd_est_config": "../background_estimation/config_boosted2_unresolved.json"
+    },
+    {
+      "name": "boosted2_leptonic_1lep",
+      "qcd_est_config": "../background_estimation/config_boosted2_leptonic_1lep.json"
+    },
+    {
+      "name": "boosted2_leptonic_2lep",
+      "qcd_est_config": "../background_estimation/config_boosted2_leptonic_2lep.json"
+    }
+  ],
+  "_note_targets": "Per-SR stacked distributions. Events = SR score box + all selection.json thresholds (incl. the ABCD msoftdrop window). A variable that is itself cut on (a threshold branch, or score_<class> for an SR score axis) is drawn N-1, with its cut values marked.",
+  "targets": [
+    {
+      "qcd_est_config": "../background_estimation/config_boosted2_leptonic_1lep.json",
+      "bin_index": 1,
+      "signal_line_scale": 0,
+      "variables": [
+        "ScoutingFatPFJetRecluster_msoftdrop_1",
+        "ScoutingFatPFJetRecluster_msoftdrop_2",
+        "score_VVV",
+        "ScoutingFatPFJetRecluster_WvsQCD_1",
+        "ScoutingFatPFJetRecluster_WvsQCD_2",
+        "ScoutingFatPFJetRecluster_sphere_mass",
+        "ScoutingFatPFJetRecluster_pt_1",
+        "ScoutingFatPFJetRecluster_deltaR",
+        "LeptonicW_mT",
+        "SelectedLepton_pt_1",
+        "ScoutingMET_pt",
+        "ScoutingPFJetRecluster2_selected_HT"
+      ]
+    },
+    {
+      "qcd_est_config": "../background_estimation/config_boosted2_unresolved.json",
+      "bin_index": 1,
+      "signal_line_scale": 10,
+      "variables": [
+        "ScoutingFatPFJetRecluster_msoftdrop_1",
+        "ScoutingFatPFJetRecluster_msoftdrop_2",
+        "score_VVV",
+        "ScoutingFatPFJetRecluster_WvsQCD_1",
+        "ScoutingFatPFJetRecluster_WvsQCD_2",
+        "ScoutingFatPFJetRecluster_sphere_mass",
+        "ScoutingFatPFJetRecluster_pt_1",
+        "ScoutingFatPFJetRecluster_deltaR",
+        "ScoutingMET_pt",
+        "nScoutingPFJetRecluster2_selected"
+      ]
+    }
+  ],
+  "variables": {
+    "ScoutingFatPFJetRecluster_msoftdrop_1": {
+      "bins": 20,
+      "range": [
+        0,
+        200
+      ],
+      "label": "Leading AK8 $m_{SD}$ [GeV]",
+      "logy": true
+    },
+    "ScoutingFatPFJetRecluster_msoftdrop_2": {
+      "bins": 20,
+      "range": [
+        0,
+        200
+      ],
+      "label": "Subleading AK8 $m_{SD}$ [GeV]",
+      "logy": true
+    },
+    "score_VVV": {
+      "bins": 20,
+      "range": [
+        0,
+        1
+      ],
+      "label": "BDT score p(VVV)",
+      "logy": true
+    },
+    "ScoutingFatPFJetRecluster_WvsQCD_1": {
+      "bins": 10,
+      "range": [
+        0,
+        1
+      ],
+      "label": "Leading AK8 W vs QCD"
+    },
+    "ScoutingFatPFJetRecluster_WvsQCD_2": {
+      "bins": 10,
+      "range": [
+        0,
+        1
+      ],
+      "label": "Subleading AK8 W vs QCD"
+    },
+    "ScoutingFatPFJetRecluster_sphere_mass": {
+      "bins": 20,
+      "range": [
+        0,
+        100
+      ],
+      "label": "AK8 $m_{SD}$ distance from 85 GeV [GeV]"
+    },
+    "ScoutingFatPFJetRecluster_pt_1": {
+      "bins": 12,
+      "range": [
+        150,
+        750
+      ],
+      "label": "Leading AK8 $p_{T}$ [GeV]"
+    },
+    "ScoutingFatPFJetRecluster_deltaR": {
+      "bins": 15,
+      "range": [
+        0,
+        5
+      ],
+      "label": "$\\Delta R$(AK8, AK8)"
+    },
+    "LeptonicW_mT": {
+      "bins": 15,
+      "range": [
+        0,
+        300
+      ],
+      "label": "Leptonic W $m_{T}$ [GeV]"
+    },
+    "SelectedLepton_pt_1": {
+      "bins": 15,
+      "range": [
+        0,
+        300
+      ],
+      "label": "Lepton $p_{T}$ [GeV]"
+    },
+    "ScoutingMET_pt": {
+      "bins": 15,
+      "range": [
+        0,
+        600
+      ],
+      "label": "$p_{T}^{miss}$ [GeV]"
+    },
+    "ScoutingPFJetRecluster2_selected_HT": {
+      "bins": 15,
+      "range": [
+        0,
+        600
+      ],
+      "label": "AK4 $H_{T}$ [GeV]"
+    },
+    "nScoutingPFJetRecluster2_selected": {
+      "bins": 7,
+      "range": [
+        -0.5,
+        6.5
+      ],
+      "label": "Number of AK4 jets"
+    }
+  },
+  "_note_data_overlay": "Data added only to the plots listed here, written as <var>_data.pdf. Selection = SR cuts minus drop_cuts; data events with any 'blind' branch inside blind_window (inclusive) are removed; MC uses the same selection but keeps the plotted variable's window unblinded. MC is scaled to the data integral in the plotted variable's sideband bins. Data histograms are filled per data file by `sr_sensitivity.py --data-file K` (submit_sr_sensitivity_data.sbatch).",
+  "data_overlay": {
+    "sample": "data_2024",
+    "blind_window": [
+      50,
+      150
+    ],
+    "plots": {
+      "ScoutingFatPFJetRecluster_msoftdrop_1": {
+        "drop_cuts": [
+          "ScoutingFatPFJetRecluster_msoftdrop_1"
+        ],
+        "blind": [
+          "ScoutingFatPFJetRecluster_msoftdrop_1"
+        ]
+      },
+      "ScoutingFatPFJetRecluster_msoftdrop_2": {
+        "drop_cuts": [
+          "ScoutingFatPFJetRecluster_msoftdrop_1",
+          "ScoutingFatPFJetRecluster_msoftdrop_2"
+        ],
+        "blind": [
+          "ScoutingFatPFJetRecluster_msoftdrop_1",
+          "ScoutingFatPFJetRecluster_msoftdrop_2"
+        ],
+        "note": ", both $m_{SD}$ outside 50-150 GeV"
+      }
+    }
+  }
+}

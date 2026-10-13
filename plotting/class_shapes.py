@@ -67,6 +67,10 @@ def _shape_class_groups(tree_name, bdt_cfg):
     if whitelist is not None:
         wl = set(whitelist)
         class_groups = {cls: [s for s in samples if s in wl] for cls, samples in class_groups.items()}
+    # MC samples left out of every plotted yield (data_mc.py exclude_samples).
+    if dm.EXCLUDE_SAMPLES:
+        class_groups = {cls: [s for s in samples if s not in dm.EXCLUDE_SAMPLES]
+                        for cls, samples in class_groups.items()}
 
     # Merge QCD HT-bin classes (QCD_HTLOW/MID/HIGH, etc.) into a single "QCD".
     merged = {}
@@ -226,13 +230,13 @@ def _process_tree_shapes(tree_name, no_selection=False, stat_band=False, n_worke
             mc_n_totals[sname]     = n_total
             mc_sample_files[sname] = files
 
-    # ---- Step 2: parallel pre-pass (ranges + reweight sums) ----
+    # ---- Step 2: parallel pre-pass (ranges) ----
     prepass_mins  = {b:  np.inf for b in auto_range_branches}
     prepass_maxs  = {b: -np.inf for b in auto_range_branches}
     tasks, labels = [], []
     for sname in mc_sample_files:
         tasks.append((mc_sample_files[sname], tree_name, auto_range_branches,
-                      reweight_branches, branch_logx, not no_selection))
+                      [], branch_logx, not no_selection))
         labels.append(sname)
     log_message(f"Pre-pass: {len(tasks)} MC samples ({n_workers} workers)")
     if n_workers > 1 and len(tasks) > 1:
